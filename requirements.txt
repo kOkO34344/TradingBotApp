@@ -1,0 +1,10 @@
+# Backtesting + terminal app
+yfinance
+backtesting
+pandas
+numpy
+rich
+plotext
+
+# IBKR live/paper connection layer (ibkr_service.py)
+ib_async

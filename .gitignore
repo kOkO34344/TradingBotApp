@@ -1,0 +1,18 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# macOS
+.DS_Store
+
+# Obsidian / Claudian app internals (the notes themselves ARE tracked)
+**/.obsidian/
+**/.claudian/
+
+# Cached market data (regenerated on demand by the app)
+price_data/
+
+# IBKR credentials or local secrets, if ever added
+*.env
+secrets*
