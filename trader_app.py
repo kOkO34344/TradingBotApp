@@ -638,8 +638,15 @@ def edit_settings(settings: dict):
             if p in (7496, 4001):
                 console.print("[red]That's a LIVE port. This app only connects to paper "
                               "accounts — port unchanged.[/red]")
-            else:
+            elif p in (7497, 4002):
                 settings["ibkr_port"] = p
+            elif 1024 <= p <= 65535 and Confirm.ask(
+                    f"[yellow]{p} is not a standard IBKR paper port (7497/4002). "
+                    f"Use it anyway?[/yellow]", default=False):
+                settings["ibkr_port"] = p
+            else:
+                console.print(f"[red]{p} rejected — port unchanged "
+                              f"({settings.get('ibkr_port', 7497)}).[/red]")
             settings["ibkr_client_id"] = IntPrompt.ask(
                 "Client id (any small integer, unique per connected app)",
                 default=settings.get("ibkr_client_id", 7))

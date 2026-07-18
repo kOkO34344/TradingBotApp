@@ -1,0 +1,5 @@
+file,ticker,date,direction,confidence,horizon,fwd_return_pct,correct
+AAPL_2026-05-15_0930.md,AAPL,2026-05-15,long,7,5d,2.86,True
+AAPL_2026-05-15_0930.md,AAPL,2026-05-15,long,7,21d,-0.33,False
+MSFT_2026-06-01_1100.md,MSFT,2026-06-01,no-edge,4,5d,-10.59,False
+MSFT_2026-06-01_1100.md,MSFT,2026-06-01,no-edge,4,21d,-16.56,False

@@ -1,8 +1,8 @@
 ---
 tags: [trading-bot, project-overview]
-status: "Phase 2 complete — SMA crossover rejected, momentum rotation is the live candidate"
+status: "Phase 2 complete — SMA crossover rejected, momentum rotation is the live candidate. IBKR read-only connection layer and an unproven TradingAgents research wrapper added since."
 source: /Users/kaloyanivanov/TradingBotApp
-last_synced: 2026-07-18
+last_synced: 2026-07-19
 ---
 
 # Trading Bot Project — Overview
@@ -19,7 +19,11 @@ Separately, research into how real day traders operate (TJR/ICT "smart money" sc
 
 → Full detail, numbers, and sourcing: **[[trading bot/Backtest Results & Findings]]**
 
-**No money has moved.** This app places no orders and connects to no broker. It's purely the Phase 2 (backtesting) layer — validating strategies before any Alpaca/live connection exists.
+**Since that finding, two new pieces were added to the folder — neither changes the bottom line above:**
+- **`ibkr_service.py`** — a real connection layer to Interactive Brokers (stocks, forex, futures, crypto through one API), wired into the app as menu option 8. It's **read-only**: account summary, positions, live bars. A `place_market_order` function exists in the module but nothing calls it — no order can be placed through the app today.
+- **`trading_agent_service.py`** — a wrapper around the third-party **TradingAgents** multi-agent LLM library (bull/bear debate → buy/hold/sell call). This is a candidate shortcut for Phase 1 (research agent), which otherwise hasn't been started. **It has not been run or evaluated yet** — no output exists to judge it by, so it doesn't count as Phase 1 done.
+
+**No money has moved.** This app places no orders and connects to no broker capable of executing. It's purely the Phase 2 (backtesting) layer, now with a read-only data/monitoring layer alongside it — validating strategies before any order-placing connection exists.
 
 ## Notes in this folder
 
@@ -31,7 +35,7 @@ Separately, research into how real day traders operate (TJR/ICT "smart money" sc
 
 ## Current app snapshot
 
-(from `trader_settings.json`, synced 2026-07-18)
+(from `trader_settings.json`, synced 2026-07-19)
 
 - **Watchlist:** AAPL, MSFT, GOOGL, AMZN, JPM, JNJ, PG, XOM, KO, DIS — plus SPY as benchmark
 - **SMA windows:** 20 / 50 (default, known to lose to buy-and-hold)
@@ -39,7 +43,14 @@ Separately, research into how real day traders operate (TJR/ICT "smart money" sc
 - **Starting cash (sim):** $10,000
 - **Risk engine:** off by default — togglable (trend filter + 2×ATR trailing stop + fixed % risk per trade)
 - **Momentum rotation:** top 3, 12-month lookback — the strategy with the best evidence so far
+- **IBKR:** port 7497 (TWS paper), client id 7 — read-only, no orders wired
 
 ## Recommended next build step
 
 Make momentum rotation a first-class, portfolio-level strategy with the risk engine's drawdown circuit breaker wired in (already partially implemented — see `trader_app.py` menu option 5). Don't spend more time "fixing" the SMA crossover by tuning parameters until a backtest looks good — that's how you get an overfit result that means nothing out of sample.
+
+Two side paths now exist too, both unproven, worth a deliberate decision rather than drifting into either:
+1. Spend a session actually running `trading_agent_service.py` on a handful of tickers you know well, and judge whether its reasoning is good enough to count as Phase 1 — or whether the hand-built research agent from the original plan is still worth doing instead.
+2. Leave `ibkr_service.py` alone (read-only) until a strategy has actually earned Phase 3 — connecting `place_market_order` to anything is a Phase 3 decision, not a Phase 2 one.
+
+See [[trading bot/Plan]] for how these map onto the phase structure.

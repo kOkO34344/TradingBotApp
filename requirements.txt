@@ -8,3 +8,6 @@ plotext
 
 # IBKR live/paper connection layer (ibkr_service.py)
 ib_async
+
+# Research agent (research_agent.py)
+claude-agent-sdk

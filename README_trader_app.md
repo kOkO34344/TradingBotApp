@@ -47,6 +47,28 @@ Foundation for live/paper trading through Interactive Brokers — one API for st
 - Requires TWS or IB Gateway running locally with the API enabled (`Edit → Global Configuration → API → Settings`). Paper ports: 7497 (TWS) / 4002 (Gateway).
 - `python3 ibkr_service.py` smoke-tests the connection: pulls 15-min bars for AAPL, EURUSD, and BTC from your paper account.
 - Safety: `connect()` refuses live ports (7496/4001) unless you explicitly pass `allow_live=True`. Keep it that way until months of paper evidence exist.
-- What it contains: contract builders (`stock`, `forex_pair`, `future`, `crypto` — commodities are just futures, e.g. `future("MGC", "202612", "COMEX")` for Micro Gold), 15-min bar pull (`get_15min_bars`) and live streaming (`stream_15min_bars`), and a generic `place_market_order`. It has **no strategy logic** — nothing trades until a signal engine is wired in and you approve the design.
+- What it contains: contract builders (`stock`, `forex_pair`, `future`, `crypto` — commodities are just futures, e.g. `future("MGC", "202612", "COMEX")` for Micro Gold), 15-min bar pull (`get_15min_bars`) and live streaming (`stream_15min_bars`), and order placement (`place_bracket_order` preferred, `place_market_order` restricted).
+- **Phase 2 hardening — every order path now goes through three layers, in code:**
+  1. *Paper verification*: `verify_paper_account()` checks the account id looks like a paper account (starts with `D`) and refuses otherwise unless `allow_live=True`.
+  2. *RiskGuard*: limits in `risk_limits.json` (auto-created with defaults: $5,000 max order notional, 5 max open positions, $300 daily-loss circuit breaker, stop required). Blocked orders never reach the broker and are journaled with the reason. Changing limits means editing the JSON — an explicit, visible act.
+  3. *Trade journal*: every submit, block, and fill appends to `trade_journal.csv`. If it isn't in the journal, it didn't happen.
+- `place_bracket_order` is the default entry mechanism: limit entry + stop (+ optional target) placed atomically, so no position can exist without its stop. Bare `place_market_order` is refused unless `allow_no_stop=True` is passed deliberately.
+- `python3 ibkr_service.py --selftest` — 18 offline checks (contract builders, data-type routing, all RiskGuard block/allow paths, journal roundtrip, bracket validation), no TWS needed. All passing as delivered. The connected smoke test (`python3 ibkr_service.py`) still requires TWS/Gateway on your machine and places no orders. It has **no strategy logic** — nothing trades until a signal engine is wired in and you approve the design.
 - Asset-class data quirk handled in code: forex history uses MIDPOINT, crypto uses AGGTRADES, everything else TRADES.
 - Futures expire — contracts like `MGC 202612` must be rolled to the next month periodically. Not yet automated; flagged for the strategy loop.
+
+## Research agent (`research_agent.py`) — Phase 1, no execution
+
+Turns a ticker into a structured research note: multi-timeframe technicals (daily + 15-minute: SMA structure, RSI, ATR, opening range, VWAP), fundamentals, then a Claude-written thesis with direction, confidence (1-10), ATR-derived key levels, risks, and "what would change my mind". It is explicitly allowed to say "no edge here".
+
+- `python3 research_agent.py AAPL` — full run. Auth: `export ANTHROPIC_API_KEY=...`, or be logged into Claude Code (then usage draws from your Claude plan's Agent SDK credit).
+- `python3 research_agent.py AAPL --dry-run` — see exactly what data the agent gets, no API call.
+- Every run is saved to `research_log/` with the thesis AND the data it saw — so calls can be graded later against what actually happened.
+- **The autonomy gate:** this agent earns trust by accumulating graded calls in `research_log/`, not by sounding confident. It cannot place orders, and "executes on its own" remains locked behind months of paper-trading evidence per the plan. For 15-min-and-faster trading, the architecture stays: rules fire at machine speed, the agent reasons at research speed (daily/weekly notes, trade reviews) — an LLM is not in the intraday firing loop.
+- `trading_agent_service.py` (third-party TradingAgents wrapper, from the other conversation) is the alternative multi-agent approach — still never run. Worth one paid run to compare its reasoning against this agent's on the same ticker, then keeping whichever writes better-grounded notes.
+
+## Knowledge base (`knowledge/`) and call grading (`grade_calls.py`)
+
+- Every `.md` in `knowledge/` is injected into the research agent's prompt on every run — its curated professional library. Seeded with `01_evidence_based_principles.md` (verified findings only: academic base rates, momentum literature, ORB paper + our replication, audited traders' shared risk rules, what has no evidence). Rules for adding material are in `knowledge/README.md`: verified, distilled, cited. Share links/articles/videos in a Claude session — Claude vets and distills them into notes here (videos via transcript; the agent reads, it can't watch).
+- `python3 grade_calls.py` grades every research note against what price actually did at 5-day and 21-day horizons (long correct if > +0.5%, short if < -0.5%, no-edge if within ±2%), and prints calibration by confidence bucket. Healthy calibration = high-confidence calls beat low-confidence ones. Run weekly; this report is the agent's real track record — the thing that eventually earns or denies autonomy. `--csv` exports `graded_calls.csv`.
+- `research_log/` currently contains two blanked synthetic test files — delete them (`rm research_log/AAPL_2026-05-15_0930.md research_log/MSFT_2026-06-01_1100.md`).

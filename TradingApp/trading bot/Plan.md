@@ -1,20 +1,20 @@
 ---
 tags: [trading-bot, plan]
 source: /Users/kaloyanivanov/TradingBotApp
-last_synced: 2026-07-18
+last_synced: 2026-07-19
 ---
 
 # Building your own investing/trading agent — a real plan
 
-## Status against this plan (as of 2026-07-18)
+## Status against this plan (as of 2026-07-19)
 
 - [x] **Phase 0 — Environment & basics** — done (venv, Python 3.13, dependencies installed)
-- [ ] **Phase 1 — Research agent, no execution** — not started yet
+- [ ] **Phase 1 — Research agent, no execution** — not started, but a candidate shortcut now sits in the folder unused: `trading_agent_service.py` wraps the third-party **TradingAgents** multi-agent library instead of a hand-built research agent. It has **never been run** — no output to judge yet, so this stays unchecked until someone actually executes it and evaluates the reasoning quality. See [[trading bot/README_trader_app]].
 - [x] **Phase 2 — One narrow strategy + rigorous backtesting** — done, and the honest result came back: the SMA 20/50 crossover **does not beat buy-and-hold**, in- or out-of-sample. Per this plan's own exit criteria, it does not advance to Phase 3 as-is. A follow-up shootout across 5 strategy families found only **momentum rotation** competitive. Full results: [[trading bot/Backtest Results & Findings]].
-- [ ] **Phase 3 — Paper trading with human approval** — not started. Per the plan below, this should not start until a strategy has actually cleared Phase 2's bar — momentum rotation is the current candidate, but it hasn't yet been through the same rigor (portfolio-level risk engine, walk-forward check) that the SMA strategy got before being rejected.
+- [ ] **Phase 3 — Paper trading with human approval** — not started. A **read-only** IBKR connection layer (`ibkr_service.py`, menu option 8) now exists — account summary, positions, live bars — but its `place_market_order` function is not wired to anything. Per the plan below, this phase should not start until a strategy has actually cleared Phase 2's bar — momentum rotation is the current candidate, but it hasn't yet been through the same rigor (portfolio-level risk engine, walk-forward check) that the SMA strategy got before being rejected. Wiring `place_market_order` to a live signal is itself a Phase 3 action, not something to do early.
 - [ ] **Phase 4 — Tiny real capital** — not applicable yet
 
-**Bottom line right now:** don't skip to Phase 3. The one thing this plan explicitly warns against — forcing a "better" backtest by tuning parameters until the number looks good — is exactly the trap to avoid with the SMA result. The next legitimate step is either (a) build out the research/fundamentals agent (Phase 1, never started), or (b) put momentum rotation through the same rigorous validation the SMA strategy got. See [[trading bot/Backtest Results & Findings]] for the reasoning.
+**Bottom line right now:** don't skip to Phase 3. The one thing this plan explicitly warns against — forcing a "better" backtest by tuning parameters until the number looks good — is exactly the trap to avoid with the SMA result. The next legitimate step is either (a) actually run and evaluate the TradingAgents wrapper as a Phase 1 candidate, (b) build the research/fundamentals agent from scratch instead if TradingAgents doesn't hold up, or (c) put momentum rotation through the same rigorous validation the SMA strategy got. See [[trading bot/Backtest Results & Findings]] for the reasoning, and [[trading bot/The App]] for the two new side paths.
 
 ---
 
@@ -37,7 +37,7 @@ None of this is a reason not to build the project — it's a reason to build it 
 | Layer | Tool | Why |
 |---|---|---|
 | Language | Python 3.11+ | Everything below assumes it (currently running 3.13) |
-| Broker/data (paper first) | Alpaca (`alpaca-py`) | Free paper trading account, real API, commission-free, good docs — industry-standard starting point |
+| Broker/data (paper first) | Alpaca (`alpaca-py`) — **originally recommended here, but actual build diverged to Interactive Brokers** (`ibkr_service.py`, via `ib_async`) instead, likely for its multi-asset coverage (stocks/forex/futures/crypto in one API). Worth a deliberate decision, not silent drift: IBKR's API/TWS setup is heavier than Alpaca's, and Alpaca was picked originally for its simplicity. If multi-asset isn't actually needed for the strategy that ends up going to Phase 3, Alpaca may still be the better fit. | Free paper trading account, real API, commission-free, good docs — industry-standard starting point |
 | Backtesting | `backtesting.py` to start, `backtrader` once you need realism | `backtesting.py` is the simplest to learn; `backtrader` models slippage/order types and has a live-trading path so your backtest code and live code aren't two different worlds |
 | Agent reasoning | Claude Agent SDK (Python) | Gives you the tool-calling loop, permission hooks, and memory for free instead of hand-rolling one |
 | Approval channel | Telegram bot (`python-telegram-bot`) | Free, instant push notifications to your phone, two-way (approve/reject with a tap), simpler than building a UI |
@@ -83,7 +83,7 @@ Goal: something that reads financials/filings/news and writes you a thesis. Zero
 
 This is the core of "execute trades most of the time, after my approval."
 
-- Wrap the Alpaca order-placement call as a custom tool in the Agent SDK.
+- Wrap the order-placement call as a custom tool in the Agent SDK — originally scoped as Alpaca, but `place_market_order` in `ibkr_service.py` is the function actually sitting in the folder today (unwired, read-only layer otherwise — see [[trading bot/README_trader_app]]). Whichever broker is used, this wrapping-as-a-tool-with-a-PreToolUse-hook step is what actually matters, not the specific broker.
 - Use the SDK's **hooks** (`PreToolUse`) to intercept every order-placement call before it fires: the hook sends a Telegram message with the proposed trade (ticker, side, size, reasoning) and blocks execution until you reply approve/reject. This hook mechanism is the SDK feature that maps directly onto "execute trades most of the time, after my approval" — it's not a workaround, it's what it's designed for.
 - Run this against the **paper account only** for a minimum of 2–3 months. Track every trade in a log: what was proposed, what you approved/rejected, and why in hindsight you were right or wrong to.
 - Set hard risk rules in code (not just in the prompt): max position size, max daily trades, max daily loss that halts the bot. Enforce these in Python, never rely on the model to self-regulate risk. (A first version of this — trend filter + ATR stop + fixed-fractional sizing — already exists as the app's optional "risk engine," see [[trading bot/README_trader_app]].)
