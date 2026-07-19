@@ -1,0 +1,28 @@
+┌─────────────────────────────────────────────────────────────┐
+│                    TRADER APP - FULL STACK v2                │
+├─────────────────────────────────────────────────────────────┤
+│                                                              │
+│  Phase 2: BACKTESTER (✅ done)                               │
+│  └─ trader_app.py (terminal UI, Rich)                       │
+│                                                              │
+│  Phase 3: LIVE TRADING + WEB UI                             │
+│                                                              │
+│  Backend (Python)                                           │
+│  ├─ FastAPI server + IB connection (ib_async)              │
+│  ├─ Real-time 15-min bar ingestion                         │
+│  ├─ Order execution & position tracking                    │
+│  ├─ Risk guardrails (max loss, margin check)               │
+│  ├─ Trade journal + audit log                              │
+│  └─ WebSocket feed → equity, positions, fills              │
+│                                                              │
+│  Frontend (React + UIVerse)                                 │
+│  ├─ Dashboard home (stat cards, equity curve)              │
+│  ├─ Positions screen (table, current holdings)             │
+│  ├─ Orders & fills (timeline, status)                      │
+│  ├─ Settings panel (SMA windows, momentum, costs)          │
+│  ├─ Trade journal (table, filters, CSV export)             │
+│  ├─ Strategy config modal (toggle risk engine, etc.)       │
+│  ├─ Alert toast notifications                              │
+│  └─ Live P&L display (updated via WebSocket)               │
+│                                                              │
+└─────────────────────────────────────────────────────────────┘

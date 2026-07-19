@@ -9,12 +9,12 @@ last_synced: 2026-07-19
 ## Status against this plan (as of 2026-07-19)
 
 - [x] **Phase 0 — Environment & basics** — done (venv, Python 3.13, dependencies installed)
-- [ ] **Phase 1 — Research agent, no execution** — not started, but a candidate shortcut now sits in the folder unused: `trading_agent_service.py` wraps the third-party **TradingAgents** multi-agent library instead of a hand-built research agent. It has **never been run** — no output to judge yet, so this stays unchecked until someone actually executes it and evaluates the reasoning quality. See [[trading bot/README_trader_app]].
+- [ ] **Phase 1 — Research agent, no execution** — **built, but not exercised.** `research_agent.py` + `grade_calls.py` now exist, built exactly to this plan's original spec (Claude Agent SDK, multi-timeframe indicators computed from real data, structured logged thesis, weekly grading against forward returns) with a curated `knowledge/` library feeding every prompt. But `research_log/` holds only **two files, both explicitly marked `SYNTHETIC TEST NOTE — not a real call`** — zero real ticker analyses have been run, so the exit criteria below is not met yet. A second, competing candidate also exists unused: `trading_agent_service.py` wraps the third-party **TradingAgents** multi-agent library. Neither has been run for real. See [[trading bot/README_trader_app]].
 - [x] **Phase 2 — One narrow strategy + rigorous backtesting** — done, and the honest result came back: the SMA 20/50 crossover **does not beat buy-and-hold**, in- or out-of-sample. Per this plan's own exit criteria, it does not advance to Phase 3 as-is. A follow-up shootout across 5 strategy families found only **momentum rotation** competitive. Full results: [[trading bot/Backtest Results & Findings]].
 - [ ] **Phase 3 — Paper trading with human approval** — not started. A **read-only** IBKR connection layer (`ibkr_service.py`, menu option 8) now exists — account summary, positions, live bars — but its `place_market_order` function is not wired to anything. Per the plan below, this phase should not start until a strategy has actually cleared Phase 2's bar — momentum rotation is the current candidate, but it hasn't yet been through the same rigor (portfolio-level risk engine, walk-forward check) that the SMA strategy got before being rejected. Wiring `place_market_order` to a live signal is itself a Phase 3 action, not something to do early.
 - [ ] **Phase 4 — Tiny real capital** — not applicable yet
 
-**Bottom line right now:** don't skip to Phase 3. The one thing this plan explicitly warns against — forcing a "better" backtest by tuning parameters until the number looks good — is exactly the trap to avoid with the SMA result. The next legitimate step is either (a) actually run and evaluate the TradingAgents wrapper as a Phase 1 candidate, (b) build the research/fundamentals agent from scratch instead if TradingAgents doesn't hold up, or (c) put momentum rotation through the same rigorous validation the SMA strategy got. See [[trading bot/Backtest Results & Findings]] for the reasoning, and [[trading bot/The App]] for the two new side paths.
+**Bottom line right now:** don't skip to Phase 3, and don't count Phase 1 as done just because the code exists — the exit criteria is a real, sourced thesis someone would show another person, and none has been produced yet. The next legitimate step is either (a) delete the synthetic test notes, run `research_agent.py` for real on a handful of known tickers, and start the weekly `grade_calls.py` habit, (b) do the same evaluation for the `trading_agent_service.py` alternative and pick one, or (c) put momentum rotation through the same rigorous validation the SMA strategy got. See [[trading bot/Backtest Results & Findings]] for the backtest reasoning, and [[trading bot/The App]] for the fuller list of open side paths.
 
 ---
 
@@ -57,15 +57,15 @@ Everything here runs **locally on your machine**, not inside Cowork. Cowork's co
 
 **Exit criteria:** you can pull a stock's price history from Alpaca in a Python script and print it, and you've had Claude Code fix a deliberately broken script for you once.
 
-## Phase 1 — Research agent, no execution (2–3 weeks) — not started
+## Phase 1 — Research agent, no execution (2–3 weeks) — built (`research_agent.py`), exit criteria not yet met
 
 Goal: something that reads financials/filings/news and writes you a thesis. Zero trading logic yet.
 
-- Write a script that pulls fundamentals (Alpaca or a free source like SEC EDGAR / `yfinance`) for a small watchlist (10–20 tickers you actually understand).
-- Feed that data plus a prompt grounded in specific frameworks (e.g., Graham's margin-of-safety checks, basic DCF, or whatever "fundamental works" you actually want it to apply — name the books/models explicitly in the prompt, don't rely on Claude's vague sense of "good investing") to Claude via the Agent SDK's `query()` and have it write a structured thesis: valuation, risks, thesis, confidence.
-- Log every output to a file. Read it. Cross-check a few against your own judgment. This is where you calibrate whether the agent's "reasoning" is actually useful or just plausible-sounding.
+- Write a script that pulls fundamentals (Alpaca or a free source like SEC EDGAR / `yfinance`) for a small watchlist (10–20 tickers you actually understand). ✅ done — `research_agent.py` pulls both daily (1y) and 15-minute (5d) price/volume via `yfinance`, plus best-effort fundamentals (market cap, P/E, margins, revenue growth, debt/equity).
+- Feed that data plus a prompt grounded in specific frameworks (e.g., Graham's margin-of-safety checks, basic DCF, or whatever "fundamental works" you actually want it to apply — name the books/models explicitly in the prompt, don't rely on Claude's vague sense of "good investing") to Claude via the Agent SDK's `query()` and have it write a structured thesis: valuation, risks, thesis, confidence. ✅ done — the named frameworks are multi-timeframe trend alignment, momentum/mean-reversion context, volatility-aware risk framing, and a valuation sanity check; a curated `knowledge/` library (this project's own verified backtest findings, distilled) is injected into every prompt too, going beyond the original spec.
+- Log every output to a file. Read it. Cross-check a few against your own judgment. This is where you calibrate whether the agent's "reasoning" is actually useful or just plausible-sounding. ⚠️ **partially done, and not for real** — logging to `research_log/<TICKER>_<date>.md` works, and `grade_calls.py` exists to do the calibration check automatically (win rate by direction and by confidence bucket). But the only two files in `research_log/` are explicitly labeled synthetic test data, not real output. Nobody has actually read a real note from this agent yet.
 
-**Exit criteria:** a script you can run on-demand that turns a ticker into a written, sourced investment thesis you'd be willing to show someone.
+**Exit criteria:** a script you can run on-demand that turns a ticker into a written, sourced investment thesis you'd be willing to show someone. **The script exists and is capable of this — the criterion is still unmet** because it hasn't actually produced one. This is a real, meaningful distinction, not pedantry: per this project's own rule ("autonomy is earned by graded evidence, never by adding capability"), building the capability is not the same as earning the check mark.
 
 ## Phase 2 — One narrow strategy + rigorous backtesting (3–4 weeks) ✅ done — strategy rejected, replacement identified
 
@@ -109,9 +109,9 @@ Don't front-load all of this — learn each piece when the phase needs it.
 
 **Before Phase 0 is done:** Claude Code CLI basics — running it in a project folder, `CLAUDE.md` for project memory, basic prompting for code changes. This is the tool you'll use to actually write and debug all the Python in Phases 1–3.
 
-**During Phase 1:** Claude Agent SDK fundamentals (Python) — install `claude-agent-sdk`, understand `query()`, `ClaudeAgentOptions`, and built-in tools (Read/Write/Bash). This is the library form of Claude Code you'll embed inside your own agent process, as opposed to using the CLI interactively.
+**During Phase 1:** Claude Agent SDK fundamentals (Python) — install `claude-agent-sdk`, understand `query()`, `ClaudeAgentOptions`, and built-in tools (Read/Write/Bash). This is the library form of Claude Code you'll embed inside your own agent process, as opposed to using the CLI interactively. ✅ done in `research_agent.py` — though it calls `query()` with `allowed_tools=[]` (data is precomputed in Python and handed to the prompt as text, not fetched by the model via tool calls), so it's the simpler "no tools" pattern, not yet exercising custom tools (below).
 
-**During Phase 1–2:** Custom tools in the Agent SDK — wrapping your own Python functions (pull price data, compute an indicator, call Alpaca) as tools the agent can call. This is how "the agent" stops being just a chat window and starts being able to act on your data.
+**During Phase 1–2:** Custom tools in the Agent SDK — wrapping your own Python functions (pull price data, compute an indicator, call Alpaca) as tools the agent can call. This is how "the agent" stops being just a chat window and starts being able to act on your data. Not yet done — `research_agent.py` precomputes everything and hands it over as one prompt rather than giving the model callable tools.
 
 **During Phase 3 (the critical one):** Agent SDK **hooks**, specifically `PreToolUse`. This is the exact mechanism for the approval requirement — a hook can inspect a proposed tool call (an order), pause execution, notify you, and only proceed on approval. Read the hooks docs and the permissions docs together; that pairing is the whole safety architecture for this project.
 
@@ -127,8 +127,8 @@ Given basic coding and AI experience, working part-time: **3–5 months** to a v
 
 ## What to build next
 
-Given where things actually stand (Phase 0 and 2 done, Phase 1 skipped so far, Phase 2's original strategy rejected):
+Given where things actually stand (Phase 0 and 2 done, Phase 1's infrastructure built but unused, Phase 2's original strategy rejected):
 
-1. Either backfill **Phase 1** (the research/fundamentals agent — never started), or
+1. **Use Phase 1, don't just admire it:** delete the two synthetic notes in `research_log/`, run `research_agent.py` for real on a handful of tickers you know well, read the output critically, and start running `grade_calls.py` on a weekly cadence. Also do a real evaluation run of the competing `trading_agent_service.py` (TradingAgents wrapper) and decide which one earns a place in the workflow — maintaining two unused Phase 1 candidates indefinitely isn't progress.
 2. Put **momentum rotation** through the same rigor the SMA strategy got: portfolio-level simulation with the "max N positions" constraint, walk-forward validation, and the risk engine's drawdown circuit breaker wired in.
-3. Don't start Phase 3 (paper trading) until one of those produces a strategy that's actually earned it per the Phase 2 exit criteria.
+3. Don't start Phase 3 (paper trading) until one of those produces a strategy that's actually earned it per the Phase 2 exit criteria. The read-only `ibkr_service.py` layer (menu option 8) is fine to leave as-is until then — it needs nothing further for Phase 2 or Phase 1 work.

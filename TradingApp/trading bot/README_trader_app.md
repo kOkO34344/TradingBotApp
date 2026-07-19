@@ -14,10 +14,10 @@ The project folder is `/Users/kaloyanivanov/TradingBotApp` (outside the vault). 
 cd /Users/kaloyanivanov/TradingBotApp
 python3 -m venv .venv        # already done — .venv/ exists
 source .venv/bin/activate
-pip install -r requirements.txt   # yfinance, backtesting, pandas, numpy, rich, plotext, ib_async
+pip install -r requirements.txt   # yfinance, backtesting, pandas, numpy, rich, plotext, ib_async, claude-agent-sdk
 ```
 
-`ib_async` (IBKR connection layer) is now in `requirements.txt` alongside the backtesting stack — added when `ibkr_service.py` was built.
+`ib_async` (IBKR connection layer) and `claude-agent-sdk` (research agent, see below) are both in `requirements.txt` now, alongside the backtesting stack.
 
 `trading_agent_service.py` (see below) needs a **separate** one-time setup — it's not in `requirements.txt` because it depends on cloning a third-party repo, not a pip package.
 
@@ -60,6 +60,8 @@ Settings submenu (via option 6) now also includes:
 | `orb_backtest.py` | Opening Range Breakout (Zarattini & Aziz 2023 rules) on 5-minute QQQ bars. Free data only covers ~60 days, so this is a mechanics smoke test, not a real validation — writes `orb_trades.csv` |
 | `ibkr_service.py` | IBKR connection layer — see dedicated section below. Called from menu option 8; also importable standalone. |
 | `trading_agent_service.py` | Wrapper around the third-party `TradingAgents` multi-agent research library — see dedicated section below. **Not called from the menu** — standalone, run/imported manually. |
+| `research_agent.py` | **This project's own Phase 1 research agent**, built on the Claude Agent SDK — see dedicated section below. Also not called from the menu. |
+| `grade_calls.py` | Grades `research_agent.py`'s past notes against what actually happened to the price afterward. See dedicated section below. |
 
 ## Output/data files
 
@@ -69,6 +71,9 @@ Settings submenu (via option 6) now also includes:
 - `backtest_report.md` — the write-up of those results (source for [[trading bot/Backtest Results & Findings]])
 - `orb_trades.csv` — trade log from the ORB smoke test
 - `day_trader_research.md` — the day-trading landscape research (source for [[trading bot/Backtest Results & Findings]])
+- `research_log/*.md` — one file per `research_agent.py` run, `<TICKER>_<date>.md`. Currently holds **two synthetic placeholder files** (`AAPL_2026-05-15_0930.md`, `MSFT_2026-06-01_1100.md`), each explicitly labeled `SYNTHETIC TEST NOTE — not a real call. Safe to delete this file.` — these exist to exercise `grade_calls.py`'s parsing, not as real research. **Zero real agent runs exist yet.**
+- `graded_calls.csv` — output of `grade_calls.py --csv`, currently graded **only from the two synthetic notes above** (1/4 graded rows correct — meaningless as evidence, it's test data, not a track record)
+- `knowledge/*.md` — curated, verified-sources-only library injected into every `research_agent.py` prompt (see dedicated section below)
 
 ## IBKR connection layer (`ibkr_service.py`)
 
@@ -94,7 +99,30 @@ Thin wrapper around the third-party open-source project [TauricResearch/TradingA
   ```
 - **Costs real Anthropic API money per call** — roughly a few normal Claude conversations' worth of tokens per ticker, depending on model choice (currently configured for `claude-sonnet-5` deep-thinking / `claude-haiku-4-5-20251001` quick-thinking) and debate rounds. Test on one ticker before ever looping it over a watchlist or a schedule.
 - **Produces a simulated decision only** — same as everything else in this app, it does not touch a broker or place a trade. If this were to feed real orders, that integration doesn't exist yet.
-- Relevance to [[trading bot/Plan]]: this is a plausible shortcut for **Phase 1 (research agent)**, which otherwise hasn't been started — using a maintained third-party multi-agent library instead of building the research/thesis agent from scratch. It has **not** been evaluated for output quality yet, so it doesn't count as Phase 1 being "done" — just as an unstarted-but-available option.
+- Relevance to [[trading bot/Plan]]: this is a plausible shortcut for **Phase 1 (research agent)** — but see below, a second, purpose-built Phase 1 candidate now also exists in the folder, so this is one of two options rather than the only one.
+
+## Phase 1 research agent (`research_agent.py` + `grade_calls.py`) — built, zero real runs yet
+
+This is the project's **own** Phase 1 implementation — built to the original plan's spec (Claude Agent SDK, `query()`, structured logged thesis), and now the more developed of the two Phase 1 candidates in the folder.
+
+**`research_agent.py`** — turns a ticker into a structured, logged thesis:
+- Computes real indicators from real price data on **two timeframes** — daily (1y: SMA20/50/200, RSI-14, ATR-14, 52-week range, realized vol) and 15-minute (5d: SMA20, RSI-14, ATR-14, opening range, session VWAP) — and hands Claude numbers, never a description of "what a chart looks like."
+- Best-effort fundamentals snapshot (market cap, P/E, margins, revenue growth, debt/equity) via `yfinance`.
+- Injects the curated `knowledge/` library (see below) into every prompt.
+- Forces a fixed note structure: Thesis, Direction & timeframe, Confidence (1–10), Key levels, Risks, What would change my mind.
+- `python3 research_agent.py TICKER --dry-run` prints the assembled prompt with no API call — good for checking what the agent will see before spending tokens.
+- Full run needs `ANTHROPIC_API_KEY` or a logged-in Claude Code session (draws Agent SDK credit from the Claude plan instead of separate billing).
+- Every real run is logged to `research_log/<TICKER>_<date>.md`.
+
+**`grade_calls.py`** — the accountability half. Reads every note in `research_log/`, extracts the direction call and confidence, pulls what the price actually did at 5-day and 21-day horizons, and grades it:
+- long correct if forward return > +0.5%, short correct if < −0.5%, no-edge correct if |return| ≤ 2%.
+- Notes younger than the horizon are marked pending, not force-graded.
+- Prints a calibration report (win rate by direction, by confidence bucket) — the whole point being to catch a confidence-7 call that isn't actually righter than a confidence-4 call, per this project's calibration rule.
+- `--csv` also writes `graded_calls.csv`.
+
+**Current state, stated plainly: this has never produced a real call.** `research_log/` holds exactly two files, and both are explicitly marked `SYNTHETIC TEST NOTE — not a real call. Safe to delete this file.` — placeholders to exercise the parser, not agent output. `graded_calls.csv` currently shows 1/4 graded rows correct, which is **not a track record**, it's a grading-pipeline smoke test on fake data. Per [[trading bot/Plan]] and this project's own rule that autonomy is earned by graded evidence, none of that evidence exists yet — the infrastructure is what's done, not the calibration.
+
+**`knowledge/` library** — `.md` files read (in filename order) and injected into every `research_agent.py` prompt, capped at ~40,000 characters. Current contents: `01_evidence_based_principles.md`, which distills exactly the verified findings in [[trading bot/Backtest Results & Findings]] (base rates, momentum's published edge, ORB's regime-dependence, ICT's lack of evidence, the audited day-traders' risk rules) into the agent's working knowledge, plus a `README.md` describing the folder's rule: verified sources only, distilled, cited, no influencer material.
 
 ## Notes
 
