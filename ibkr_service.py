@@ -249,17 +249,20 @@ def wait_for_status(ib: IB, trade, timeout_s: float = 30.0):
 
 def place_market_order(ib: IB, contract, quantity: float, action: str = "BUY",
                        guard: RiskGuard | None = None, allow_no_stop: bool = False,
-                       allow_live: bool = False):
+                       allow_live: bool = False, opening: bool = True):
     """
     Bare market order — refused by default unless a stop will be managed
     elsewhere and you pass allow_no_stop=True. Prefer place_bracket_order.
+    Pass opening=False when this order flattens/reduces an existing
+    position (e.g. a rotation exit) so RiskGuard's max_open_positions check
+    — which only makes sense for new exposure — isn't applied to a close.
     Returns the Trade object, or None if blocked by the risk guard.
     """
     verify_paper_account(ib, allow_live=allow_live)
     guard = guard or RiskGuard()
     ib.qualifyContracts(contract)
     px = market_price(ib, contract)
-    ok, reason = guard.check(ib, contract, quantity, px, has_stop=allow_no_stop)
+    ok, reason = guard.check(ib, contract, quantity, px, has_stop=allow_no_stop, opening=opening)
     if not ok:
         journal("BLOCKED", contract, action, quantity, px, status="blocked", detail=reason)
         print(f"ORDER BLOCKED: {reason}", file=sys.stderr)

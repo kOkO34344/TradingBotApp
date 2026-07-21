@@ -56,9 +56,13 @@ File purposes are documented in each script's own module docstring
   45 rows of AAPL 15-min bars. `trader_settings.json.ibkr_port` updated to 4002
   to match. `diagnose_ibkr.sh` / `wait_and_test_ibkr.sh` still there if the
   connection ever needs re-diagnosing.
-- Phase 3 (paper trading with approval loop): NOT built. Next major milestone:
-  signal engine (momentum rotation first) → proposed order → owner approval →
-  paper execution via bracket orders → journal. An LLM is never in the intraday
+- Phase 3 (paper trading with approval loop): BUILT and executed once for
+  real, 2026-07-21 — `paper_trader.py`. First rebalance: bought GOOGL (14),
+  AAPL (15), JNJ (19) on the paper account, all with working 2xATR stops.
+  Note: the paper account is EUR-denominated with no live market-data
+  subscription — `paper_trader.py` converts NetLiquidation to USD via the
+  EURUSD rate and requests delayed data (`reqMarketDataType(3)`). No
+  scheduler yet — owner runs it manually. An LLM is never in the intraday
   firing loop; rules fire at machine speed, the agent reasons at research speed.
 - Phase 4 (tiny real capital): locked until months of Phase 3 evidence.
 
@@ -69,16 +73,18 @@ File purposes are documented in each script's own module docstring
    benign `ib_async` warnings on connect ("open orders request timed out",
    "completed orders request timed out") — harmless on a fresh account with
    no order history, not a code bug.
-2. **Phase 3 paper-trading loop** (`paper_trader.py`, new file) — NOW
-   UNBLOCKED, this is the next milestone:
-   - Signal: momentum rotation (top-3 of watchlist by 12-mo return, monthly),
-     reusing the logic in `trader_app.py:momentum_backtest`.
-   - Proposal: print/log intended rebalance (what to sell, what to buy, sizes
-     from RiskGuard limits) → require explicit owner y/n approval in terminal.
-   - Execution: approved orders go through `place_bracket_order` (paper account,
-     ATR-based stops). Everything journals to `trade_journal.csv`.
-   - No scheduler yet: owner runs it manually first. Cron/launchd comes after
-     a few clean manual cycles.
+2. ~~Phase 3 paper-trading loop~~ (`paper_trader.py`) — DONE 2026-07-21 and
+   run for real once. Signal: fresh (force-refetched) momentum ranking, top-N
+   of watchlist. Sizing: `qty = floor((NetLiq_usd * risk_pct_per_trade%) /
+   (2*ATR))`, clamped to `risk_limits.json`'s max order notional using the
+   *buffered* entry price (not raw market price — a real bug hit and fixed
+   during the first run). Exits cancel the open stop leg and confirm the
+   cancel before flattening; exits run before entries so RiskGuard's
+   max_open_positions headroom is freed first. `place_market_order` gained
+   an `opening: bool` param so closes don't get checked as new exposure.
+   `--dry-run` connects read-only and prints the proposal without asking.
+   No scheduler yet — owner runs it manually. Next: a few more manual
+   monthly cycles before even considering cron/launchd.
 3. **Research agent live runs.** `python3 research_agent.py <TICKER>` on the
    watchlist weekly; `python3 grade_calls.py` to grade. Keep `research_log/`
    accumulating — this is the evidence that eventually loosens approval.

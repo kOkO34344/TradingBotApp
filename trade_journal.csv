@@ -1,0 +1,8 @@
+timestamp,event,symbol,sec_type,action,quantity,price,stop,target,status,detail
+2026-07-21T22:44:12,SUBMIT,GOOGL,STK,BUY,14,351.28,327.98,,submitted,bracket order
+2026-07-21T22:44:13,RESULT,GOOGL,STK,BUY,14,351.28,327.98,,Filled,bracket placed (parent status shown)
+2026-07-21T22:44:13,SUBMIT,AAPL,STK,BUY,15,329.6,311.23,,submitted,bracket order
+2026-07-21T22:44:14,RESULT,AAPL,STK,BUY,15,329.6,311.23,,Filled,bracket placed (parent status shown)
+2026-07-21T22:44:14,BLOCKED,JNJ,STK,BUY,20,251.09,236.84,,blocked,"notional $5,022 exceeds limit $5,000"
+2026-07-21T22:46:36,SUBMIT,JNJ,STK,BUY,19,251.15,236.9,,submitted,bracket order
+2026-07-21T22:46:37,RESULT,JNJ,STK,BUY,19,251.15,236.9,,Filled,bracket placed (parent status shown)
