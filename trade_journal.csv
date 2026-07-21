@@ -6,3 +6,9 @@ timestamp,event,symbol,sec_type,action,quantity,price,stop,target,status,detail
 2026-07-21T22:44:14,BLOCKED,JNJ,STK,BUY,20,251.09,236.84,,blocked,"notional $5,022 exceeds limit $5,000"
 2026-07-21T22:46:36,SUBMIT,JNJ,STK,BUY,19,251.15,236.9,,submitted,bracket order
 2026-07-21T22:46:37,RESULT,JNJ,STK,BUY,19,251.15,236.9,,Filled,bracket placed (parent status shown)
+2026-07-21T23:34:32,SUBMIT,GOOGL,STK,SELL,14.0,,326.06,,submitted,re-protect: standalone GTC stop (original DAY stop expired)
+2026-07-21T23:34:32,RESULT,GOOGL,STK,SELL,14.0,,326.06,,PreSubmitted,re-protect stop
+2026-07-21T23:34:34,SUBMIT,JNJ,STK,SELL,19.0,,237.61,,submitted,re-protect: standalone GTC stop (original DAY stop expired)
+2026-07-21T23:34:34,RESULT,JNJ,STK,SELL,19.0,,237.61,,PreSubmitted,re-protect stop
+2026-07-21T23:34:37,SUBMIT,AAPL,STK,SELL,15.0,,309.1,,submitted,re-protect: standalone GTC stop (original DAY stop expired)
+2026-07-21T23:34:37,RESULT,AAPL,STK,SELL,15.0,,309.1,,PreSubmitted,re-protect stop

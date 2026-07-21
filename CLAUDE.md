@@ -58,12 +58,21 @@ File purposes are documented in each script's own module docstring
   connection ever needs re-diagnosing.
 - Phase 3 (paper trading with approval loop): BUILT and executed once for
   real, 2026-07-21 — `paper_trader.py`. First rebalance: bought GOOGL (14),
-  AAPL (15), JNJ (19) on the paper account, all with working 2xATR stops.
-  Note: the paper account is EUR-denominated with no live market-data
-  subscription — `paper_trader.py` converts NetLiquidation to USD via the
-  EURUSD rate and requests delayed data (`reqMarketDataType(3)`). No
-  scheduler yet — owner runs it manually. An LLM is never in the intraday
-  firing loop; rules fire at machine speed, the agent reasons at research speed.
+  AAPL (15), JNJ (19) on the paper account. Note: the paper account is
+  EUR-denominated with no live market-data subscription — `paper_trader.py`
+  converts NetLiquidation to USD via the EURUSD rate and requests delayed
+  data (`reqMarketDataType(3)`). No scheduler yet — owner runs it manually.
+  An LLM is never in the intraday firing loop; rules fire at machine speed,
+  the agent reasons at research speed.
+  **SAFETY BUG found + fixed same day:** `place_bracket_order`'s stop leg had
+  no explicit TIF, so IBKR defaulted it to DAY — the stop silently expired
+  at end of session, leaving all three positions completely unprotected for
+  a period with no one aware. Fixed in `ibkr_service.py` (stop, and target if
+  used, now explicitly `tif="GTC"`). All three positions were manually
+  re-protected with fresh GTC stops the same day (see `trade_journal.csv`
+  "re-protect" entries, ~23:34 UTC). **Lesson: after ANY bracket order,
+  verify the stop is GTC and still open — don't trust "PreSubmitted" checked
+  minutes after placement to mean it stays protected hours or days later.**
 - Phase 4 (tiny real capital): locked until months of Phase 3 evidence.
 
 ## Work queue for Claude Code (in order — finish the job)
@@ -94,9 +103,16 @@ File purposes are documented in each script's own module docstring
    - Once notes are ≥5 days old, start running `python3 grade_calls.py`
      and actually read the calibration report — don't just run it, look at it.
 4. **Paper trading — operational, not a build task.** `paper_trader.py` holds
-   real open positions (GOOGL/AAPL/JNJ, opened 2026-07-21). Going forward:
+   real open positions (GOOGL/AAPL/JNJ, opened 2026-07-21, stops re-fixed to
+   GTC same day after the DAY-TIF bug above). Going forward:
    - Re-run monthly (or on-demand) for the next rebalance; check `--dry-run`
      first if unsure what it'll propose.
+   - **Every position check must verify stops are GTC, not just "present."**
+     Query `ib.trades()` (not just `ib.openTrades()` right after placing) and
+     check `order.tif == "GTC"` — a DAY stop will look fine for hours and
+     then silently vanish at end of session. This is now fixed at the source
+     (`place_bracket_order`), but any positions opened before this fix, or
+     opened by other tools, should be checked.
    - Periodically sanity-check the account is healthy: positions still have
      working stops, no daily-loss circuit breaker trips, journal matches
      what's actually on IBKR. Don't just assume the last run is still current.

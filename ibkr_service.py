@@ -312,12 +312,16 @@ def place_bracket_order(ib: IB, contract, quantity: float, action: str,
     parent.transmit = False
     children = []
     if target_price is not None:
-        tp = LimitOrder(exit_action, quantity, target_price)
+        tp = LimitOrder(exit_action, quantity, target_price, tif="GTC")
         tp.orderId = ib.client.getReqId()
         tp.parentId = parent.orderId
         tp.transmit = False
         children.append(tp)
-    sl = StopOrder(exit_action, quantity, stop_price)
+    # GTC (Good-Til-Cancelled): a DAY stop (IBKR's default) expires at the
+    # end of the trading session, silently leaving a multi-day swing
+    # position with no protective stop at all. The stop must outlive the
+    # day it was placed on.
+    sl = StopOrder(exit_action, quantity, stop_price, tif="GTC")
     sl.orderId = ib.client.getReqId()
     sl.parentId = parent.orderId
     sl.transmit = True  # last child transmits the whole bracket atomically
