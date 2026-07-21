@@ -25,23 +25,14 @@ Brokers (paper account first, always).
 
 ## Architecture
 
-- `trader_app.py` — interactive terminal app (rich/plotext). Menus: SMA backtests
-  (in/out-of-sample), ticker deep dive, momentum rotation backtest (portfolio),
-  settings (persisted in `trader_settings.json`), IBKR paper inspection
-  (read-only: account, positions, live 15-min bars).
-- `ibkr_service.py` — IBKR layer via ib_async: connect (paper-guarded), contract
-  builders per asset class, 15-min bars (one-shot + streaming; MIDPOINT for FX,
-  AGGTRADES for crypto), RiskGuard, bracket orders, trade journal.
-  `python3 ibkr_service.py --selftest` = 18 offline checks, all passing.
-- `research_agent.py` — Phase 1 research agent (claude-agent-sdk). Computes
-  multi-timeframe indicators (daily + 15m), injects `knowledge/*.md`, writes
-  structured thesis notes to `research_log/`. `--dry-run` shows the prompt.
-- `grade_calls.py` — grades research notes vs actual forward returns (5d/21d),
-  calibration by confidence bucket. This report IS the agent's track record.
-- `knowledge/` — curated library, verified sources only (rules in its README).
-- Analysis scripts: `sma_crossover_backtest.py`, `variant_experiments.py`,
-  `strategy_shootout.py`, `orb_backtest.py`. Reports: `backtest_report.md`,
-  `day_trader_research.md`, `trading_agent_plan.md` (the master plan).
+File purposes are documented in each script's own module docstring
+(`trader_app.py`, `ibkr_service.py`, `research_agent.py`, `grade_calls.py`,
+`indicators.py`) — read those rather than duplicating them here.
+
+- `indicators.py` is the SINGLE SOURCE OF TRUTH for technical math, shared by
+  trader_app charts and research_agent prompts (human and AI see identical
+  numbers). It has `--selftest`. Never reimplement indicators elsewhere —
+  including in any future web dashboard.
 - `trading_agent_service.py` — third-party TradingAgents wrapper. NEVER RUN yet;
   daily-granularity only, candidate for one evaluation run vs research_agent.
 
@@ -59,8 +50,14 @@ Brokers (paper account first, always).
 ## Current phase status
 
 - Phase 1 (research agent): built, needs real runs + graded calls accumulating.
-- Phase 2 (infrastructure): hardened and self-tested. TWS not yet installed on
-  the owner's Mac — first connected smoke test still pending.
+- Phase 2 (infrastructure): hardened and self-tested. IB Gateway 10.45 IS
+  installed on the owner's Mac, but the connected smoke test is BLOCKED —
+  the account has an address-verification issue in manual review at IBKR.
+  Nothing to fix here until IBKR clears it. Full diagnostic history, root
+  cause, and the exact steps to resume once cleared: `ibkr_setup_report.md`.
+  Two ready-to-use scripts are waiting: `diagnose_ibkr.sh` (health check)
+  and `wait_and_test_ibkr.sh` (polls for the paper API port + auto-runs the
+  connected smoke test — just run it, no need to babysit the login).
 - Phase 3 (paper trading with approval loop): NOT built. Next major milestone:
   signal engine (momentum rotation first) → proposed order → owner approval →
   paper execution via bracket orders → journal. An LLM is never in the intraday
@@ -69,9 +66,14 @@ Brokers (paper account first, always).
 
 ## Work queue for Claude Code (in order — finish the job)
 
-1. **TWS smoke test.** Owner installs TWS (paper login, API enabled, port 7497).
-   Then run `python3 ibkr_service.py` connected; fix whatever surfaces
-   (contract qualification, market-data permissions, pacing). Commit.
+1. **TWS smoke test — BLOCKED on IBKR, not on us.** Gateway is installed;
+   the account is stuck in IBKR's address-verification manual review (see
+   `ibkr_setup_report.md`). Once the owner confirms IBKR cleared it AND the
+   paper account is provisioned (Client Portal → Settings → Account
+   Configuration → Paper Trading Account, ~24h turnaround): run
+   `./wait_and_test_ibkr.sh`, fix whatever surfaces (contract qualification,
+   market-data permissions, pacing), commit. Don't re-diagnose the login
+   step from scratch — read the report first.
 2. **Phase 3 paper-trading loop** (`paper_trader.py`, new file):
    - Signal: momentum rotation (top-3 of watchlist by 12-mo return, monthly),
      reusing the logic in `trader_app.py:momentum_backtest`.

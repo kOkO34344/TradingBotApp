@@ -1,0 +1,4 @@
+=== Waiting for IBKR PAPER API port to open (timeout 900s) — 2026-07-21 14:06:13 ===
+TIMEOUT after 900s: no PAPER API port opened.
+Check: are you logged in on PAPER mode? Is 'Enable ActiveX and Socket Clients' checked
+under Configure -> Settings -> API -> Settings? Correct socket port set (7497/4002)?
