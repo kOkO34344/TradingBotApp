@@ -85,13 +85,29 @@ File purposes are documented in each script's own module docstring
    `--dry-run` connects read-only and prints the proposal without asking.
    No scheduler yet — owner runs it manually. Next: a few more manual
    monthly cycles before even considering cron/launchd.
-3. **Research agent live runs.** `python3 research_agent.py <TICKER>` on the
-   watchlist weekly; `python3 grade_calls.py` to grade. Keep `research_log/`
-   accumulating — this is the evidence that eventually loosens approval.
-4. **Web UI (`TraderAppFullStack.txt`) — ONLY after 1-2 work.** Backend-first:
-   FastAPI wrapper around ibkr_service + journal reader. Frontend with Vite
-   (NOT create-react-app — deprecated). A dashboard before fills exist would
-   display zeros; do not start here.
+3. **Research agent — ongoing, in progress.** All 12 watchlist tickers got
+   real notes 2026-07-20/21 (see `research_log/`). `grade_calls.py` isn't
+   meaningful yet — notes are too fresh for even the 5-day forward-return
+   horizon (earliest useful grading: ~2026-07-25+). Next actions:
+   - Re-run `python3 research_agent.py <TICKER>` on the watchlist weekly
+     (next due ~2026-07-28).
+   - Once notes are ≥5 days old, start running `python3 grade_calls.py`
+     and actually read the calibration report — don't just run it, look at it.
+4. **Paper trading — operational, not a build task.** `paper_trader.py` holds
+   real open positions (GOOGL/AAPL/JNJ, opened 2026-07-21). Going forward:
+   - Re-run monthly (or on-demand) for the next rebalance; check `--dry-run`
+     first if unsure what it'll propose.
+   - Periodically sanity-check the account is healthy: positions still have
+     working stops, no daily-loss circuit breaker trips, journal matches
+     what's actually on IBKR. Don't just assume the last run is still current.
+5. **Web UI (`TraderAppFullStack.txt`) — now legitimately unblocked.** Items
+   1-2 are done AND real fills now exist in `trade_journal.csv`, so the
+   original "a dashboard before fills exist would display zeros" objection
+   no longer applies. Still backend-first: FastAPI wrapper around
+   ibkr_service + journal reader, then a Vite frontend (NOT create-react-app
+   — deprecated). Reasonable to start when the owner wants it, but weigh it
+   against #3/#4 above — more research/trading cycles is more of the
+   evidence this project is actually gated on; a dashboard is not.
 
 ## Known environment gotchas
 
