@@ -16,3 +16,8 @@ price_data/
 # IBKR credentials or local secrets, if ever added
 *.env
 secrets*
+
+# Runtime logs from the daily vault-sync automation (grows continuously,
+# not meaningful version-controlled content)
+vault_sync.log
+vault_sync_launchd.log

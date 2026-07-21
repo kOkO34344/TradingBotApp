@@ -130,6 +130,14 @@ File purposes are documented in each script's own module docstring
 - Owner's zsh doesn't allow `#` comments interactively — don't hand the owner
   paste-blocks containing comment lines (or tell them `setopt interactive_comments`).
 - Node/npm may not be installed yet — check before any frontend work.
+- **A daily launchd job runs `daily_vault_sync.sh`** (`~/Library/LaunchAgents/
+  com.tradingbotapp.vaultsync.plist`, 22:00 local) — headless `claude -p`,
+  scoped via `--allowedTools` to only Read/Edit/git-commit files under
+  `TradingApp/trading bot/` (the Obsidian vault). It keeps the vault's
+  living-status notes in sync with this file and auto-commits its own
+  changes as "Daily vault sync: ...". It never touches code. Log:
+  `vault_sync.log` / `vault_sync_launchd.log`. To disable:
+  `launchctl unload ~/Library/LaunchAgents/com.tradingbotapp.vaultsync.plist`.
 - `(base)` conda is always in the prompt; the project venv must ALSO show
   `(.venv)`. If imports fail, that's the first thing to check.
 
