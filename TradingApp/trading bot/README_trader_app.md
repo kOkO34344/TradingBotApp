@@ -1,7 +1,7 @@
 ---
 tags: [trading-bot, how-to]
 source: /Users/kaloyanivanov/TradingBotApp
-last_synced: 2026-07-19
+last_synced: 2026-07-21
 ---
 
 # Trader App — how to run it on this Mac
@@ -17,8 +17,6 @@ source .venv/bin/activate
 pip install -r requirements.txt   # yfinance, backtesting, pandas, numpy, rich, plotext, ib_async, claude-agent-sdk
 ```
 
-`ib_async` (IBKR connection layer) and `claude-agent-sdk` (research agent, see below) are both in `requirements.txt` now, alongside the backtesting stack.
-
 `trading_agent_service.py` (see below) needs a **separate** one-time setup — it's not in `requirements.txt` because it depends on cloning a third-party repo, not a pip package.
 
 ## Run it
@@ -29,9 +27,9 @@ source .venv/bin/activate
 python3 trader_app.py
 ```
 
-First launch downloads ~16 years of daily data for 11 tickers (~30 seconds), cached in `price_data/` next to the script (already populated: AAPL, AMZN, DIS, GOOGL, JNJ, JPM, KO, MSFT, PG, SPY, XOM).
+First launch downloads ~16 years of daily data for the watchlist (~30 seconds), cached in `price_data/` next to the script.
 
-## Current menu (9 options)
+## Current menu (10 options — reshuffled since last sync)
 
 | # | What it does |
 |---|---|
@@ -39,95 +37,97 @@ First launch downloads ~16 years of daily data for 11 tickers (~30 seconds), cac
 | 2 | SMA backtest — in-sample (2010 → 2018) |
 | 3 | SMA backtest — full history |
 | 4 | Ticker deep dive: full stats, every individual trade, equity curve chart in the terminal |
-| 5 | **Momentum rotation backtest (portfolio-level)** — the strategy that actually earned its keep, see [[trading bot/Backtest Results & Findings]] |
-| 6 | Settings: tickers, SMA windows, per-trade cost, starting cash, date ranges, **risk engine**, momentum parameters, **IBKR port/client id** — saved to `trader_settings.json` |
-| 7 | Refresh price data (force re-download) |
-| 8 | **IBKR paper account** — connect, account summary, positions, live 15-min bars for any stock/forex/future/crypto symbol |
-| 9 | Quit |
+| 5 | **Chart view (new)** — candlestick charts (daily 120 bars or 15-min 5 days) with selectable indicator sets: trend (SMA overlays + MACD/RSI panels), volatility (Bollinger bands), volume (bars + session VWAP on 15m), structure (computed swing support/resistance). Ends with a numeric readout — **the exact same numbers `research_agent.py` reasons over**, both pulled from `indicators.py` (see below) |
+| 6 | Momentum rotation backtest (portfolio-level) — the strategy that actually earned its keep, see [[trading bot/Backtest Results & Findings]]. **(This was menu 5 before the chart view was inserted.)** |
+| 7 | Settings: tickers, SMA windows, per-trade cost, starting cash, date ranges, risk engine, momentum parameters, IBKR port/client id — saved to `trader_settings.json` |
+| 8 | Refresh price data (force re-download) |
+| 9 | IBKR paper account — connect, account summary, positions, live 15-min bars for any stock/forex/future/crypto symbol |
+| 10 | Quit |
 
-Settings submenu (via option 6) now also includes:
-- **Risk engine toggle** — when on, the SMA strategy adds a 200-day trend filter + 2×ATR trailing stop + fixed-fractional position sizing (you set risk % per trade); the momentum strategy switches to "dual momentum" (falls back to cash instead of a losing ticker in bear markets). Still **off by default**.
-- **Momentum settings** — how many top tickers to hold (default 3) and the lookback window in months (default 12).
-- **IBKR socket port / client id** — port defaults to 7497 (TWS paper). The prompt itself refuses live ports (7496/4001) — you cannot set a live port from this menu.
+Settings submenu (via option 7) also includes:
+- **Risk engine toggle** — SMA: 200-day trend filter + 2×ATR trailing stop + fixed-fractional sizing; momentum: dual-momentum cash filter. Still **off by default**.
+- **Momentum settings** — top-N (default 3) and lookback months (default 12).
+- **IBKR socket port / client id** — the settings menu refuses live ports (7496/4001) outright.
 
 ## Other scripts in the folder (not run through the menu)
 
 | Script | What it does |
 |---|---|
-| `sma_crossover_backtest.py` | The core SMA 20/50 backtest engine — imported by `trader_app.py` and the other scripts below |
-| `strategy_shootout.py` | Runs all 5 strategy families (SMA trend, golden cross, Donchian breakout, RSI-2 mean reversion, momentum rotation) plus buy-and-hold/SPY, out-of-sample, one command. Produces the comparison table in [[trading bot/Backtest Results & Findings]]. |
-| `variant_experiments.py` | Tests risk-management variants of the SMA crossover (baseline / trend filter / ATR stop / fully risk-sized) against the same out-of-sample period |
-| `orb_backtest.py` | Opening Range Breakout (Zarattini & Aziz 2023 rules) on 5-minute QQQ bars. Free data only covers ~60 days, so this is a mechanics smoke test, not a real validation — writes `orb_trades.csv` |
-| `ibkr_service.py` | IBKR connection layer — see dedicated section below. Called from menu option 8; also importable standalone. |
-| `trading_agent_service.py` | Wrapper around the third-party `TradingAgents` multi-agent research library — see dedicated section below. **Not called from the menu** — standalone, run/imported manually. |
-| `research_agent.py` | **This project's own Phase 1 research agent**, built on the Claude Agent SDK — see dedicated section below. Also not called from the menu. |
-| `grade_calls.py` | Grades `research_agent.py`'s past notes against what actually happened to the price afterward. See dedicated section below. |
+| `sma_crossover_backtest.py` | Core SMA 20/50 backtest engine — imported by `trader_app.py` and the scripts below |
+| `strategy_shootout.py` | Runs all 5 strategy families + buy-and-hold/SPY, out-of-sample, one command. Source of the comparison table in [[trading bot/Backtest Results & Findings]] |
+| `variant_experiments.py` | SMA crossover risk-management variants (baseline / trend filter / ATR stop / fully risk-sized) |
+| `orb_backtest.py` | Opening Range Breakout (Zarattini & Aziz 2023 rules) on 5-min QQQ bars — mechanics smoke test, not a real validation (only ~60 days of free data) |
+| `indicators.py` | **New — shared indicator math.** See dedicated section below. |
+| `ibkr_service.py` | IBKR connection + **now hardened** execution layer. See dedicated section below. Called from menu option 9; also importable standalone. |
+| `paper_trader.py` | **New — Phase 3 paper-trading loop, not part of the menu app.** Momentum signal → diff vs. live positions → proposed rebalance → y/n approval → `place_bracket_order` execution. Run for real 2026-07-21. See [[IBKR Integration]]. |
+| `trading_agent_service.py` | Wrapper around the third-party `TradingAgents` multi-agent research library. **Still never run.** See dedicated section below. |
+| `research_agent.py` | This project's own Phase 1 research agent. **Now has 12 real runs behind it.** See dedicated section below. |
+| `grade_calls.py` | Grades `research_agent.py`'s notes against what the price actually did. **Not yet re-run against the 12 real notes** — see below. |
+| `diagnose_ibkr.sh`, `wait_and_test_ibkr.sh` | Connection troubleshooting scripts written during the IBKR paper-account setup saga (see IBKR section below). Still useful if the connection ever needs re-diagnosing. |
 
 ## Output/data files
 
 - `price_data/*.csv` — cached daily OHLCV per ticker
-- `trader_settings.json` — persisted settings (tickers, SMA windows, costs, risk engine, momentum params, IBKR port/client id)
-- `backtest_results.csv` — raw SMA backtest output, all tickers, all periods
-- `backtest_report.md` — the write-up of those results (source for [[trading bot/Backtest Results & Findings]])
-- `orb_trades.csv` — trade log from the ORB smoke test
-- `day_trader_research.md` — the day-trading landscape research (source for [[trading bot/Backtest Results & Findings]])
-- `research_log/*.md` — one file per `research_agent.py` run, `<TICKER>_<date>.md`. Currently holds **two synthetic placeholder files** (`AAPL_2026-05-15_0930.md`, `MSFT_2026-06-01_1100.md`), each explicitly labeled `SYNTHETIC TEST NOTE — not a real call. Safe to delete this file.` — these exist to exercise `grade_calls.py`'s parsing, not as real research. **Zero real agent runs exist yet.**
-- `graded_calls.csv` — output of `grade_calls.py --csv`, currently graded **only from the two synthetic notes above** (1/4 graded rows correct — meaningless as evidence, it's test data, not a track record)
-- `knowledge/*.md` — curated, verified-sources-only library injected into every `research_agent.py` prompt (see dedicated section below)
+- `trader_settings.json` — persisted settings, now including a 12-ticker watchlist (NVDA and PLTR added) and `ibkr_port: 4002` (switched from TWS's 7497 to Gateway's 4002 — see IBKR section)
+- `backtest_results.csv`, `backtest_report.md` — SMA backtest raw output + write-up (source for [[trading bot/Backtest Results & Findings]])
+- `orb_trades.csv`, `day_trader_research.md` — ORB smoke-test log + day-trading landscape research (source for [[trading bot/Backtest Results & Findings]])
+- `research_log/*.md` — **12 real research notes now**, one per full-watchlist ticker (AAPL, MSFT, GOOGL, AMZN, JPM, JNJ, PG, XOM, KO, DIS, NVDA, PLTR), dated 2026-07-20/21. The two old synthetic placeholder files are gone. See the research agent section below for what these actually say.
+- `graded_calls.csv` — **stale.** Still reflects only the old synthetic-note run from 2026-07-19; `grade_calls.py` has not been re-run against the 12 real notes yet. The most valuable single next action in this whole project is running `python3 grade_calls.py --csv` once the notes are old enough to have forward returns (the 5-day horizon on the 07-20/21 notes should be gradable very soon).
+- `knowledge/*.md` — curated, verified-sources-only library injected into every `research_agent.py` prompt (unchanged since last sync)
+- `risk_limits.json`, `trade_journal.csv` — **exist now, with real content.** `paper_trader.py`'s first rebalance (2026-07-21) exercised `place_bracket_order` for real: `trade_journal.csv` has actual SUBMIT/RESULT/BLOCKED rows (GOOGL/AAPL/JNJ fills, a JNJ notional block, and the same-day GTC re-protect entries), and `risk_limits.json` holds the live limits ($5,000 max order notional, 5 max positions, $300 daily-loss circuit breaker, stop required).
 
-## IBKR connection layer (`ibkr_service.py`)
+## Shared indicators module (`indicators.py`) — new
 
-Foundation for live/paper trading through Interactive Brokers — one API for stocks, forex, futures (incl. commodities like Micro Gold `MGC`), and crypto.
+The single source of truth for technical math, now used by **both** the chart view (menu 5, what the owner sees) and `research_agent.py` (what the AI reasons over) — so the agent's numbers are guaranteed to match what's on screen, not a separate parallel calculation.
 
-- Requires TWS or IB Gateway running locally with the API enabled (`Edit → Global Configuration → API → Settings`). Paper ports: 7497 (TWS) / 4002 (Gateway).
-- `python3 ibkr_service.py` smoke-tests the connection: pulls 15-min bars for AAPL, EURUSD, and BTC from your paper account.
-- Safety: `connect()` refuses live ports (7496/4001) unless you explicitly pass `allow_live=True`. Keep it that way until months of paper evidence exist. The `trader_app.py` settings menu also refuses live ports outright — two independent guards.
-- What it contains: contract builders (`stock`, `forex_pair`, `future`, `crypto`), a 15-min bar pull (`get_15min_bars`) and live streaming (`stream_15min_bars`), and a generic `place_market_order`. Menu option 8 in the app only exercises the **read-only** parts (account summary, positions, bars) — `place_market_order` exists in the module but is **not wired to anything**. Nothing can place a real or paper order through the app today.
-- Asset-class data quirk handled in code: forex history uses MIDPOINT, crypto uses AGGTRADES, everything else TRADES.
-- Futures expire — contracts like `MGC 202612` must be rolled to the next month periodically. Not yet automated; flagged for whenever a strategy loop actually trades futures.
+- Covers: SMA/EMA/MACD (trend), RSI (momentum), ATR/Bollinger/Keltner incl. squeeze detection (volatility), VWAP (session-aware)/OBV (volume), swing support/resistance, 52-week range, opening range (structure).
+- `python3 indicators.py --selftest` — reference-math checks (e.g. SMA vs pandas rolling mean, MACD = EMA12−EMA26) plus invariant checks (RSI∈[0,100], ATR>0, bands don't invert). All passing as of this sync.
+- Per this project's `CLAUDE.md`: **never reimplement indicators elsewhere, including any future web dashboard** — this module is meant to be the one place technical math lives.
 
-## TradingAgents research wrapper (`trading_agent_service.py`) — new, untested
+## IBKR connection layer (`ibkr_service.py`) — now hardened, and connection verified live
 
-Thin wrapper around the third-party open-source project [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents), which runs a multi-agent LLM debate (bull analyst vs. bear analyst vs. risk manager vs. portfolio manager) over a ticker and returns a buy/hold/sell call with the reasoning trail.
+Foundation for live/paper trading through Interactive Brokers — one API for stocks, forex, futures (incl. commodities), and crypto.
 
-- **Status: added to the folder but not yet run or verified.** No output logs exist yet — treat any output as unvalidated until it's actually been exercised and the reasoning spot-checked against known facts about the ticker.
-- **Separate setup required**, not in `requirements.txt`:
-  ```bash
-  git clone https://github.com/TauricResearch/TradingAgents.git
-  cd TradingAgents && python3 -m venv .venv && source .venv/bin/activate && pip install .
-  export ANTHROPIC_API_KEY="sk-ant-..."
-  ```
-- **Costs real Anthropic API money per call** — roughly a few normal Claude conversations' worth of tokens per ticker, depending on model choice (currently configured for `claude-sonnet-5` deep-thinking / `claude-haiku-4-5-20251001` quick-thinking) and debate rounds. Test on one ticker before ever looping it over a watchlist or a schedule.
-- **Produces a simulated decision only** — same as everything else in this app, it does not touch a broker or place a trade. If this were to feed real orders, that integration doesn't exist yet.
-- Relevance to [[trading bot/Plan]]: this is a plausible shortcut for **Phase 1 (research agent)** — but see below, a second, purpose-built Phase 1 candidate now also exists in the folder, so this is one of two options rather than the only one.
+**The connection itself: resolved.** IBKR had been holding the paper account in address-verification review; that cleared 2026-07-21. A connected smoke test then **passed for real** against IB Gateway on the paper port (4002), account `DUQ903866`: `verify_paper_account()` succeeded and the script pulled 45 rows of real AAPL 15-min bars. `trader_settings.json.ibkr_port` was updated from 7497 to 4002 to match. Two benign `ib_async` warnings appear on connect ("open orders request timed out", "completed orders request timed out") — expected on a fresh account with no order history, not a bug. `diagnose_ibkr.sh` / `wait_and_test_ibkr.sh` are still in the folder in case the connection ever needs re-diagnosing.
 
-## Phase 1 research agent (`research_agent.py` + `grade_calls.py`) — built, zero real runs yet
+**The module itself got substantially more serious since last sync — three enforcement layers now sit in front of every order path, in code, not just as documentation:**
 
-This is the project's **own** Phase 1 implementation — built to the original plan's spec (Claude Agent SDK, `query()`, structured logged thesis), and now the more developed of the two Phase 1 candidates in the folder.
+1. **Paper verification** — `verify_paper_account()` checks the account id starts with `D` (IBKR's paper-account prefix) and refuses to proceed otherwise unless `allow_live=True` is passed explicitly.
+2. **RiskGuard** — limits loaded from `risk_limits.json` (auto-created with defaults on first use: $5,000 max order notional, 5 max open positions, $300 daily-loss circuit breaker, and stop-required — bare stopless orders are refused unless deliberately overridden). A blocked order never reaches the broker and is journaled with the reason instead.
+3. **Trade journal** — every order attempt, block, submission, and fill appends a row to `trade_journal.csv`. This matches the project rule verbatim: if it isn't in the journal, it didn't happen.
 
-**`research_agent.py`** — turns a ticker into a structured, logged thesis:
-- Computes real indicators from real price data on **two timeframes** — daily (1y: SMA20/50/200, RSI-14, ATR-14, 52-week range, realized vol) and 15-minute (5d: SMA20, RSI-14, ATR-14, opening range, session VWAP) — and hands Claude numbers, never a description of "what a chart looks like."
-- Best-effort fundamentals snapshot (market cap, P/E, margins, revenue growth, debt/equity) via `yfinance`.
-- Injects the curated `knowledge/` library (see below) into every prompt.
-- Forces a fixed note structure: Thesis, Direction & timeframe, Confidence (1–10), Key levels, Risks, What would change my mind.
-- `python3 research_agent.py TICKER --dry-run` prints the assembled prompt with no API call — good for checking what the agent will see before spending tokens.
-- Full run needs `ANTHROPIC_API_KEY` or a logged-in Claude Code session (draws Agent SDK credit from the Claude plan instead of separate billing).
-- Every real run is logged to `research_log/<TICKER>_<date>.md`.
+**New execution functions:**
+- `place_bracket_order` — the **default** way to enter a position now: limit entry + stop-loss (+ optional take-profit) submitted as one atomic bracket, so a position can never exist without its stop attached.
+- `place_market_order` — still exists, but is now **refused unless `allow_no_stop=True`** is passed deliberately. Bare stopless market orders are the exception path, not the default, per the project's "no order without a stop" rule.
+- Both are still **never called from the app menu** — menu option 9 remains read-only (account summary, positions, bars). `place_bracket_order` has, however, been called for real from the separate `paper_trader.py` script (see below) — that's why `risk_limits.json` and `trade_journal.csv` now exist on disk with real content.
 
-**`grade_calls.py`** — the accountability half. Reads every note in `research_log/`, extracts the direction call and confidence, pulls what the price actually did at 5-day and 21-day horizons, and grades it:
-- long correct if forward return > +0.5%, short correct if < −0.5%, no-edge correct if |return| ≤ 2%.
-- Notes younger than the horizon are marked pending, not force-graded.
-- Prints a calibration report (win rate by direction, by confidence bucket) — the whole point being to catch a confidence-7 call that isn't actually righter than a confidence-4 call, per this project's calibration rule.
-- `--csv` also writes `graded_calls.csv`.
+**Testing:** `python3 ibkr_service.py --selftest` runs 18 offline checks (contract builders, data-type routing per asset class, all four RiskGuard block/allow paths, journal roundtrip, bracket validation) with no TWS/Gateway needed — all passing. `python3 ibkr_service.py` (no flag) is the connected smoke test described above; it still places no orders.
 
-**Current state, stated plainly: this has never produced a real call.** `research_log/` holds exactly two files, and both are explicitly marked `SYNTHETIC TEST NOTE — not a real call. Safe to delete this file.` — placeholders to exercise the parser, not agent output. `graded_calls.csv` currently shows 1/4 graded rows correct, which is **not a track record**, it's a grading-pipeline smoke test on fake data. Per [[trading bot/Plan]] and this project's own rule that autonomy is earned by graded evidence, none of that evidence exists yet — the infrastructure is what's done, not the calibration.
+- Asset-class data quirk: forex history uses MIDPOINT, crypto uses AGGTRADES, everything else TRADES.
+- Futures expire — contracts like `MGC 202612` must be rolled periodically. Not yet automated; flagged for whenever a strategy loop actually trades futures.
 
-**`knowledge/` library** — `.md` files read (in filename order) and injected into every `research_agent.py` prompt, capped at ~40,000 characters. Current contents: `01_evidence_based_principles.md`, which distills exactly the verified findings in [[trading bot/Backtest Results & Findings]] (base rates, momentum's published edge, ORB's regime-dependence, ICT's lack of evidence, the audited day-traders' risk rules) into the agent's working knowledge, plus a `README.md` describing the folder's rule: verified sources only, distilled, cited, no influencer material.
+## TradingAgents research wrapper (`trading_agent_service.py`) — still untested
+
+Thin wrapper around the third-party [TauricResearch/TradingAgents](https://github.com/TauricResearch/TradingAgents) multi-agent LLM debate (bull vs. bear vs. risk manager vs. portfolio manager) over a ticker.
+
+- **Still never been run**, unchanged since last sync. Costs real Anthropic API tokens per call. Needs a separate `git clone` + `pip install .` setup, not in `requirements.txt`.
+- Now clearly the **second-place** Phase 1 candidate — see below, `research_agent.py` has actually been exercised on the full watchlist and this hasn't been exercised at all.
+
+## Phase 1 research agent (`research_agent.py` + `grade_calls.py`) — now has real output, not yet graded
+
+**This is the significant change since last sync: the agent has actually been run, for real, on the entire watchlist.**
+
+**`research_agent.py`** now pulls its indicator math from `indicators.py` (previously it had its own inline copies of RSI/ATR) — a real consolidation, not just a refactor: the agent's numbers are now guaranteed identical to what the chart view (menu 5) shows. The prompt's named frameworks also expanded to match: multi-timeframe trend alignment (now including MACD, not just SMA), momentum/mean-reversion context (RSI + MACD histogram + Bollinger position + squeeze), volume confirmation (OBV vs. price, VWAP), structure-aware levels (swing S/R, 52-week range, opening range), volatility-aware risk framing, and a valuation sanity check. Output format unchanged: Thesis, Direction & timeframe, Confidence (1–10), Key levels, Risks, What would change my mind.
+
+**12 real notes now exist in `research_log/`** — the full watchlist (AAPL, MSFT, GOOGL, AMZN, JPM, JNJ, PG, XOM, KO, DIS, NVDA, PLTR), generated 2026-07-20/21. Spot-checking a few (AAPL, NVDA) against the raw data they cite: the reasoning is genuinely grounded — no invented price levels, calibrated confidence (AAPL: 3/10 for "no fresh entry despite bullish trend" because RSI 71.7 at a 52-week high is a poor entry, not because the trend read is uncertain; NVDA: 3/10 for a real split-timeframe read, explicitly explaining why it's not lower or higher). Directionally, most of the 12 came back **no-edge** (AAPL, AMZN, DIS, GOOGL, JPM, NVDA, PG, PLTR, XOM), with a handful of long-leaning calls (JNJ, KO, MSFT) — no shorts. That's consistent with the knowledge base's own instruction that "no edge here" is a valid, creditable call, not a cop-out.
+
+**What hasn't happened yet, correctly: grading.** `grade_calls.py` has **not been re-run** since these 12 real notes were written — `graded_calls.csv` on disk still only reflects the old synthetic-note test run. None of these 12 notes are old enough yet for the 21-day horizon, and even the 5-day horizon on the earliest (AAPL, 07-20) isn't there yet — as of 2026-07-21 it's only ~1 day old. Expect the 5-day horizon to start becoming gradable ~2026-07-25. **Do not treat the qualitative read above as calibration evidence** — it's a spot-check of reasoning quality, not the win-rate/confidence-calibration report that actually decides whether this agent is earning trust. Run `python3 grade_calls.py --csv` on a weekly cadence starting ~2026-07-25.
+
+**`knowledge/` library** — unchanged since last sync: `01_evidence_based_principles.md` (distills [[trading bot/Backtest Results & Findings]] into the agent's working knowledge) + `README.md` (verified/distilled/cited rule).
 
 ## Notes
 
-- **This app places no orders and touches no money.** It's the Phase 2 (backtesting) layer of [[trading bot/Plan]] — the thing you validate strategies on before any broker connection exists. The IBKR layer (menu 8) is read-only for the same reason.
-- Green/red coloring in tables = positive/negative. On menu 1 (SMA, defaults), expect the verdict panel to be **red** — the strategy genuinely loses to buy-and-hold with the default 20/50 settings. That's the finding, not a bug.
-- Menu 5 (momentum rotation) is the strategy actually worth exploring further — it's the one that came close to SPY with meaningfully lower drawdown in the shootout.
-- Play with menu 6 settings (different SMA windows, tickers, costs) then re-run menu 1 — watch how fragile the SMA results are. Fastest way to build intuition for why tweaking parameters until a backtest looks good is a trap, not a strategy.
-- Tested end-to-end: all 9 menu paths, invalid inputs (fast SMA ≥ slow, unknown tickers, short date windows) handled without crashing.
+- **This terminal *app* (`trader_app.py`) still places no orders** — its IBKR menu (menu 9) stays read-only by design. But the execution machinery it shares with the rest of the project (`place_bracket_order`, RiskGuard, journal) is no longer just tested-but-unused: a separate script, `paper_trader.py`, now calls it for real — first rebalance executed 2026-07-21 (bought GOOGL/AAPL/JNJ on the paper account). See [[IBKR Integration]] for the full detail. Real (paper) orders exist in this project now; they just don't come from this particular terminal app.
+- Green/red coloring in tables = positive/negative. On menu 1 (SMA, defaults), expect the verdict panel to be **red** — the strategy genuinely loses to buy-and-hold. That's the finding, not a bug.
+- Menu 6 (momentum rotation, moved from 5) is the strategy actually worth exploring further.
+- Menu numbers shifted by one from the last sync (chart view inserted at 5) — if any of your own notes/scripts reference "menu 8 = IBKR," it's now menu 9.
