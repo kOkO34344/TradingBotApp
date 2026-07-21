@@ -9,7 +9,9 @@
     "PG",
     "XOM",
     "KO",
-    "DIS"
+    "DIS",
+    "NVDA",
+    "PLTR"
   ],
   "benchmark": "SPY",
   "sma_fast": 20,
