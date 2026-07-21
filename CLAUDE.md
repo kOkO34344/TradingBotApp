@@ -50,14 +50,12 @@ File purposes are documented in each script's own module docstring
 ## Current phase status
 
 - Phase 1 (research agent): built, needs real runs + graded calls accumulating.
-- Phase 2 (infrastructure): hardened and self-tested. IB Gateway 10.45 IS
-  installed on the owner's Mac, but the connected smoke test is BLOCKED —
-  the account has an address-verification issue in manual review at IBKR.
-  Nothing to fix here until IBKR clears it. Full diagnostic history, root
-  cause, and the exact steps to resume once cleared: `ibkr_setup_report.md`.
-  Two ready-to-use scripts are waiting: `diagnose_ibkr.sh` (health check)
-  and `wait_and_test_ibkr.sh` (polls for the paper API port + auto-runs the
-  connected smoke test — just run it, no need to babysit the login).
+- Phase 2 (infrastructure): hardened and self-tested. IBKR's address-verification
+  review cleared 2026-07-21 — connected smoke test PASSED against IB Gateway
+  paper (port 4002, account DUQ903866): `verify_paper_account` succeeded, pulled
+  45 rows of AAPL 15-min bars. `trader_settings.json.ibkr_port` updated to 4002
+  to match. `diagnose_ibkr.sh` / `wait_and_test_ibkr.sh` still there if the
+  connection ever needs re-diagnosing.
 - Phase 3 (paper trading with approval loop): NOT built. Next major milestone:
   signal engine (momentum rotation first) → proposed order → owner approval →
   paper execution via bracket orders → journal. An LLM is never in the intraday
@@ -66,15 +64,13 @@ File purposes are documented in each script's own module docstring
 
 ## Work queue for Claude Code (in order — finish the job)
 
-1. **TWS smoke test — BLOCKED on IBKR, not on us.** Gateway is installed;
-   the account is stuck in IBKR's address-verification manual review (see
-   `ibkr_setup_report.md`). Once the owner confirms IBKR cleared it AND the
-   paper account is provisioned (Client Portal → Settings → Account
-   Configuration → Paper Trading Account, ~24h turnaround): run
-   `./wait_and_test_ibkr.sh`, fix whatever surfaces (contract qualification,
-   market-data permissions, pacing), commit. Don't re-diagnose the login
-   step from scratch — read the report first.
-2. **Phase 3 paper-trading loop** (`paper_trader.py`, new file):
+1. ~~TWS smoke test~~ — DONE 2026-07-21. Connected to IB Gateway paper (port
+   4002), account DUQ903866 verified, pulled real 15-min bars. Note: two
+   benign `ib_async` warnings on connect ("open orders request timed out",
+   "completed orders request timed out") — harmless on a fresh account with
+   no order history, not a code bug.
+2. **Phase 3 paper-trading loop** (`paper_trader.py`, new file) — NOW
+   UNBLOCKED, this is the next milestone:
    - Signal: momentum rotation (top-3 of watchlist by 12-mo return, monthly),
      reusing the logic in `trader_app.py:momentum_backtest`.
    - Proposal: print/log intended rebalance (what to sell, what to buy, sizes

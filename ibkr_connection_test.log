@@ -32,3 +32,8 @@
 TIMEOUT after 900s: no PAPER API port opened.
 Check: are you logged in on PAPER mode? Is 'Enable ActiveX and Socket Clients' checked
 under Configure -> Settings -> API -> Settings? Correct socket port set (7497/4002)?
+open orders request timed out
+completed orders request timed out
+CONNECTED. Paper account verified: DUQ903866
+AAPL 15-min bars received: 45 rows
+SMOKE TEST PASSED
