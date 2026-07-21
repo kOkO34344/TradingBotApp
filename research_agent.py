@@ -75,55 +75,35 @@ def atr(df: pd.DataFrame, n: int = 14) -> float:
 
 
 def gather_context(ticker: str) -> str:
-    """Compute a multi-timeframe technical + fundamental snapshot as text."""
+    """Compute a multi-timeframe technical + fundamental snapshot as text.
+    All indicator math comes from indicators.py — the exact numbers the
+    owner sees in trader_app.py's chart view (menu 5)."""
+    import indicators as ta
     tk = yf.Ticker(ticker)
 
     daily = _flatten(yf.download(ticker, period="1y", interval="1d", progress=False, auto_adjust=True))
     if len(daily) < 60:
         raise RuntimeError(f"Not enough daily data for {ticker}")
     c = daily["Close"]
-    price = float(c.iloc[-1])
-    sma20, sma50 = float(c.rolling(20).mean().iloc[-1]), float(c.rolling(50).mean().iloc[-1])
-    sma200 = float(c.rolling(200).mean().iloc[-1]) if len(c) >= 200 else float("nan")
-    hi52, lo52 = float(c.max()), float(c.min())
-    d_atr = atr(daily)
     ret = lambda d: float((c.iloc[-1] / c.iloc[-d] - 1) * 100) if len(c) > d else float("nan")
 
     lines = [
         f"TICKER: {ticker}   generated {datetime.now():%Y-%m-%d %H:%M}",
         "",
         "=== DAILY TIMEFRAME (1 year) ===",
-        f"Price: {price:.2f}",
-        f"SMA20: {sma20:.2f} ({'above' if price > sma20 else 'below'})   "
-        f"SMA50: {sma50:.2f} ({'above' if price > sma50 else 'below'})   "
-        f"SMA200: {sma200:.2f} ({'above' if price > sma200 else 'below'})",
-        f"RSI(14): {rsi(c):.1f}   ATR(14): {d_atr:.2f} ({d_atr / price * 100:.1f}% of price)",
+        *ta.summarize_daily(daily),
         f"Returns: 5d {ret(5):+.1f}%   21d {ret(21):+.1f}%   63d {ret(63):+.1f}%   "
         f"1y {float((c.iloc[-1] / c.iloc[0] - 1) * 100):+.1f}%",
-        f"52-week range: {lo52:.2f} - {hi52:.2f} (now {(price - lo52) / (hi52 - lo52) * 100:.0f}% of range, "
-        f"{(price / hi52 - 1) * 100:+.1f}% from high)",
         f"20-day realized vol (annualized): {float(c.pct_change().tail(20).std() * np.sqrt(252) * 100):.1f}%",
     ]
 
     # 15-minute timeframe — the intraday lens
     try:
         m15 = _flatten(yf.download(ticker, period="5d", interval="15m", progress=False, auto_adjust=True))
-        mc = m15["Close"]
-        sessions = m15.groupby(m15.index.date)
-        last_day = sessions.get_group(list(sessions.groups)[-1])
-        or_hi = float(last_day["High"].iloc[:2].max())   # first 30 min opening range
-        or_lo = float(last_day["Low"].iloc[:2].min())
-        vwap_num = (last_day["Close"] * last_day["Volume"]).cumsum()
-        vwap = float((vwap_num / last_day["Volume"].cumsum()).iloc[-1]) if last_day["Volume"].sum() > 0 else float("nan")
-        lines += [
-            "",
-            "=== 15-MINUTE TIMEFRAME (5 days) ===",
-            f"Last: {float(mc.iloc[-1]):.2f}   SMA20(15m): {float(mc.rolling(20).mean().iloc[-1]):.2f}   "
-            f"RSI(14, 15m): {rsi(mc):.1f}   ATR(14, 15m): {atr(m15):.3f}",
-            f"5-day intraday range: {float(m15['Low'].min()):.2f} - {float(m15['High'].max()):.2f}",
-            f"Today's opening range (first 30 min): {or_lo:.2f} - {or_hi:.2f}   "
-            f"session VWAP: {vwap:.2f} (price {'above' if price > vwap else 'below'} VWAP)",
-        ]
+        if len(m15) < 30:
+            raise RuntimeError("not enough intraday bars")
+        lines += ["", "=== 15-MINUTE TIMEFRAME (5 days) ===", *ta.summarize_intraday(m15),
+                  f"5-day intraday range: {float(m15['Low'].min()):.2f} - {float(m15['High'].max()):.2f}"]
     except Exception as e:
         lines += ["", f"=== 15-MINUTE TIMEFRAME: unavailable ({e}) ==="]
 
@@ -152,10 +132,14 @@ def gather_context(ticker: str) -> str:
 SYSTEM_FRAME = """You are a senior market analyst writing an internal research note.
 Ground every claim in the numbers provided — never invent price levels or data.
 Apply these named frameworks explicitly:
-1. Multi-timeframe trend alignment (daily SMA structure vs 15-minute structure).
-2. Momentum vs mean-reversion context (RSI extremes, distance from moving averages).
-3. Volatility-aware risk framing (ATR-based stop distance and position sizing implication).
-4. Valuation sanity check from the fundamentals, where available.
+1. Multi-timeframe trend alignment (daily SMA/EMA + MACD structure vs 15-minute structure).
+2. Momentum vs mean-reversion context (RSI extremes, MACD histogram direction,
+   position within Bollinger bands, squeeze conditions).
+3. Volume confirmation (OBV trend vs price trend, position vs session VWAP).
+4. Structure-aware levels (swing supports/resistances, 52-week range, opening
+   range — use these for entries/invalidation, never invented levels).
+5. Volatility-aware risk framing (ATR-based stop distance and position sizing implication).
+6. Valuation sanity check from the fundamentals, where available.
 Be willing to say "no edge here" — a neutral call graded honestly is worth more
 than a confident call graded badly. You are writing RESEARCH. You cannot and do
 not place trades; nothing you write is an instruction to execute."""

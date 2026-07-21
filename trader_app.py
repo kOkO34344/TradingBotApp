@@ -241,7 +241,7 @@ def results_table(rows: list, title: str) -> Table:
 def run_and_show(data: dict, settings: dict, period_name: str, p_start: str, p_end: str):
     spy = data.get(settings["benchmark"])
     if spy is None:
-        console.print("[red]Benchmark data missing — refresh data first (menu 6).[/red]")
+        console.print("[red]Benchmark data missing — refresh data first (menu 8).[/red]")
         return []
     spy_period = spy.loc[p_start:p_end]
     if len(spy_period) < 60:
@@ -461,6 +461,126 @@ def momentum_backtest(data: dict, settings: dict):
         plt.show()
 
 
+def chart_view(data: dict, settings: dict):
+    """Candlestick chart with indicator overlays + panels, terminal-rendered.
+    All math comes from indicators.py — the same module the research agent
+    uses, so human and AI look at identical numbers."""
+    import indicators as ta
+    try:
+        import plotext as plt
+    except ImportError:
+        console.print("[red]plotext not installed: pip install plotext[/red]")
+        return
+
+    ticker = Prompt.ask("Ticker", default=settings["tickers"][0]).upper().strip()
+    tf = Prompt.ask("Timeframe", choices=["daily", "15m"], default="daily")
+
+    if tf == "daily":
+        if ticker in data:
+            df = data[ticker].tail(120)
+        else:
+            try:
+                df = fetch(ticker, settings["start"], settings["end"]).tail(120)
+            except Exception as e:
+                console.print(f"[red]No data for {ticker}: {e}[/red]")
+                return
+        date_fmt, dform = "%d/%m/%Y", "d/m/Y"
+    else:
+        raw = yf.download(ticker, period="5d", interval="15m", progress=False, auto_adjust=True)
+        if isinstance(raw.columns, pd.MultiIndex):
+            raw.columns = raw.columns.get_level_values(0)
+        df = raw.dropna()
+        if len(df) < 30:
+            console.print(f"[red]Not enough 15-min data for {ticker}.[/red]")
+            return
+        date_fmt, dform = "%d/%m/%Y %H:%M", "d/m/Y H:M"
+
+    sets = Prompt.ask("Indicator sets (comma-sep: trend,vol,volume,structure or 'all')",
+                      default="all").lower()
+    want = {"trend", "vol", "volume", "structure"} if "all" in sets else \
+           {s.strip() for s in sets.split(",")}
+
+    c = df["Close"]
+    dates = [d.strftime(date_fmt) for d in df.index]
+    width = min(140, plt.terminal_width() or 110)
+
+    # --- main panel: candles + overlays
+    plt.clear_figure()
+    plt.date_form(dform)
+    plt.candlestick(dates, {"Open": df["Open"].tolist(), "Close": df["Close"].tolist(),
+                            "High": df["High"].tolist(), "Low": df["Low"].tolist()})
+    title_bits = [f"{ticker} ({tf})"]
+    if "trend" in want:
+        n1, n2 = (settings["sma_fast"], settings["sma_slow"]) if tf == "daily" else (20, 50)
+        plt.plot(dates, ta.sma(c, n1).tolist(), label=f"SMA{n1}")
+        plt.plot(dates, ta.sma(c, n2).tolist(), label=f"SMA{n2}")
+        title_bits.append(f"SMA{n1}/{n2}")
+    if "vol" in want:
+        bb_mid, bb_up, bb_lo = ta.bollinger(c)
+        plt.plot(dates, bb_up.tolist(), label="BB up")
+        plt.plot(dates, bb_lo.tolist(), label="BB low")
+        title_bits.append("Bollinger(20,2)")
+    if "structure" in want:
+        sup, res = ta.swing_levels(df)
+        for lv in sup[:2]:
+            plt.horizontal_line(lv, color="green")
+        for lv in res[:2]:
+            plt.horizontal_line(lv, color="red")
+        if sup or res:
+            title_bits.append("S/R levels")
+    plt.title("  ".join(title_bits))
+    plt.theme("dark")
+    plt.plotsize(width, 22)
+    plt.show()
+
+    # --- panels
+    if "volume" in want:
+        plt.clear_figure()
+        plt.date_form(dform)
+        plt.bar(dates, df["Volume"].tolist())
+        if tf == "15m":
+            v = ta.vwap(df)
+            console.print(f"[dim]Session VWAP: {float(v.iloc[-1]):.2f} "
+                          f"(price {'above' if float(c.iloc[-1]) > float(v.iloc[-1]) else 'below'})[/dim]")
+        plt.title("Volume")
+        plt.theme("dark")
+        plt.plotsize(width, 8)
+        plt.show()
+
+    if "trend" in want:
+        m_line, m_sig, m_hist = ta.macd(c)
+        plt.clear_figure()
+        plt.date_form(dform)
+        plt.plot(dates, m_line.tolist(), label="MACD")
+        plt.plot(dates, m_sig.tolist(), label="signal")
+        plt.bar(dates, m_hist.tolist(), label="hist")
+        plt.horizontal_line(0)
+        plt.title("MACD (12,26,9)")
+        plt.theme("dark")
+        plt.plotsize(width, 10)
+        plt.show()
+
+        r = ta.rsi(c)
+        plt.clear_figure()
+        plt.date_form(dform)
+        plt.plot(dates, r.tolist(), label="RSI14")
+        plt.horizontal_line(70, color="red")
+        plt.horizontal_line(30, color="green")
+        plt.title("RSI (14)")
+        plt.theme("dark")
+        plt.plotsize(width, 8)
+        plt.show()
+
+    # --- numeric readout (identical to what the research agent sees)
+    try:
+        lines = ta.summarize_daily(df) if tf == "daily" else ta.summarize_intraday(df)
+        console.print(Panel("\n".join(lines),
+                            title="Indicator readout (same numbers the AI sees)",
+                            border_style="cyan"))
+    except Exception as e:
+        console.print(f"[yellow]Readout unavailable: {e}[/yellow]")
+
+
 def ibkr_menu(settings: dict):
     """Connect to the IBKR PAPER account via ibkr_service and inspect it.
     Read-only by design: no orders can be placed from this app until a
@@ -614,7 +734,7 @@ def edit_settings(settings: dict):
             settings["in_sample_end"] = Prompt.ask("In-sample ends (YYYY-MM-DD)", default=settings["in_sample_end"])
             settings["out_of_sample_start"] = Prompt.ask("Out-of-sample starts (YYYY-MM-DD)",
                                                          default=settings["out_of_sample_start"])
-            console.print("[yellow]Date range changed — refresh data (menu 6) to re-download.[/yellow]")
+            console.print("[yellow]Date range changed — refresh data (menu 8) to re-download.[/yellow]")
         elif choice == "6":
             settings["risk_engine"] = not settings.get("risk_engine", False)
             if settings["risk_engine"]:
@@ -662,11 +782,12 @@ MENU = """[bold cyan]1[/bold cyan]. SMA backtest — out-of-sample (2019 → now
 [bold cyan]2[/bold cyan]. SMA backtest — in-sample (2010 → 2018)
 [bold cyan]3[/bold cyan]. SMA backtest — full history
 [bold cyan]4[/bold cyan]. Ticker deep dive (stats, trades, equity chart)
-[bold cyan]5[/bold cyan]. Momentum rotation backtest (portfolio)   [dim]the strategy that earned it[/dim]
-[bold cyan]6[/bold cyan]. Settings (tickers, SMA windows, costs, risk engine, momentum, IBKR)
-[bold cyan]7[/bold cyan]. Refresh price data (force re-download)
-[bold cyan]8[/bold cyan]. IBKR paper account (connect, positions, live 15-min bars)
-[bold cyan]9[/bold cyan]. Quit"""
+[bold cyan]5[/bold cyan]. Chart view (candlesticks + indicators: trend, volatility, volume, S/R)
+[bold cyan]6[/bold cyan]. Momentum rotation backtest (portfolio)   [dim]the strategy that earned it[/dim]
+[bold cyan]7[/bold cyan]. Settings (tickers, SMA windows, costs, risk engine, momentum, IBKR)
+[bold cyan]8[/bold cyan]. Refresh price data (force re-download)
+[bold cyan]9[/bold cyan]. IBKR paper account (connect, positions, live 15-min bars)
+[bold cyan]10[/bold cyan]. Quit"""
 
 
 def main():
@@ -680,7 +801,7 @@ def main():
     while True:
         console.print(Panel(MENU, title="Menu", border_style="blue"))
         try:
-            choice = Prompt.ask("Choose", choices=[str(i) for i in range(1, 10)], default="1")
+            choice = Prompt.ask("Choose", choices=[str(i) for i in range(1, 11)], default="1")
         except (EOFError, KeyboardInterrupt):
             break
         try:
@@ -695,15 +816,17 @@ def main():
             elif choice == "4":
                 deep_dive(data, settings)
             elif choice == "5":
-                momentum_backtest(data, settings)
+                chart_view(data, settings)
             elif choice == "6":
+                momentum_backtest(data, settings)
+            elif choice == "7":
                 edit_settings(settings)
                 data = load_all_data(settings)  # in case tickers changed
-            elif choice == "7":
-                data = load_all_data(settings, force=True)
             elif choice == "8":
-                ibkr_menu(settings)
+                data = load_all_data(settings, force=True)
             elif choice == "9":
+                ibkr_menu(settings)
+            elif choice == "10":
                 break
         except (EOFError, KeyboardInterrupt):
             break

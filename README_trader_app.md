@@ -26,11 +26,16 @@ First launch downloads ~16 years of daily data for 11 tickers (takes ~30 seconds
 | 2 | SMA backtest, in-sample (2010–2018) |
 | 3 | SMA backtest, full history |
 | 4 | Deep dive one ticker: full stats, every individual trade, equity curve chart drawn in the terminal |
-| 5 | **Momentum rotation backtest** — portfolio-level: each month hold the top-N tickers by trailing 12-month return. The only strategy family that beat SPY in testing (~18.5% CAGR vs 16% for SPY, 2019→now, with a third less drawdown). Shows holdings by month + equity curve vs SPY |
-| 6 | Settings: tickers, SMA windows, per-trade cost, starting cash, date ranges, **risk engine** (for SMA: 200-day trend filter + 2×ATR trailing stop + fixed % risk per trade; for momentum: dual-momentum cash filter — go to cash instead of holding negative-momentum names), momentum top-N/lookback, IBKR port/client id — saved to `trader_settings.json` |
-| 7 | Force re-download of price data |
-| 8 | **IBKR paper account** — connects through `ibkr_service.py` to TWS/IB Gateway (must be running with API enabled): account summary, open positions, live 15-min bars for any stock/forex/future/crypto symbol with a session chart. **Read-only by design** — the app cannot place orders; that stays locked until a strategy + approval loop exist. The settings menu refuses live ports (7496/4001) outright. |
-| 9 | Quit |
+| 5 | **Chart view** — candlestick charts (daily 120 bars or 15-min 5 days) with selectable indicator sets: trend (SMA overlays + MACD and RSI panels), volatility (Bollinger bands), volume (volume bars + session VWAP on 15m), structure (computed swing support/resistance lines). Ends with a numeric readout — the exact numbers the research agent sees, from the same `indicators.py` module |
+| 6 | **Momentum rotation backtest** — portfolio-level: each month hold the top-N tickers by trailing 12-month return. The only strategy family that beat SPY in testing (~18.5% CAGR vs 16% for SPY, 2019→now, with a third less drawdown). Shows holdings by month + equity curve vs SPY |
+| 7 | Settings: tickers, SMA windows, per-trade cost, starting cash, date ranges, **risk engine** (for SMA: 200-day trend filter + 2×ATR trailing stop + fixed % risk per trade; for momentum: dual-momentum cash filter — go to cash instead of holding negative-momentum names), momentum top-N/lookback, IBKR port/client id — saved to `trader_settings.json` |
+| 8 | Force re-download of price data |
+| 9 | **IBKR paper account** — connects through `ibkr_service.py` to TWS/IB Gateway (must be running with API enabled): account summary, open positions, live 15-min bars for any stock/forex/future/crypto symbol with a session chart. **Read-only by design** — the app cannot place orders; that stays locked until a strategy + approval loop exist. The settings menu refuses live ports (7496/4001) outright. |
+| 10 | Quit |
+
+## Shared indicators module (`indicators.py`)
+
+One source of truth for all technical math, used by both the chart view (what you see) and `research_agent.py` (what the AI reasons over): SMA/EMA/MACD/RSI, ATR/Bollinger/Keltner (incl. squeeze detection), VWAP (session-aware)/OBV, swing support/resistance, 52-week range, opening range. `python3 indicators.py --selftest` verifies the math against reference implementations — 20 checks, all passing. The future web dashboard should import this same module.
 
 ## Notes
 
