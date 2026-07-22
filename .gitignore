@@ -23,3 +23,10 @@ secrets*
 # not meaningful version-controlled content)
 vault_sync.log
 vault_sync_launchd.log
+
+# Trade-reflection automation: logs grow continuously (not meaningful
+# version-controlled content); dedup state is machine state, not content —
+# the trade_reflections/*.md reflections themselves ARE tracked
+trade_reflect.log
+trade_reflect_launchd.log
+trade_reflections/.reflected_execids.json

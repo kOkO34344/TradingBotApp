@@ -37,6 +37,9 @@ warnings.filterwarnings("ignore")
 LOG_DIR = Path(__file__).parent / "research_log"
 KNOWLEDGE_DIR = Path(__file__).parent / "knowledge"
 KNOWLEDGE_CHAR_CAP = 40_000  # keep the library from crowding out market data
+REFLECTIONS_DIR = Path(__file__).parent / "trade_reflections"
+REFLECTIONS_CHAR_CAP = 8_000
+REFLECTIONS_MAX_NOTES = 5  # most recent only — old trades' lessons matter less than recent ones
 
 
 def load_knowledge() -> str:
@@ -50,6 +53,20 @@ def load_knowledge() -> str:
         parts.append(f"--- {p.name} ---\n{p.read_text().strip()}")
     text = "\n\n".join(parts)
     return text[:KNOWLEDGE_CHAR_CAP]
+
+
+def load_reflections(ticker: str) -> str:
+    """Post-trade win/loss self-reviews for this ticker (see reflect_on_trades.py),
+    most recent first, capped. This is how past outcomes feed back into future
+    theses instead of every research run starting from a blank slate."""
+    if not REFLECTIONS_DIR.exists():
+        return ""
+    notes = sorted(REFLECTIONS_DIR.glob(f"{ticker}_*.md"), reverse=True)[:REFLECTIONS_MAX_NOTES]
+    if not notes:
+        return ""
+    parts = [f"--- {p.name} ---\n{p.read_text().strip()}" for p in notes]
+    text = "\n\n".join(parts)
+    return text[:REFLECTIONS_CHAR_CAP]
 
 
 # ---------------------------------------------------------------- indicators
@@ -153,12 +170,17 @@ REQUIRED_FORMAT = """Structure the note exactly as:
 ## What would change my mind (specific, observable)"""
 
 
-def build_prompt(context: str) -> str:
+def build_prompt(ticker: str, context: str) -> str:
     knowledge = load_knowledge()
     kn_block = (f"Curated knowledge base (verified sources — treat as your professional "
                 f"training; where it conflicts with hype, the knowledge base wins):\n\n"
                 f"{knowledge}\n\n" if knowledge else "")
-    return f"{SYSTEM_FRAME}\n\n{kn_block}Market data:\n\n{context}\n\n{REQUIRED_FORMAT}"
+    reflections = load_reflections(ticker)
+    refl_block = (f"Past trade outcomes on {ticker} — honest post-trade reviews from actual "
+                  f"closed positions (most recent first). Weigh these: if past theses on this "
+                  f"ticker were consistently wrong in a particular way, don't repeat it:\n\n"
+                  f"{reflections}\n\n" if reflections else "")
+    return f"{SYSTEM_FRAME}\n\n{kn_block}{refl_block}Market data:\n\n{context}\n\n{REQUIRED_FORMAT}"
 
 
 async def run_agent(prompt: str) -> str:
@@ -181,7 +203,7 @@ def main():
 
     print(f"Gathering market context for {ticker}...", file=sys.stderr)
     context = gather_context(ticker)
-    prompt = build_prompt(context)
+    prompt = build_prompt(ticker, context)
 
     if args.dry_run:
         print(prompt)
