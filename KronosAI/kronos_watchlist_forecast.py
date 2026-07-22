@@ -16,10 +16,19 @@ Evaluation candidate only: prints raw forecasts for inspection. Not wired
 into research_agent.py, trade_journal.csv, or the paper trader — see
 CLAUDE.md rule 5 (autonomy earned by evidence, not capability).
 
+sample_count matters: a single sample (sample_count=1) is noisy — one full
+watchlist run swung individual tickers by 5-10pp of predicted change vs a
+second run. Averaging 10 paths cut that swing roughly 3x; 10 vs 30 agreed
+within ~1pp on most tickers (AAPL was the outlier, still ~2.6pp apart at
+n=30). Default here is 10 as a speed/stability tradeoff — bump it with
+--sample-count for a tighter estimate at the cost of runtime.
+
 Usage:
-  python3 kronos_watchlist_forecast.py            forecast all watchlist tickers
-  python3 kronos_watchlist_forecast.py AAPL MSFT   forecast just these tickers
+  python3 kronos_watchlist_forecast.py                        forecast all watchlist tickers
+  python3 kronos_watchlist_forecast.py AAPL MSFT               forecast just these tickers
+  python3 kronos_watchlist_forecast.py --sample-count 20       average 20 sampled paths per ticker
 """
+import argparse
 import sys
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -47,8 +56,15 @@ def load_ticker_frame(ticker: str) -> pd.DataFrame:
 
 
 def main():
+    parser = argparse.ArgumentParser()
+    parser.add_argument("tickers", nargs="*", help="tickers to forecast (default: full watchlist)")
+    parser.add_argument("--sample-count", type=int, default=10,
+                         help="forecast paths averaged internally per ticker (default: 10 — "
+                              "sample_count=1 is a single noisy draw, see module docstring)")
+    args = parser.parse_args()
+
     settings = ta.load_settings()
-    tickers = sys.argv[1:] or settings["tickers"]
+    tickers = args.tickers or settings["tickers"]
 
     print("Loading tokenizer + model from Hugging Face Hub...")
     tokenizer = KronosTokenizer.from_pretrained("NeoQuasar/Kronos-Tokenizer-base")
@@ -76,7 +92,8 @@ def main():
     if not df_list:
         raise RuntimeError("No tickers had enough history to forecast.")
 
-    print(f"Forecasting {len(ok_tickers)} tickers, {PRED_LEN} trading days ahead: {ok_tickers}")
+    print(f"Forecasting {len(ok_tickers)} tickers, {PRED_LEN} trading days ahead, "
+          f"sample_count={args.sample_count}: {ok_tickers}")
     pred_df_list = predictor.predict_batch(
         df_list=df_list,
         x_timestamp_list=x_ts_list,
@@ -84,7 +101,7 @@ def main():
         pred_len=PRED_LEN,
         T=1.0,
         top_p=0.9,
-        sample_count=1,
+        sample_count=args.sample_count,
         verbose=True,
     )
 
