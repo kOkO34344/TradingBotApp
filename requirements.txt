@@ -11,3 +11,4 @@ ib_async
 
 # Research agent (research_agent.py)
 claude-agent-sdk
+lxml

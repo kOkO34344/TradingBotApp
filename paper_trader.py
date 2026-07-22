@@ -25,6 +25,7 @@ Usage:
 import argparse
 import sys
 from datetime import datetime, timedelta
+from pathlib import Path
 
 import pandas as pd
 
@@ -34,6 +35,14 @@ import trader_app as ta
 
 STOP_ATR_MULT = 2.0
 ENTRY_LIMIT_BUFFER = 0.005  # 0.5% marketable buffer so the bracket entry actually fills
+
+# Own cache dir, deliberately separate from trader_app's price_data/. This
+# fetch is a short-window force=True refetch for live ranking; sharing
+# price_data/ silently truncated the backtest scripts' long-history cache
+# for the whole watchlist on 2026-07-21 (caught 2026-07-23 debugging the
+# broad-universe momentum retest — 10 mega-caps found truncated to ~2yr).
+LIVE_DATA_DIR = Path(__file__).parent / "price_data_live"
+LIVE_DATA_DIR.mkdir(exist_ok=True)
 
 
 def compute_signal(settings: dict):
@@ -51,7 +60,7 @@ def compute_signal(settings: dict):
     data = {}
     for t in tickers:
         try:
-            data[t] = ta.fetch(t, start, today, force=True)
+            data[t] = ta.fetch(t, start, today, force=True, cache_dir=LIVE_DATA_DIR)
         except Exception as e:
             print(f"WARNING: could not fetch {t}: {e}", file=sys.stderr)
 

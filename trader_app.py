@@ -73,9 +73,9 @@ def save_settings(settings: dict) -> None:
 
 # ---------------------------------------------------------------- data
 
-def fetch(ticker: str, start: str, end: str, force: bool = False) -> pd.DataFrame:
+def fetch(ticker: str, start: str, end: str, force: bool = False, cache_dir: Path = None) -> pd.DataFrame:
     """Download (or load cached) daily OHLCV for one ticker."""
-    cache_path = DATA_DIR / f"{ticker}.csv"
+    cache_path = (cache_dir or DATA_DIR) / f"{ticker}.csv"
     if cache_path.exists() and not force:
         df = pd.read_csv(cache_path, index_col=0, parse_dates=True)
     else:

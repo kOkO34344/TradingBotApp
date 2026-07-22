@@ -12,6 +12,8 @@ __pycache__/
 
 # Cached market data (regenerated on demand by the app)
 price_data/
+price_data_backtest/
+price_data_live/
 
 # IBKR credentials or local secrets, if ever added
 *.env
