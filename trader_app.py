@@ -49,6 +49,7 @@ DEFAULT_SETTINGS = {
     "momentum_lookback_m": 12,
     "ibkr_port": 7497,
     "ibkr_client_id": 7,
+    "autotrade": {"enabled": False, "signal": "momentum"},
 }
 
 console = Console()
@@ -859,16 +860,65 @@ MENU = """[bold cyan]1[/bold cyan]. SMA backtest — out-of-sample (2019 → now
 [bold cyan]5[/bold cyan]. Chart view (candlesticks + indicators: trend, volatility, volume, S/R)
 [bold cyan]6[/bold cyan]. Momentum rotation backtest (portfolio)   [dim]the strategy that earned it[/dim]
 [bold cyan]7[/bold cyan]. Kronos forecast (research agent)   [dim]backtested, no edge found — analysis only[/dim]
-[bold cyan]8[/bold cyan]. Settings (tickers, SMA windows, costs, risk engine, momentum, IBKR)
-[bold cyan]9[/bold cyan]. Refresh price data (force re-download)
-[bold cyan]10[/bold cyan]. IBKR paper account (connect, positions, live 15-min bars)
-[bold cyan]11[/bold cyan]. Quit"""
+[bold cyan]8[/bold cyan]. Autotrade toggle   [dim yellow]EXPERIMENTAL — unattended, no edge shown[/dim yellow]
+[bold cyan]9[/bold cyan]. Settings (tickers, SMA windows, costs, risk engine, momentum, IBKR)
+[bold cyan]10[/bold cyan]. Refresh price data (force re-download)
+[bold cyan]11[/bold cyan]. IBKR paper account (connect, positions, live 15-min bars)
+[bold cyan]12[/bold cyan]. Quit"""
+
+
+def autotrade_menu(settings: dict):
+    """View/toggle autotrade_runner.py's unattended-hourly-rebalance
+    switch. This app never places an order itself — flipping this on/off
+    just writes trader_settings.json's "autotrade" block, which a separate
+    launchd job (com.tradingbotapp.autotrade.plist, hourly during NYSE
+    hours) reads before deciding whether to trade. See
+    autotrade_runner.py's own docstring for the full picture.
+
+    EXPERIMENTAL: both signals offered here were screened at this exact
+    hourly cadence (KronosAI/kronos_ic_hourly.py, 2026-07-24) and showed
+    NO measurable edge — momentum-hourly IC -0.037/48.5% hit rate,
+    Kronos-hourly IC -0.081/46.4% hit rate (336 pooled pairs, both
+    indistinguishable from noise). Turning this on runs either signal
+    live on the PAPER account as a deliberate experiment, per the owner's
+    explicit choice — not because either is validated. See CLAUDE.md."""
+    autotrade = settings.get("autotrade", {"enabled": False, "signal": "momentum"})
+    state = "[green]ON[/green]" if autotrade.get("enabled") else "[red]OFF[/red]"
+    console.print(Panel(
+        f"Current state: {state}   Signal: [bold]{autotrade.get('signal', 'momentum')}[/bold]\n\n"
+        "[dim]Unattended hourly rebalancing via a separate launchd job "
+        "(autotrade_runner.py) — no y/n prompt when on, RiskGuard still\n"
+        "fully enforced. Both signals (momentum-hourly, kronos-hourly) "
+        "showed NO measurable edge in a 2026-07-24 IC screen (see\n"
+        "CLAUDE.md) — this is a deliberate live paper experiment, not a "
+        "validated strategy. Paper account only.[/dim]",
+        title="Autotrade [yellow]EXPERIMENTAL[/yellow]", border_style="yellow"))
+
+    action = Prompt.ask("1=toggle on/off  2=change signal  3=back",
+                        choices=["1", "2", "3"], default="3")
+    if action == "1":
+        autotrade["enabled"] = not autotrade.get("enabled", False)
+        settings["autotrade"] = autotrade
+        save_settings(settings)
+        new_state = "ON" if autotrade["enabled"] else "OFF"
+        console.print(f"[bold]Autotrade is now {new_state}.[/bold]")
+        if autotrade["enabled"]:
+            console.print("[yellow]Reminder: unattended, no edge shown in testing, "
+                          "paper account only.[/yellow]")
+    elif action == "2":
+        sig = Prompt.ask("Signal", choices=["momentum", "kronos"],
+                         default=autotrade.get("signal", "momentum"))
+        autotrade["signal"] = sig
+        settings["autotrade"] = autotrade
+        save_settings(settings)
+        console.print(f"[bold]Autotrade signal set to {sig}.[/bold]")
 
 
 def main():
     console.print(Panel.fit(
         "[bold]Trader App[/bold] — SMA crossover backtester\n"
-        "[dim]Backtests only. This app places no orders and touches no real money.[/dim]",
+        "[dim]This app places no orders itself. Item 8 (Autotrade) toggles a separate\n"
+        "unattended background job that does — see that menu before enabling it.[/dim]",
         border_style="cyan"))
     settings = load_settings()
     data = load_all_data(settings)
@@ -876,7 +926,7 @@ def main():
     while True:
         console.print(Panel(MENU, title="Menu", border_style="blue"))
         try:
-            choice = Prompt.ask("Choose", choices=[str(i) for i in range(1, 12)], default="1")
+            choice = Prompt.ask("Choose", choices=[str(i) for i in range(1, 13)], default="1")
         except (EOFError, KeyboardInterrupt):
             break
         try:
@@ -897,13 +947,15 @@ def main():
             elif choice == "7":
                 kronos_menu(settings)
             elif choice == "8":
+                autotrade_menu(settings)
+            elif choice == "9":
                 edit_settings(settings)
                 data = load_all_data(settings)  # in case tickers changed
-            elif choice == "9":
-                data = load_all_data(settings, force=True)
             elif choice == "10":
-                ibkr_menu(settings)
+                data = load_all_data(settings, force=True)
             elif choice == "11":
+                ibkr_menu(settings)
+            elif choice == "12":
                 break
         except (EOFError, KeyboardInterrupt):
             break

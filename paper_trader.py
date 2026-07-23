@@ -157,6 +157,120 @@ def get_net_liquidation_usd(ib) -> float:
     return net_liq * rate
 
 
+def execute_rebalance(ib, settings: dict, top: list, data: dict, top_n: int, signal_label: str,
+                      auto_approve: bool = False, dry_run: bool = False) -> bool:
+    """Diff `top` against current IBKR holdings, size buys off fresh ATR,
+    then execute exits-then-entries through RiskGuard/bracket orders.
+
+    Shared by paper_trader.py's interactive y/n flow (auto_approve=False)
+    and autotrade_runner.py's unattended flow (auto_approve=True) — same
+    sizing, same RiskGuard limits, same journal/Telegram either way. Only
+    the approval step differs; nothing about risk enforcement does.
+
+    `data[t]` just needs to be OHLCV with a "Close"/"High"/"Low" column
+    ind.atr() can read — daily for the monthly momentum/Kronos signal,
+    hourly for autotrade_runner.py's faster cadence (see
+    autotrade_signals.py) — the ATR window is however many bars are in
+    `data[t]`, whatever that bar size means for the caller.
+
+    Returns True if any orders were attempted (placed or declined),
+    False if there was nothing to do."""
+    tickers = settings["tickers"]
+    guard = ibs.RiskGuard()
+    net_liq = get_net_liquidation_usd(ib)
+    print(f"NetLiquidation: ${net_liq:,.2f} (USD-equivalent)")
+
+    held = get_current_holdings(ib, tickers)
+    sells = [sym for sym in held if sym not in top]
+    holds = [t for t in top if t in held]
+    buys = [t for t in top if t not in held]
+
+    buy_plan = {}
+    for t in buys:
+        price = ibs.market_price(ib, ibs.stock(t))
+        atr_val = float(ind.atr(data[t]).iloc[-1])
+        qty = size_position(net_liq, price, atr_val, settings, guard)
+        entry = round(price * (1 + ENTRY_LIMIT_BUFFER), 2)
+        stop = round(price - STOP_ATR_MULT * atr_val, 2)
+        buy_plan[t] = {"price": price, "atr": atr_val, "qty": qty, "entry": entry, "stop": stop}
+
+    print("\n=== Proposed rebalance ===")
+    if not sells and not buys:
+        print("No changes — current holdings already match the target.")
+    for sym in sells:
+        p = held[sym]
+        print(f"  SELL  {sym:6s}  {abs(p.position):.0f} sh  (dropped from top-{top_n})")
+    for t in holds:
+        print(f"  HOLD  {t:6s}  {held[t].position:.0f} sh  (still in target)")
+    for t in buys:
+        bp = buy_plan[t]
+        flag = "  [size=0, will be blocked by RiskGuard]" if bp["qty"] <= 0 else ""
+        print(f"  BUY   {t:6s}  {bp['qty']} sh @ ~{bp['entry']:.2f}  "
+              f"stop {bp['stop']:.2f} (2xATR={bp['atr']:.2f}){flag}")
+
+    if dry_run:
+        print("\n[dry-run: no orders placed, no approval requested]")
+        return False
+
+    if not sells and not buys:
+        return False
+
+    if not auto_approve:
+        if input("\nApprove this rebalance? [y/N] ").strip().lower() != "y":
+            print("Declined — no orders placed.")
+            for sym in sells:
+                ibs.journal("PROPOSAL", ibs.stock(sym), "SELL", abs(held[sym].position),
+                            status="declined", detail="owner declined rebalance")
+            for t in buys:
+                bp = buy_plan[t]
+                ibs.journal("PROPOSAL", ibs.stock(t), "BUY", bp["qty"], bp["entry"], bp["stop"],
+                            status="declined", detail="owner declined rebalance")
+            return True
+    else:
+        print("\n[auto-approved — no human prompt, RiskGuard still fully enforced]")
+
+    exec_summary_lines = []
+
+    # --- exits first: free up max_open_positions headroom before entries ---
+    for sym in sells:
+        p = held[sym]
+        qty = abs(p.position)
+        contract = ibs.stock(sym)
+        cancel_open_orders_for(ib, sym)
+        trade = ibs.place_market_order(ib, contract, qty, action="SELL", guard=guard,
+                                        allow_no_stop=True, opening=False)
+        if trade:
+            ibs.wait_for_status(ib, trade)
+            print(f"  SELL {sym}: {trade.orderStatus.status}")
+            exec_summary_lines.append(f"SELL {sym} {qty:.0f}sh: {trade.orderStatus.status}")
+
+    # --- entries ---
+    for t in buys:
+        bp = buy_plan[t]
+        if bp["qty"] <= 0:
+            print(f"  BUY {t}: skipped, computed size is 0")
+            continue
+        trades = ibs.place_bracket_order(ib, ibs.stock(t), bp["qty"], "BUY",
+                                          entry_limit=bp["entry"], stop_price=bp["stop"],
+                                          guard=guard)
+        if trades:
+            ibs.wait_for_status(ib, trades[0])
+            print(f"  BUY {t}: {trades[0].orderStatus.status}")
+            exec_summary_lines.append(
+                f"BUY {t} {bp['qty']}sh @ ~{bp['entry']:.2f} "
+                f"(stop {bp['stop']:.2f}): {trades[0].orderStatus.status}"
+            )
+
+    print("\nDone. Full record in trade_journal.csv.")
+    if exec_summary_lines:
+        mode = "auto-approved" if auto_approve else "approved"
+        ibs.send_telegram(
+            f"\U0001f504 Paper trader rebalance executed ({signal_label} signal, {mode})\n\n"
+            + "\n".join(exec_summary_lines)
+        )
+    return True
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Phase 3 paper-trading loop: rule-based rebalance with mandatory human approval.")
@@ -198,95 +312,8 @@ def main():
         acct = ibs.verify_paper_account(ib)
         print(f"Connected. Paper account: {acct}")
         ib.reqMarketDataType(3)  # delayed data — this paper account has no live-data subscription
-        guard = ibs.RiskGuard()
-        net_liq = get_net_liquidation_usd(ib)
-        print(f"NetLiquidation: ${net_liq:,.2f} (USD-equivalent)")
-
-        held = get_current_holdings(ib, tickers)
-        sells = [sym for sym in held if sym not in top]
-        holds = [t for t in top if t in held]
-        buys = [t for t in top if t not in held]
-
-        # pre-compute buy sizing for display (uses live market price + fresh ATR)
-        buy_plan = {}
-        for t in buys:
-            price = ibs.market_price(ib, ibs.stock(t))
-            atr_val = float(ind.atr(data[t]).iloc[-1])
-            qty = size_position(net_liq, price, atr_val, settings, guard)
-            entry = round(price * (1 + ENTRY_LIMIT_BUFFER), 2)
-            stop = round(price - STOP_ATR_MULT * atr_val, 2)
-            buy_plan[t] = {"price": price, "atr": atr_val, "qty": qty, "entry": entry, "stop": stop}
-
-        print("\n=== Proposed rebalance ===")
-        if not sells and not buys:
-            print("No changes — current holdings already match the target.")
-        for sym in sells:
-            p = held[sym]
-            print(f"  SELL  {sym:6s}  {abs(p.position):.0f} sh  (dropped from top-{top_n})")
-        for t in holds:
-            print(f"  HOLD  {t:6s}  {held[t].position:.0f} sh  (still in target)")
-        for t in buys:
-            bp = buy_plan[t]
-            flag = "  [size=0, will be blocked by RiskGuard]" if bp["qty"] <= 0 else ""
-            print(f"  BUY   {t:6s}  {bp['qty']} sh @ ~{bp['entry']:.2f}  "
-                  f"stop {bp['stop']:.2f} (2xATR={bp['atr']:.2f}){flag}")
-
-        if args.dry_run:
-            print("\n[dry-run: no orders placed, no approval requested]")
-            return
-
-        if not sells and not buys:
-            return
-
-        if input("\nApprove this rebalance? [y/N] ").strip().lower() != "y":
-            print("Declined — no orders placed.")
-            for sym in sells:
-                ibs.journal("PROPOSAL", ibs.stock(sym), "SELL", abs(held[sym].position),
-                            status="declined", detail="owner declined rebalance")
-            for t in buys:
-                bp = buy_plan[t]
-                ibs.journal("PROPOSAL", ibs.stock(t), "BUY", bp["qty"], bp["entry"], bp["stop"],
-                            status="declined", detail="owner declined rebalance")
-            return
-
-        exec_summary_lines = []
-
-        # --- exits first: free up max_open_positions headroom before entries ---
-        for sym in sells:
-            p = held[sym]
-            qty = abs(p.position)
-            contract = ibs.stock(sym)
-            cancel_open_orders_for(ib, sym)
-            trade = ibs.place_market_order(ib, contract, qty, action="SELL", guard=guard,
-                                            allow_no_stop=True, opening=False)
-            if trade:
-                ibs.wait_for_status(ib, trade)
-                print(f"  SELL {sym}: {trade.orderStatus.status}")
-                exec_summary_lines.append(f"SELL {sym} {qty:.0f}sh: {trade.orderStatus.status}")
-
-        # --- entries ---
-        for t in buys:
-            bp = buy_plan[t]
-            if bp["qty"] <= 0:
-                print(f"  BUY {t}: skipped, computed size is 0")
-                continue
-            trades = ibs.place_bracket_order(ib, ibs.stock(t), bp["qty"], "BUY",
-                                              entry_limit=bp["entry"], stop_price=bp["stop"],
-                                              guard=guard)
-            if trades:
-                ibs.wait_for_status(ib, trades[0])
-                print(f"  BUY {t}: {trades[0].orderStatus.status}")
-                exec_summary_lines.append(
-                    f"BUY {t} {bp['qty']}sh @ ~{bp['entry']:.2f} "
-                    f"(stop {bp['stop']:.2f}): {trades[0].orderStatus.status}"
-                )
-
-        print("\nDone. Full record in trade_journal.csv.")
-        if exec_summary_lines:
-            ibs.send_telegram(
-                f"\U0001f504 Paper trader rebalance executed ({args.signal} signal)\n\n"
-                + "\n".join(exec_summary_lines)
-            )
+        execute_rebalance(ib, settings, top, data, top_n, signal_label=args.signal,
+                          auto_approve=False, dry_run=args.dry_run)
     finally:
         ib.disconnect()
 

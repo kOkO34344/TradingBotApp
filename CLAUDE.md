@@ -22,6 +22,14 @@ Brokers (paper account first, always).
    calibration + months of paper trading), never by adding capability.
 6. Every order attempt/block/fill goes to `trade_journal.csv`. If it's not in
    the journal, it didn't happen.
+7. **`autotrade_runner.py` is the one documented exception to rule 5 — flag it
+   as such, don't treat it as precedent for anything else.** Built 2026-07-24
+   at the owner's explicit, twice-confirmed request, despite BOTH signals it
+   can run (momentum-hourly, Kronos-hourly) showing no measurable edge at
+   that cadence (see Empirical findings). It removes the human approval
+   prompt — RiskGuard stays fully enforced regardless. Off by default
+   (`trader_settings.json`'s `autotrade.enabled`). See the Autotrade section
+   below before touching this.
 
 ## Architecture
 
@@ -58,6 +66,13 @@ File purposes are documented in each script's own module docstring
   (59.07% CAGR / -15.60% DD) on the identical dates/costs. Single seed
   (42)/sample_count=10 draw. See `KronosAI/kronos_backtest.py` and
   KronosAI/KronosVault's Integration Log for full methodology.
+- Hourly-cadence IC screen (`KronosAI/kronos_ic_hourly.py`, 2026-07-24, run
+  before building `autotrade_runner.py`): momentum-style ranking (trailing
+  400-bar return) IC -0.037 / 48.5% hit rate; Kronos (same LOOKBACK/PRED_LEN
+  bar counts, hourly data) IC -0.081 / 46.4% hit rate. 336 pooled pairs, both
+  indistinguishable from noise — no edge at hourly cadence either. Built and
+  running anyway per explicit owner request (see rule 7) — a deliberate live
+  paper experiment, not a validated strategy.
 
 ## Current phase status
 
@@ -136,6 +151,100 @@ File purposes are documented in each script's own module docstring
    — deprecated). Reasonable to start when the owner wants it, but weigh it
    against #3/#4 above — more research/trading cycles is more of the
    evidence this project is actually gated on; a dashboard is not.
+
+## Autotrade (experimental, unattended) — `autotrade_runner.py`
+
+Built 2026-07-24. Unattended hourly rebalancing: no y/n prompt, RiskGuard
+fully enforced regardless. **Built despite both eligible signals showing no
+measurable edge at this cadence** (see Empirical findings) — a deliberate
+live paper experiment at the owner's explicit, twice-confirmed request, not
+because either signal is validated. See rule 7.
+
+- **Toggle:** `trader_settings.json`'s `"autotrade": {"enabled": bool,
+  "signal": "momentum"|"kronos"}`. Set via `trader_app.py` menu item 8, or
+  edit the JSON directly. Defaults to `enabled: false`.
+- **Schedule:** `com.tradingbotapp.autotrade.plist`, hourly 16:00-23:00 local
+  (this machine runs EEST/EET) — a superset of NYSE 9:30-16:00 ET year-round
+  (the two DST regimes keep a constant ~7h gap). `autotrade_runner.py` does
+  its own authoritative America/New_York market-hours check on every firing
+  (`zoneinfo`, not host time) — the launchd schedule only needs to cover the
+  window, not match it exactly.
+- **Signal:** `autotrade_signals.py` — hourly bars (yfinance, ~2-3yr history,
+  separate cache `KronosAI/price_data_hourly_live/` from the backtest's
+  `price_data_hourly/`), same LOOKBACK=400/PRED_LEN=20 bar counts the IC
+  screen used. `ind.atr()` on hourly bars gives a 14-HOUR stop distance, not
+  14-day — deliberately tighter, appropriate for the shorter intended hold.
+- **Execution:** `paper_trader.execute_rebalance(..., auto_approve=True)` —
+  the exact same sizing/RiskGuard/bracket-order function the human-approved
+  path uses (extracted 2026-07-24 specifically so both paths can never
+  diverge in risk handling). `client_id=13` (distinct from trader_app's 7,
+  paper_trader's 9, reflect_on_trades' 11 — lets all run concurrently).
+- **Notifications:** texts on any executed trade or error; silent on no-op
+  cycles (same convention as `reflect_on_trades.py`). Every cycle — no-op or
+  not — gets one line in `autotrade_runner.log` regardless; that log is what
+  to check to confirm it's actually alive, since Telegram silence on a quiet
+  market day is expected, not a sign of failure.
+- **Known real risk, not just theoretical:** RiskGuard's per-order/position/
+  daily-loss limits don't guard against slow bleed from turnover costs on a
+  no-edge signal trading far more often than the validated monthly cadence.
+  `trade_journal.csv` is the audit trail for catching that — check it
+  periodically, don't just assume silence means it's fine.
+- **To disable:** turn the toggle off (safest, keeps the job installed for
+  later), or `launchctl unload ~/Library/LaunchAgents/com.tradingbotapp.autotrade.plist`
+  to stop it firing entirely.
+
+## Phone notifications (TelegramBot/) — use this for anything long-running
+
+One Telegram bot, `TelegramBot/notify.py` (`send_telegram(text)`), reused
+across the project. Owner gets a phone text; credentials live in
+`TelegramBot/.env` (gitignored, see `TelegramBot/README.md` for setup).
+
+**Any future session (Claude Code or otherwise) starting a backtest or
+other one-shot script should default to running it through the generic
+wrapper, not calling the script directly** — this is how "notify me from
+any session" actually holds:
+
+```bash
+./run_notify.sh sma_crossover_backtest.py
+./run_notify.sh KronosAI/kronos_backtest.py --sample-count 5
+./run_notify.sh research_agent.py AAPL
+nohup ./run_notify.sh <script> [args] > /dev/null 2>&1 & disown   # detached
+```
+
+It texts on start, on a 20-min output stall (possible hang), and on
+done/failed with a tail of the output. Full logs land in `run_logs/`.
+
+Other notification points already wired in (do NOT wrap these in
+`run_notify.sh` too — they'd double-notify or spam a no-op poller):
+- `run_research_agent_watchlist.sh` — loops the whole watchlist, sends
+  ONE consolidated direction+confidence digest instead of one per ticker.
+- `reflect_on_trades.py` — texts on every newly-closed position it finds
+  (win/loss + reflection status). Runs every 30 min via launchd and is a
+  no-op most runs, so this notification lives INSIDE the script,
+  conditional on an actual close — never wrap the whole script.
+- `ibkr_service.py`'s `journal()` — texts whenever RiskGuard actually
+  BLOCKS an order (real journal writes only, not the `--selftest` path).
+- `paper_trader.py` — one consolidated text after a real (approved)
+  rebalance executes, listing what was bought/sold.
+- `autotrade_runner.py` — same convention as `paper_trader.py` above (one
+  consolidated text per executed rebalance, tagged `-hourly`), plus an
+  alert on any error. Silent on no-op cycles — see the Autotrade section.
+- `daily_digest.py` — two modes, one script:
+  - `--mode morning` (default) via `com.tradingbotapp.dailydigest.plist`,
+    07:30 local — "plan the day": due-today/freshness flags + Work Queue
+    + Empirical Findings, quoted close to verbatim from this file.
+  - `--mode evening` via `com.tradingbotapp.dailydigestevening.plist`,
+    20:00 local (before the 22:00 vault sync) — "recap the day": today's
+    actual activity (trade_journal.csv entries since midnight, new
+    research notes logged today, new trade_reflections/ files today),
+    plus the same freshness flags as a heads-up for tomorrow.
+  No LLM call either way, just file reads — keep CLAUDE.md's Work Queue
+  and Empirical Findings sections reasonably current since both digests
+  quote them directly. Manual run: `./daily_digest.sh [morning|evening]`.
+
+If you add a new recurring/polling script, give it its own conditional
+`send_telegram()` call at the actual event, the same way
+`reflect_on_trades.py` does — don't put a blanket wrapper around a poller.
 
 ## Known environment gotchas
 

@@ -14,6 +14,8 @@ __pycache__/
 price_data/
 price_data_backtest/
 price_data_live/
+KronosAI/price_data_hourly/
+KronosAI/price_data_hourly_live/
 
 # IBKR credentials or local secrets, if ever added
 *.env
@@ -23,6 +25,14 @@ secrets*
 # not meaningful version-controlled content)
 vault_sync.log
 vault_sync_launchd.log
+
+# Daily digest automation: same deal — runtime log, not content
+daily_digest.log
+daily_digest_launchd.log
+
+# Generic run-notify wrapper logs and per-run backtest logs
+run_logs/
+KronosAI/backtest_logs/
 
 # Trade-reflection automation: logs grow continuously (not meaningful
 # version-controlled content); dedup state is machine state, not content —
@@ -36,3 +46,7 @@ trade_reflections/.reflected_execids.json
 # loop. Machine state for --from-checkpoint, not meaningful version-controlled
 # content — the actual findings are written into CLAUDE.md and the vault.
 KronosAI/kronos_backtest_checkpoint.json
+
+# Autotrade automation: runtime logs, not content
+autotrade_runner.log
+autotrade_launchd.log
