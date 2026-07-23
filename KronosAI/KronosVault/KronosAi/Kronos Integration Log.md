@@ -1,7 +1,7 @@
 ---
 tags: [kronos, log, evidence]
 status: "Live log — append new entries at the top"
-last_updated: 2026-07-23
+last_updated: 2026-07-24
 ---
 
 # Kronos Integration Log
@@ -9,6 +9,51 @@ last_updated: 2026-07-23
 Dated log of what was actually built and tested, with real numbers — not a
 restatement of the code (see [[Kronos Overview]] for that). Append new
 entries above the previous ones as work continues.
+
+## 2026-07-24 — Hourly IC screen (still no edge) + Kronos becomes an autotrade option
+
+**Context:** the owner asked for a "trade toggle" — flip on, the agent
+trades unattended until flipped off — and wanted it to actually rebalance
+faster than monthly. Before wiring Kronos (or anything) into that, ran the
+same IC-screen methodology from the 2026-07-23 daily backtest at hourly
+granularity, since Kronos operates on bar counts, not calendar time —
+`LOOKBACK=400`/`PRED_LEN=20` bars applied to hourly data is a direct,
+minimal-change port of the exact same code.
+
+**Data feasibility check (real, not assumed):** yfinance caps 15m/30m
+history at ~58-60 days — too short for a meaningful screen. Hourly bars go
+back further (tested at ~729 days requested, actually got ~2.9 years —
+apparently yfinance doesn't cap 1h bars as tightly as the shorter
+intervals). IBKR's own 15-min bars (tested live against the paper Gateway)
+cap at ~1 year per request; a 2-year request came back empty. Hourly bars
+via yfinance was the only source that gave both real history depth and no
+live-connection dependency.
+
+**Result** (`KronosAI/kronos_ic_hourly.py`, 24 checkpoints, sample_count=10,
+July 2024 → June 2026 — same pretraining-cutoff-bounded window as the daily
+test, since the cutoff applies across all bar frequencies, not just daily):
+
+| Signal | Spearman IC | Hit rate |
+|---|---|---|
+| Kronos (hourly) | -0.081 | 46.4% |
+| Momentum-style baseline (matched horizon) | -0.037 | 48.5% |
+
+336 pooled pairs. Both indistinguishable from noise — no edge at hourly
+cadence either, consistent with the daily result.
+
+**What happened next:** told this twice, the owner chose to build the
+autotrade toggle anyway, with Kronos included as a selectable signal
+(alongside an hourly momentum-style ranking) — a deliberate live paper
+experiment, not a validation result being overridden by mistake. Full
+build detail: `autotrade_runner.py`, `autotrade_signals.py`, and the
+project's main vault note [[Autotrade (Experimental)]] (in the trading-bot
+vault, not this one — this is the Kronos-specific angle on the same work).
+
+**Kronos's role in autotrade:** `autotrade_signals.compute_live_kronos_hourly()`
+reuses `kronos_ic_hourly.kronos_forecast_at()` directly (just called at
+"now" instead of a historical checkpoint) — no new Kronos-calling code was
+written for this, the walk-forward and live paths share the exact same
+function.
 
 ## 2026-07-23 — Walk-forward backtest: no measurable forecasting skill found
 

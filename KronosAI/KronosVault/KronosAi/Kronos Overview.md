@@ -1,7 +1,7 @@
 ---
 tags: [kronos, overview, architecture]
 source: KronosAI/
-status: "Integrated, backtested — no measurable edge found (2026-07-23)"
+status: "Integrated, backtested at daily and hourly cadence — no measurable edge found either way (2026-07-23/24)"
 ---
 
 # Kronos Overview
@@ -74,23 +74,33 @@ uses — much faster than forecasting tickers one at a time.
   Everything downstream of signal selection — ATR-based stop sizing, bracket
   orders, RiskGuard, `trade_journal.csv` — is identical regardless of which
   signal produced the ranking.
+- **`autotrade_runner.py`** (2026-07-24) — selectable as the hourly
+  unattended-trading signal (`trader_settings.json`'s `autotrade.signal:
+  "kronos"`), via `autotrade_signals.compute_live_kronos_hourly()`, which
+  reuses `kronos_ic_hourly.kronos_forecast_at()` directly rather than new
+  code. OFF by default; see the main vault's [[Autotrade (Experimental)]].
 
-## Status: backtested — no measurable forecasting skill found (2026-07-23)
+## Status: backtested at daily AND hourly cadence — no measurable forecasting skill found either way
 
 Walk-forward backtested against the one honest post-cutoff window available
 (July 2024 → now, bounded by Kronos's own pretraining cutoff of June 2024):
-Spearman IC 0.036, directional hit rate 50.0% — no detectable predictive
-signal. Full methodology and numbers in [[Kronos Integration Log]].
+Spearman IC 0.036, directional hit rate 50.0% (daily, 20-day horizon) — no
+detectable predictive signal. Re-screened at hourly granularity 2026-07-24
+(same bar-count parameters, hourly data): IC -0.081, 46.4% hit rate — same
+conclusion, different cadence. Full methodology and numbers in
+[[Kronos Integration Log]].
 
 This is a real, reported negative finding (per the main project's "negative
 results get reported, not massaged" rule), not a "hasn't been tested yet"
-placeholder. Kronos stays wired in as an opt-in signal for reference and
-re-testing (e.g. a different seed, or after any future model changes) —
-kept the same way the SMA-crossover strategy is kept in the codebase after
-its own rejection, not because either has shown edge.
+placeholder — twice over now. Kronos stays wired in as an opt-in signal for
+reference and re-testing (e.g. a different seed, or after any future model
+changes), and is now ALSO selectable (still opt-in, still off by default)
+as an `autotrade_runner.py` unattended-trading signal — built anyway per
+the owner's explicit, twice-confirmed request to run it live on paper as a
+deliberate experiment, not because either backtest showed value.
 
 ## Related Notes
 
 - [[00 MOC - Kronos Vault]]
 - [[Kronos Integration Log]] — what was actually built/tested and when
-- Main vault: [[Kronos Research Agent]], [[Research Agent Workflow]], [[ADR - Python Rules, Not Model Predictions]]
+- Main vault: [[Kronos Research Agent]], [[Research Agent Workflow]], [[ADR - Python Rules, Not Model Predictions]], [[Autotrade (Experimental)]]

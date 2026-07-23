@@ -162,6 +162,7 @@ This is not a paranoid pattern; it's standard in any financial system that's bee
 - [[Risk Management System]] — the actual implementation
 - [[IBKR Integration]] — how orders are placed and gated
 - [[Plan]] — Phase 3 (paper trading) and Phase 4 (live capital)
+- [[Autotrade (Experimental)]] — 2026-07-24: the one place the *approval* layer (not the risk layer) was deliberately removed. RiskGuard enforcement described in this ADR is fully intact there too — only the human `y/n` step is gone, and only because the owner explicitly asked for it twice, knowing the signal shows no edge.
 
 ## Future: Hooks
 

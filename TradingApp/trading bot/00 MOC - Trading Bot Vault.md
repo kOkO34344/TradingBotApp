@@ -1,7 +1,7 @@
 ---
 tags: [moc, index]
 status: "Live"
-last_updated: 2026-07-23
+last_updated: 2026-07-24
 ---
 
 # Trading Bot — Map of Contents
@@ -10,20 +10,21 @@ This is the central index for the Trading Bot project. The codebase lives at `/U
 
 ## Quick Status
 
-| Phase | Status | Key Files |
-|---|---|---|
-| **Phase 0** (setup) | ✅ Done | Python 3.13, Claude Code, IBKR account live |
+| Phase                        | Status                              | Key Files                                                                                                                          |
+| ---------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
+| **Phase 0** (setup)          | ✅ Done                              | Python 3.13, Claude Code, IBKR account live                                                                                        |
 | **Phase 1** (research agent) | 🟡 Real output, grading not due yet | `research_agent.py` → 12 notes in `research_log/`, all from 2026-07-20/21 — too fresh for the 5-day grading horizon (~2026-07-25+) |
-| **Phase 2** (backtesting) | ✅ Done, action taken | SMA rejected (beats 1/10), momentum rotation identified (16.6% CAGR) |
-| **Phase 3** (paper trading) | ✅ Built and LIVE | `paper_trader.py` built + run for real 2026-07-21 — open positions GOOGL(14)/AAPL(15)/JNJ(19) on paper account DUQ903866 |
-| **Phase 4** (tiny live) | ⏸ Later | After 2–3 months of paper evidence |
+| **Phase 2** (backtesting)    | ✅ Done, action taken                | SMA rejected (beats 1/10), momentum rotation identified (16.6% CAGR)                                                               |
+| **Phase 3** (paper trading)  | ✅ Built and LIVE                    | `paper_trader.py` built + run for real 2026-07-21 — open positions GOOGL(14)/AAPL(15)/JNJ(19) on paper account DUQ903866           |
+| **Phase 4** (tiny live)      | ⏸ Later                             | After 2–3 months of paper evidence                                                                                                 |
 
 **Most urgent right now:**
 1. **Nothing is overdue.** Grading isn't meaningful until notes age ≥5 days (~2026-07-25) — don't run `grade_calls.py --csv` early just to have run it.
 2. Periodically check the live paper positions (GOOGL/AAPL/JNJ) are healthy — stops present **and GTC** (see the DAY-vs-GTC bug in [[IBKR Integration]] — a stop can look fine for hours and then silently expire).
 3. Next `research_agent.py` re-run due ~2026-07-28 (weekly cadence); next `paper_trader.py` rebalance whenever the owner runs it (monthly, manual, no scheduler yet).
 4. Momentum rotation still hasn't had portfolio-level walk-forward validation — worth doing, not currently blocking anything.
-5. **New 2026-07-23:** Kronos (foundation-model forecaster) is integrated and now backtested — see [[Kronos Research Agent]]. Result: **no measurable forecasting skill found** (Spearman IC 0.036, 50% hit rate, in the one honest post-cutoff window its own training data allows). Stays wired in as opt-in only (`trader_app.py` menu item 7, `paper_trader.py --signal kronos`); momentum stays the default and the only validated signal.
+5. **2026-07-23:** Kronos (foundation-model forecaster) is integrated and now backtested — see [[Kronos Research Agent]]. Result: **no measurable forecasting skill found** (Spearman IC 0.036, 50% hit rate, in the one honest post-cutoff window its own training data allows). Stays wired in as opt-in only (`trader_app.py` menu item 7, `paper_trader.py --signal kronos`); momentum stays the default and the only validated signal.
+6. **New 2026-07-24:** Unattended "autotrade" toggle built — see [[Autotrade (Experimental)]]. An hourly IC screen showed no edge for EITHER candidate signal (momentum-hourly IC -0.037, Kronos-hourly IC -0.081, both ~coin-flip hit rates) but it was built anyway per explicit owner request, as a deliberate live paper experiment — the one documented exception to the project's "autonomy earned by evidence" rule. **Currently OFF** (`trader_app.py` menu item 8) — nothing trades unattended until that's flipped on.
 
 ## The Vault by topic
 
@@ -37,6 +38,7 @@ This is the central index for the Trading Bot project. The codebase lives at `/U
 - [[Risk Management System]] — RiskGuard code enforcement ($5k notional limit, 5 positions, $300 daily loss circuit breaker, stop required)
 - [[IBKR Integration]] — paper account live (port 4002, DUQ903866), bracket orders, audit trail
 - [[Trade Journal Structure]] — what goes in `trade_journal.csv` every order attempt/fill/block
+- [[Autotrade (Experimental)]] — unattended hourly rebalancing toggle, built 2026-07-24 despite no measurable edge at that cadence; OFF by default, the one documented exception to human-approval-gated execution
 
 ### 🧠 **Research & Grading**
 - [[Research Agent Workflow]] — how `research_agent.py` works, what it outputs, where the notes live
