@@ -56,27 +56,39 @@ for end_date in [2020-01-01, 2021-01-01, 2022-01-01, 2023-01-01, 2024-01-01]:
 
 **Why:** The 16.6% number comes from a hand-picked period with strong momentum in these 12 tickers. Fair validation checks if it works in other periods too — worth doing even though the strategy is already live on paper (this validates a running strategy, doesn't gate starting one).
 
-### 2.2: Backtest Kronos before trusting its forecasts [scope TBD]
+### 2.2: ~~Backtest Kronos before trusting its forecasts~~ — DONE 2026-07-23, result: no edge
 
-**What:** Kronos (the foundation-model forecaster, see [[Kronos Research Agent]])
-was integrated 2026-07-23 — `trader_app.py` menu item 7, `paper_trader.py
---signal kronos` — but has never been backtested. It's opt-in and clearly
-labeled unvalidated everywhere it's wired in, but "wired in" isn't "earned
-evidence."
+**What got built:** `KronosAI/kronos_backtest.py` — a real walk-forward sim
+(no lookahead), two stages: (1) pooled Spearman information coefficient
+between predicted and realized 20-day return, (2) a portfolio backtest
+(Kronos top-3 rotation vs momentum's own ranking vs SPY) run through the
+same `simulate_rotation()` engine `trader_app.momentum_backtest` uses
+(extracted into a shared function specifically for this comparison).
 
-**Why it matters:** Momentum rotation only got the right to run on paper
-after in/out-of-sample backtesting against buy-and-hold. Kronos hasn't been
-through any of that yet — its ranking has only been eyeballed, never scored.
+**Window:** bounded by Kronos's own pretraining cutoff (paper states
+training data ends June 2024, test period begins July 2024) — so July
+2024 → now was the entire honest evaluation window available, ~24 monthly
+rebalances.
 
-**How (sketch, not yet built):** Something like `grade_calls.py` but for
-Kronos's numeric predictions instead of `research_agent.py`'s qualitative
-calls — compare predicted % change (N trading days out) against actual
-realized return, across enough historical windows to say something about
-calibration, not just one lucky/unlucky run.
+**Result:** Spearman IC 0.036, directional hit rate 50.0% (304 pooled
+pairs) — no measurable forecasting skill. The portfolio sim happened to
+beat SPY (20.99% CAGR / -9.30% DD vs 17.92% / -18.76%) but given the flat
+IC that's noise from a 24-decision sample, not real edge, and it lost
+badly to momentum rotation (59.07% / -15.60%) on the identical dates/costs.
 
-**Not urgent, not blocking:** paper trading continues on momentum by default;
-this is about earning Kronos the same trust momentum already has, not about
-unblocking anything currently stalled.
+**Real bug hit along the way:** `pandas.Series.corr(method="spearman")`
+silently needs `scipy` (not installed), and this wasn't discovered until
+*after* the full 24-date walk-forward loop finished — the run's entire
+output was lost with nothing checkpointed. Fixed by replacing it with a
+scipy-free rank-based correlation, and by adding a checkpoint
+(`kronos_backtest_checkpoint.json`, `--from-checkpoint` to reload) saved
+right after the expensive loop, so a crash in reporting can't cost the
+compute again.
+
+**Full detail:** [[Kronos Research Agent]], `KronosAI/KronosVault/Kronos
+Integration Log.md`. Kronos stays wired in as opt-in (`--signal kronos`)
+for reference/re-testing, not because it showed value — momentum remains
+the only validated signal.
 
 ### 2.3: ~~Build `paper_trader.py`~~ — DONE 2026-07-21
 

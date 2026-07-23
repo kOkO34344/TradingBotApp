@@ -1,7 +1,7 @@
 ---
 tags: [research, kronos, agent, workflow]
 source: KronosAI/kronos_agent.py
-status: "Integrated, unvalidated"
+status: "Integrated, backtested — no measurable edge found"
 last_updated: 2026-07-23
 ---
 
@@ -19,7 +19,7 @@ It's the project's second research agent, alongside — not replacing —
 |---|---|---|
 | Kind | LLM (Claude) reasoning over technical + fundamental context | Foundation model, directly forecasts OHLCV bars |
 | Output | Qualitative thesis: direction, confidence, risks, key levels (`.md` in `research_log/`) | Quantitative: predicted close price N trading days out, ranked by % change |
-| Validation | Ungraded so far (notes too fresh — see [[Phase Milestones Dashboard]]) | **Unvalidated — no backtest, no calibration yet** |
+| Validation | Ungraded so far (notes too fresh — see [[Phase Milestones Dashboard]]) | **Backtested 2026-07-23 — no measurable edge found** (Spearman IC 0.036, 50% hit rate) |
 | Default in `paper_trader.py`? | N/A (momentum rotation is the trading signal, not this) | No — momentum stays default; `--signal kronos` opts in |
 
 A full write-up (architecture, files, sample_count findings, integration
@@ -49,20 +49,38 @@ percentage points run to run — too noisy to read anything into. Averaging
 10-30 paths cut that swing roughly 3x. Code default is now `sample_count=10`.
 Full numbers: `KronosAI/KronosVault/Kronos Integration Log.md`.
 
-## Status: not a substitute for graded evidence yet
+## Status: backtested, no measurable forecasting skill found (2026-07-23)
 
-No backtest, no `grade_calls.py`-equivalent calibration. Treat any Kronos
-output the same way you'd treat an unbacktested strategy idea: interesting,
-not actionable on its own. It's opt-in in both integration points above —
-nothing in the project defaults to it.
+Kronos was walk-forward backtested against the entire honest evaluation
+window its own pretraining allows: the paper (arXiv:2508.02739) states
+training data extends to June 2024 and its own test period begins July
+2024, so July 2024 → now (~24 monthly rebalances) is the only window that
+isn't at risk of scoring memorization rather than forecasting.
 
-**Natural next steps** (not started yet):
-1. Backtest Kronos's ranking the way momentum rotation was backtested
-   (in/out-of-sample, after costs, vs buy-and-hold) before trusting it for
-   anything beyond curiosity.
-2. Once `--signal kronos` gets run for real in `paper_trader.py`, track its
-   proposals/approvals the same way momentum's are tracked, so it accumulates
-   its own evidence trail rather than riding on momentum's.
+**Two-stage result:**
+1. **Information coefficient** (predicted vs realized 20-day return, 304
+   pooled date×ticker pairs): Spearman **0.036**, directional hit rate
+   **50.0%** — statistically no signal.
+2. **Portfolio backtest** (identical dates/costs to momentum, same
+   simulation engine): Kronos rotation 20.99% CAGR / -9.30% DD — beats SPY
+   (17.92% / -18.76%) but loses badly to momentum rotation (59.07% /
+   -15.60%). Given the flat IC, the SPY-beating result should be read as
+   noise from a small (24-decision) sample, not real skill — this is the
+   exact trap a portfolio-only backtest would have missed.
+
+**Verdict:** no measurable forecasting skill detected. This is a real,
+reported negative finding — same treatment the SMA-crossover rejection got
+— not a "hasn't been tested" placeholder. Kronos stays wired into
+`trader_app.py` and `paper_trader.py --signal kronos` as an opt-in signal
+for reference/re-testing, not because it's shown value.
+
+Full methodology, the scipy bug hit along the way, and the checkpoint
+safety-net added because of it: `KronosAI/KronosVault/Kronos Integration
+Log.md`.
+
+**If revisited:** re-run with 2-3 different seeds to confirm the IC finding
+is stable (not urgent — a result this flat is unlikely to flip on a
+different draw, but hasn't been formally confirmed).
 
 ## Related Notes
 

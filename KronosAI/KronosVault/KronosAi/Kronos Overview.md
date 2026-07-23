@@ -1,7 +1,7 @@
 ---
 tags: [kronos, overview, architecture]
 source: KronosAI/
-status: "Integrated, unvalidated"
+status: "Integrated, backtested — no measurable edge found (2026-07-23)"
 ---
 
 # Kronos Overview
@@ -69,20 +69,25 @@ uses — much faster than forecasting tickers one at a time.
   when the feature isn't used.
 - **`paper_trader.py`** — `--signal kronos` flag. Default remains `momentum`
   (the strategy that's actually earned Phase 3 evidence); Kronos is
-  opt-in and explicitly labeled unvalidated in its own printed output.
+  opt-in and its own printed output now says "backtested — no measurable
+  edge found" rather than "unvalidated" (see the 2026-07-23 backtest below).
   Everything downstream of signal selection — ATR-based stop sizing, bracket
   orders, RiskGuard, `trade_journal.csv` — is identical regardless of which
   signal produced the ranking.
 
-## Status: unvalidated
+## Status: backtested — no measurable forecasting skill found (2026-07-23)
 
-No backtest, no `grade_calls.py`-style calibration exists for Kronos yet. Per
-the main project's evidence-gating philosophy (autonomy/trust is earned by
-graded evidence, not by adding capability — see the main vault's
-[[ADR - Python Rules, Not Model Predictions]]), Kronos is wired in as an
-**opt-in signal for paper-trading evaluation**, not a default, and nothing it
-produces should be read as validated until it's been through the same rigor
-momentum rotation went through (in/out-of-sample backtest, vs buy-and-hold).
+Walk-forward backtested against the one honest post-cutoff window available
+(July 2024 → now, bounded by Kronos's own pretraining cutoff of June 2024):
+Spearman IC 0.036, directional hit rate 50.0% — no detectable predictive
+signal. Full methodology and numbers in [[Kronos Integration Log]].
+
+This is a real, reported negative finding (per the main project's "negative
+results get reported, not massaged" rule), not a "hasn't been tested yet"
+placeholder. Kronos stays wired in as an opt-in signal for reference and
+re-testing (e.g. a different seed, or after any future model changes) —
+kept the same way the SMA-crossover strategy is kept in the codebase after
+its own rejection, not because either has shown edge.
 
 ## Related Notes
 

@@ -30,3 +30,9 @@ vault_sync_launchd.log
 trade_reflect.log
 trade_reflect_launchd.log
 trade_reflections/.reflected_execids.json
+
+# Kronos backtest checkpoint: raw intermediate walk-forward results, saved
+# so a crash in reporting doesn't cost re-running the (slow) forecasting
+# loop. Machine state for --from-checkpoint, not meaningful version-controlled
+# content — the actual findings are written into CLAUDE.md and the vault.
+KronosAI/kronos_backtest_checkpoint.json

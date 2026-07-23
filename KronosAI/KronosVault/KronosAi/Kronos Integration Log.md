@@ -10,6 +10,97 @@ Dated log of what was actually built and tested, with real numbers — not a
 restatement of the code (see [[Kronos Overview]] for that). Append new
 entries above the previous ones as work continues.
 
+## 2026-07-23 — Walk-forward backtest: no measurable forecasting skill found
+
+**The headline result.** Kronos was backtested honestly for the first time,
+and it doesn't show edge. This is a real negative finding, not a bug —
+recorded the same way the SMA-crossover rejection was, per the project's
+"negative results get reported, not massaged" rule.
+
+**Why the window is what it is.** Kronos's pretraining data extends to June
+2024 (per the paper, arXiv:2508.02739 — quote: "the pre-training data for
+Kronos extends up to June 2024" / "our test period for all tasks begins in
+July 2024 to ensure a strict temporal separation between training and
+evaluation"). Evaluating on anything before that risks scoring memorization
+of the actual historical path, not forecasting skill. So July 2024 → now
+(2026-07-23) is the *entire* honest test window available — 24 monthly
+rebalances. Lookback context predating June 2024 is fine (real historical
+prices, same as any live run conditions on); only the *forecasted* window
+had to stay post-cutoff.
+
+**Method:** built `KronosAI/kronos_backtest.py` — a real walk-forward sim
+(no lookahead: at each historical month-end, Kronos only sees bars up to
+that date). Two stages:
+1. **Information coefficient** — pooled Spearman rank correlation between
+   Kronos's predicted 20-trading-day return and the *realized* 20-day
+   return, across every (date, ticker) pair. The cheap go/no-go check,
+   recommended over jumping straight to a portfolio sim because it's far
+   more statistically informative (hundreds of data points vs one curve).
+2. **Portfolio backtest** — Kronos-ranked top-3 monthly rotation vs
+   momentum's own ranking vs SPY buy-and-hold, on identical dates, run
+   through the exact same `simulate_rotation()` engine
+   `trader_app.momentum_backtest` uses (extracted into a shared function
+   specifically so the comparison is apples-to-apples on cost/turnover).
+
+**Results (sample_count=10, seed=42, single draw):**
+
+Stage 1 — Information Coefficient:
+- Pooled pairs: 304 (24 dates × 14 tickers, wherever both existed)
+- Spearman IC: **0.036** (~zero)
+- Directional hit rate: **50.0%** (coin-flip)
+
+Stage 2 — Portfolio backtest [2024-07-31 → 2026-07-31]:
+
+| Strategy | CAGR | Max DD | Sharpe |
+|---|---|---|---|
+| Kronos rotation | 20.99% | -9.30% | 1.09 |
+| Momentum rotation | 59.07% | -15.60% | 1.73 |
+| SPY buy&hold | 17.92% | -18.76% | 1.06 |
+
+**Interpretation — read Stage 1 first.** Taken alone, Stage 2 looks
+tempting: Kronos beat SPY on both return and drawdown. But Stage 1 says
+that has to be read as noise, not skill — with an IC this close to zero and
+a hit rate at exactly 50%, there's no detectable predictive signal driving
+the ranking. A 24-decision portfolio sim (picking 3 of 14 tickers each
+month) can easily land on a decent-looking curve by chance alone. This is
+exactly why the two-stage design exists: Stage 2 alone would have been
+misleading on its own. Against momentum rotation (the strategy actually
+running on paper), Kronos isn't remotely competitive either way.
+
+**Bugs hit and fixed getting here (real, not hypothetical):**
+- `pandas.Series.corr(method="spearman")` silently requires `scipy`
+  internally — not documented anywhere obvious, and scipy wasn't installed.
+  This wasn't caught until *after* the full 24-date walk-forward loop
+  completed (~25-30 min of Kronos inference), because the crash happened at
+  the final stats step with nothing checkpointed yet — the run's entire
+  output was lost. Fixed two ways: (1) replaced the IC calculation with a
+  scipy-free rank-based Pearson correlation (mathematically identical to
+  Spearman, no new dependency), (2) added a checkpoint
+  (`kronos_backtest_checkpoint.json`, `--from-checkpoint` to reload) saved
+  immediately after the forecasting loop, before any further processing —
+  so a crash in the (cheap) reporting stage can never cost the expensive
+  part again.
+
+**What changed in the code as a result:** `trader_app.py`'s menu item 7 and
+`paper_trader.py --signal kronos` both now say "backtested — no measurable
+edge found (IC 0.036, 50% hit rate)" instead of "unvalidated." Kronos stays
+wired in as an opt-in signal (useful for re-testing with a different seed,
+or after any future model/prompt changes) — it's just no longer accurate to
+call it merely untested.
+
+**Caveats on this result:**
+- Single sampling draw (seed 42, sample_count=10). Kronos samples
+  stochastically; a different seed would shift the numbers somewhat, though
+  an IC this flat and a hit rate at exactly 50% would be a surprising thing
+  for a different seed to reverse.
+- Small sample by construction — 24 rebalances is the entire honest window,
+  not a choice; this is a real methodological floor, not a shortcut taken
+  for convenience.
+
+**Natural next step, if revisited:** re-run with 2-3 different seeds to
+confirm the IC finding is stable before considering this fully closed —
+but there's no urgency, since the result is unambiguous as-is.
+
 ## 2026-07-23 — Integrated as the project's research agent, wired into app + paper trading
 
 **Ask:** Make Kronos the main research agent for the project, integrate it

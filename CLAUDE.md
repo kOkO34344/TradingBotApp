@@ -46,6 +46,18 @@ File purposes are documented in each script's own module docstring
   Caveat: hand-picked mega-cap universe flatters it; broad-universe test pending.
 - ORB (Zarattini/Aziz rules) on recent 60 days of 5m QQQ: -12.6%. Regime-dependent.
 - ICT/SMC influencer methods: no verifiable evidence (see knowledge/01).
+- Kronos (foundation-model forecaster, `KronosAI/`) walk-forward backtested
+  2026-07-23, window bounded by its own pretraining cutoff (paper states
+  training data ends June 2024, test period begins July 2024 — so July
+  2024→now is the only honest evaluation window, ~24 monthly rebalances):
+  Spearman IC 0.036, directional hit rate 50.0% on predicted-vs-realized
+  20-day return (304 pooled date×ticker pairs) — no measurable forecasting
+  skill detected. Portfolio sim happened to beat SPY (20.99% CAGR / -9.30%
+  DD vs SPY 17.92% / -18.76%) but that's noise from a 24-decision sample
+  given the flat IC, not edge — and it lost badly to momentum rotation
+  (59.07% CAGR / -15.60% DD) on the identical dates/costs. Single seed
+  (42)/sample_count=10 draw. See `KronosAI/kronos_backtest.py` and
+  KronosAI/KronosVault's Integration Log for full methodology.
 
 ## Current phase status
 

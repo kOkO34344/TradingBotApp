@@ -364,6 +364,31 @@ def plot_equity(ticker: str, sliced: pd.DataFrame, stats, settings: dict):
     plt.show()
 
 
+def simulate_rotation(daily_ret: pd.DataFrame, month_ends: list, tops_by_date: dict,
+                      cost: float, top_n: int) -> pd.Series:
+    """Equal-weight monthly rotation simulator: shared by momentum_backtest and
+    any other per-date ranking (e.g. Kronos's forecast, see KronosAI/kronos_backtest.py)
+    so a strategy comparison is apples-to-apples on identical cost/turnover mechanics.
+
+    `tops_by_date[month_ends[i]]` is the list of tickers to hold from
+    month_ends[i] to month_ends[i+1]; turnover cost is charged on the
+    fraction of the top-N that changed since the prior rebalance."""
+    equity, curve, prev = 1.0, [], set()
+    for i in range(len(month_ends) - 1):
+        m_start, m_end = month_ends[i], month_ends[i + 1]
+        top = tops_by_date.get(m_start, [])
+        if top:
+            seg = daily_ret.loc[m_start:m_end, top].iloc[1:]
+            seg_ret = (1 + seg.mean(axis=1)).prod() - 1
+        else:
+            seg_ret = 0.0  # fully in cash
+        turnover = len(set(top) ^ prev) / max(top_n, 1)
+        equity *= (1 + seg_ret) * (1 - cost * turnover)
+        prev = set(top)
+        curve.append((m_end, equity))
+    return pd.Series(dict(curve))
+
+
 def momentum_backtest(data: dict, settings: dict):
     """Portfolio-level momentum rotation: each month, rank tickers by trailing
     N-month return and hold the top-K equal-weight. If the risk engine is on,
@@ -390,29 +415,22 @@ def momentum_backtest(data: dict, settings: dict):
     mom = monthly.pct_change(lookback)
     daily_ret = closes.pct_change()
 
-    equity, curve, holds, prev = 1.0, [], [], set()
     first_i = next((i for i in range(len(monthly)) if monthly.index[i] >= pd.Timestamp(p_start)), None)
     if first_i is None or first_i >= len(monthly) - 1:
         console.print("[red]Not enough data in that window.[/red]")
         return
+
+    tops_by_date = {}
     for i in range(max(first_i, lookback), len(monthly) - 1):
         ranked = mom.iloc[i].dropna().sort_values(ascending=False)
         top = list(ranked.index[:top_n])
         if dual:
             top = [t for t in top if ranked[t] > 0]  # negative momentum -> cash
-        m_start, m_end = monthly.index[i], monthly.index[i + 1]
-        if top:
-            seg = daily_ret.loc[m_start:m_end, top].iloc[1:]
-            seg_ret = (1 + seg.mean(axis=1)).prod() - 1
-        else:
-            seg_ret = 0.0  # fully in cash
-        turnover = len(set(top) ^ prev) / max(top_n, 1)
-        equity *= (1 + seg_ret) * (1 - cost * turnover)
-        prev = set(top)
-        curve.append((m_end, equity))
-        holds.append((m_end.date(), top if top else ["CASH"]))
+        tops_by_date[monthly.index[i]] = top
 
-    curve = pd.Series(dict(curve))
+    month_ends = list(monthly.index[max(first_i, lookback):])
+    curve = simulate_rotation(daily_ret, month_ends, tops_by_date, cost, top_n)
+    holds = [(d.date(), tops_by_date[d] if tops_by_date[d] else ["CASH"]) for d in month_ends[:-1]]
     yrs = (curve.index[-1] - curve.index[0]).days / 365.25
     cagr = ((curve.iloc[-1] / curve.iloc[0]) ** (1 / yrs) - 1) * 100
     dd = ((curve - curve.cummax()) / curve.cummax()).min() * 100
@@ -465,8 +483,11 @@ def kronos_menu(settings: dict):
     """Run KronosAI's forecast agent (kronos_agent.py) against the watchlist
     and show a ranked table. Analysis only — this app places no orders;
     paper_trader.py --signal kronos trades off this same signal (still
-    paper, still human-approved). Unvalidated: no backtest, no
-    grade_calls.py-style calibration yet — see CLAUDE.md rule 5."""
+    paper, still human-approved). Backtested 2026-07-23 (see CLAUDE.md
+    empirical findings): near-zero information coefficient, 50% hit rate —
+    no measurable forecasting skill found in the one honest post-cutoff
+    window available. Kept for reference/re-testing, not because it's
+    shown edge — see CLAUDE.md rule 5."""
     try:
         sys.path.insert(0, str(Path(__file__).parent / "KronosAI"))
         import kronos_agent as ka
@@ -484,7 +505,8 @@ def kronos_menu(settings: dict):
     console.print(Panel(
         f"Forecasting {len(tickers)} ticker(s), {ka.PRED_LEN} trading days ahead, "
         f"sample_count={sample_count}.\n"
-        "[dim]Unvalidated — no backtest, no calibration yet. Analysis only, no orders placed.[/dim]",
+        "[dim]Backtested — no measurable edge found (IC 0.036, 50% hit rate). "
+        "Analysis only, no orders placed.[/dim]",
         title="Kronos forecast", border_style="cyan"))
 
     with console.status("[bold cyan]Loading model + forecasting (first run downloads from Hugging Face)..."):
@@ -836,7 +858,7 @@ MENU = """[bold cyan]1[/bold cyan]. SMA backtest — out-of-sample (2019 → now
 [bold cyan]4[/bold cyan]. Ticker deep dive (stats, trades, equity chart)
 [bold cyan]5[/bold cyan]. Chart view (candlesticks + indicators: trend, volatility, volume, S/R)
 [bold cyan]6[/bold cyan]. Momentum rotation backtest (portfolio)   [dim]the strategy that earned it[/dim]
-[bold cyan]7[/bold cyan]. Kronos forecast (research agent)   [dim]unvalidated — analysis only, no orders[/dim]
+[bold cyan]7[/bold cyan]. Kronos forecast (research agent)   [dim]backtested, no edge found — analysis only[/dim]
 [bold cyan]8[/bold cyan]. Settings (tickers, SMA windows, costs, risk engine, momentum, IBKR)
 [bold cyan]9[/bold cyan]. Refresh price data (force re-download)
 [bold cyan]10[/bold cyan]. IBKR paper account (connect, positions, live 15-min bars)

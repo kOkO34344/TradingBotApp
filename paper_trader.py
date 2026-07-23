@@ -16,8 +16,12 @@ return — the strategy that's actually earned Phase 3), or Kronos
 (--signal kronos, KronosAI/kronos_agent.py's forecast ranking). Both
 return the same (top, data, ranked) shape, so everything downstream of
 signal selection — sizing, approval, execution, journaling — is identical
-regardless of which produced `top`. Kronos is unvalidated (no backtest,
-no calibration yet) — select it explicitly; momentum stays the default.
+regardless of which produced `top`. Kronos was walk-forward backtested
+2026-07-23 (see CLAUDE.md empirical findings): near-zero information
+coefficient (0.036) and a 50% directional hit rate — no measurable
+forecasting skill detected in the one honest post-cutoff window
+available. It's kept as an opt-in signal for reference/re-testing, not
+because it's shown any edge; momentum stays the default.
 
 Sizing: qty = floor((NetLiquidation * risk_pct_per_trade%) / (2*ATR)),
 clamped so qty*price never exceeds RiskGuard's max_order_notional_usd. This
@@ -160,7 +164,8 @@ def main():
                     help="Connect read-only, compute and print the proposal, place no orders, ask nothing.")
     ap.add_argument("--signal", choices=["momentum", "kronos"], default="momentum",
                     help="Ranking source (default: momentum, the validated strategy). "
-                         "kronos = KronosAI/kronos_agent.py's forecast ranking — unvalidated, opt-in only.")
+                         "kronos = KronosAI/kronos_agent.py's forecast ranking — backtested, no "
+                         "measurable edge found (IC 0.036, 50% hit rate), opt-in only.")
     args = ap.parse_args()
 
     settings = ta.load_settings()
@@ -170,7 +175,8 @@ def main():
     if args.signal == "kronos":
         sys.path.insert(0, str(Path(__file__).parent / "KronosAI"))
         import kronos_agent as ka
-        print("Computing Kronos forecast signal from fresh data (unvalidated — opted in via --signal kronos)...")
+        print("Computing Kronos forecast signal from fresh data "
+              "(backtested, no measurable edge found — opted in via --signal kronos)...")
         top, data, ranked = ka.forecast_signal(settings)
         rank_label = f"predicted {ka.PRED_LEN}-trading-day return"
     else:
@@ -243,6 +249,8 @@ def main():
                             status="declined", detail="owner declined rebalance")
             return
 
+        exec_summary_lines = []
+
         # --- exits first: free up max_open_positions headroom before entries ---
         for sym in sells:
             p = held[sym]
@@ -254,6 +262,7 @@ def main():
             if trade:
                 ibs.wait_for_status(ib, trade)
                 print(f"  SELL {sym}: {trade.orderStatus.status}")
+                exec_summary_lines.append(f"SELL {sym} {qty:.0f}sh: {trade.orderStatus.status}")
 
         # --- entries ---
         for t in buys:
@@ -267,8 +276,17 @@ def main():
             if trades:
                 ibs.wait_for_status(ib, trades[0])
                 print(f"  BUY {t}: {trades[0].orderStatus.status}")
+                exec_summary_lines.append(
+                    f"BUY {t} {bp['qty']}sh @ ~{bp['entry']:.2f} "
+                    f"(stop {bp['stop']:.2f}): {trades[0].orderStatus.status}"
+                )
 
         print("\nDone. Full record in trade_journal.csv.")
+        if exec_summary_lines:
+            ibs.send_telegram(
+                f"\U0001f504 Paper trader rebalance executed ({args.signal} signal)\n\n"
+                + "\n".join(exec_summary_lines)
+            )
     finally:
         ib.disconnect()
 
