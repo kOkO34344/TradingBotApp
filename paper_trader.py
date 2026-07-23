@@ -1,15 +1,23 @@
 #!/usr/bin/env python3
 """
-paper_trader.py — Phase 3: momentum-rotation paper trading with mandatory
-human approval. No LLM in this loop — the signal is pure rules, computed
-at machine speed; a human approves every rebalance before anything reaches
+paper_trader.py — Phase 3: rule-based paper trading with mandatory human
+approval. No LLM in this loop — the signal is pure rules, computed at
+machine speed; a human approves every rebalance before anything reaches
 the broker.
 
-Flow: connect (paper-guarded) -> compute the momentum signal from FRESH
-daily data -> diff against live IBKR positions -> print the full proposed
-rebalance -> explicit y/n -> execute (exits first, then entries, with
-ATR-based stops sized from RiskGuard's risk budget) -> everything journals
-to trade_journal.csv via ibkr_service.
+Flow: connect (paper-guarded) -> compute a signal from FRESH daily data ->
+diff against live IBKR positions -> print the full proposed rebalance ->
+explicit y/n -> execute (exits first, then entries, with ATR-based stops
+sized from RiskGuard's risk budget) -> everything journals to
+trade_journal.csv via ibkr_service.
+
+Signal: momentum rotation (default, top-N of watchlist by trailing N-month
+return — the strategy that's actually earned Phase 3), or Kronos
+(--signal kronos, KronosAI/kronos_agent.py's forecast ranking). Both
+return the same (top, data, ranked) shape, so everything downstream of
+signal selection — sizing, approval, execution, journaling — is identical
+regardless of which produced `top`. Kronos is unvalidated (no backtest,
+no calibration yet) — select it explicitly; momentum stays the default.
 
 Sizing: qty = floor((NetLiquidation * risk_pct_per_trade%) / (2*ATR)),
 clamped so qty*price never exceeds RiskGuard's max_order_notional_usd. This
@@ -17,9 +25,10 @@ ties position size to stop distance (2x daily ATR-14), not the other way
 around, per the knowledge base's risk rules.
 
 Usage:
-  python3 paper_trader.py             full run: connect, propose, ask, execute
-  python3 paper_trader.py --dry-run   connect + compute + print only, no
-                                       orders, no approval prompt
+  python3 paper_trader.py                    full run: momentum signal, propose, ask, execute
+  python3 paper_trader.py --signal kronos    same, but ranked by Kronos's forecast instead
+  python3 paper_trader.py --dry-run          connect + compute + print only, no
+                                              orders, no approval prompt
 """
 
 import argparse
@@ -146,24 +155,35 @@ def get_net_liquidation_usd(ib) -> float:
 
 def main():
     ap = argparse.ArgumentParser(
-        description="Phase 3 paper-trading loop: momentum rotation with mandatory human approval.")
+        description="Phase 3 paper-trading loop: rule-based rebalance with mandatory human approval.")
     ap.add_argument("--dry-run", action="store_true",
                     help="Connect read-only, compute and print the proposal, place no orders, ask nothing.")
+    ap.add_argument("--signal", choices=["momentum", "kronos"], default="momentum",
+                    help="Ranking source (default: momentum, the validated strategy). "
+                         "kronos = KronosAI/kronos_agent.py's forecast ranking — unvalidated, opt-in only.")
     args = ap.parse_args()
 
     settings = ta.load_settings()
     tickers = settings["tickers"]
     top_n = settings.get("momentum_top_n", 3)
 
-    print("Computing momentum signal from fresh data...")
-    top, data, ranked = compute_signal(settings)
+    if args.signal == "kronos":
+        sys.path.insert(0, str(Path(__file__).parent / "KronosAI"))
+        import kronos_agent as ka
+        print("Computing Kronos forecast signal from fresh data (unvalidated — opted in via --signal kronos)...")
+        top, data, ranked = ka.forecast_signal(settings)
+        rank_label = f"predicted {ka.PRED_LEN}-trading-day return"
+    else:
+        print("Computing momentum signal from fresh data...")
+        top, data, ranked = compute_signal(settings)
+        rank_label = f"trailing {settings.get('momentum_lookback_m', 12)}-mo return"
 
-    print(f"\nRanking (trailing {settings.get('momentum_lookback_m', 12)}-mo return):")
+    print(f"\nRanking ({rank_label}):")
     for t in ranked.index:
         marker = "  <= TOP" if t in top else ""
         print(f"  {t:6s} {ranked[t] * 100:+7.2f}%{marker}")
     if not top:
-        print("\nAll candidates have negative momentum (dual-momentum filter) — target is 100% cash.")
+        print("\nAll candidates ranked negative (dual filter) — target is 100% cash.")
 
     port = settings.get("ibkr_port", 4002)
     print(f"\nConnecting to IBKR paper on port {port}...")

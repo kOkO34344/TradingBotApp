@@ -461,6 +461,58 @@ def momentum_backtest(data: dict, settings: dict):
         plt.show()
 
 
+def kronos_menu(settings: dict):
+    """Run KronosAI's forecast agent (kronos_agent.py) against the watchlist
+    and show a ranked table. Analysis only — this app places no orders;
+    paper_trader.py --signal kronos trades off this same signal (still
+    paper, still human-approved). Unvalidated: no backtest, no
+    grade_calls.py-style calibration yet — see CLAUDE.md rule 5."""
+    try:
+        sys.path.insert(0, str(Path(__file__).parent / "KronosAI"))
+        import kronos_agent as ka
+    except ImportError as e:
+        console.print(f"[red]Kronos dependencies not installed: {e}[/red]")
+        console.print("[dim]pip install torch einops huggingface_hub safetensors matplotlib tqdm "
+                      "(see KronosAI/requirements.txt)[/dim]")
+        return
+
+    raw = Prompt.ask("Tickers (comma-separated, blank = full watchlist)", default="")
+    tickers = [t.strip().upper() for t in raw.split(",") if t.strip()] or settings["tickers"]
+    sample_count = IntPrompt.ask("Sample count (forecast paths averaged per ticker)",
+                                 default=ka.DEFAULT_SAMPLE_COUNT)
+
+    console.print(Panel(
+        f"Forecasting {len(tickers)} ticker(s), {ka.PRED_LEN} trading days ahead, "
+        f"sample_count={sample_count}.\n"
+        "[dim]Unvalidated — no backtest, no calibration yet. Analysis only, no orders placed.[/dim]",
+        title="Kronos forecast", border_style="cyan"))
+
+    with console.status("[bold cyan]Loading model + forecasting (first run downloads from Hugging Face)..."):
+        try:
+            ok_tickers, hist_data, pred_dfs = ka.forecast_tickers(
+                tickers, pred_len=ka.PRED_LEN, sample_count=sample_count, verbose=False)
+        except Exception as e:
+            console.print(f"[red]Forecast failed: {e}[/red]")
+            return
+
+    rows = []
+    for tk in ok_tickers:
+        last_close = hist_data[tk]["Close"].iloc[-1]
+        pred_end = pred_dfs[tk]["close"].iloc[-1]
+        chg = (pred_end / last_close - 1) * 100
+        rows.append((tk, last_close, pred_end, chg))
+    rows.sort(key=lambda r: r[3], reverse=True)
+
+    kt = Table(title=f"Kronos forecast — {ka.PRED_LEN} trading days ahead", header_style="bold cyan")
+    kt.add_column("Ticker", style="bold")
+    kt.add_column("Last Close", justify="right")
+    kt.add_column("Pred End Close", justify="right")
+    kt.add_column("Chg %", justify="right")
+    for tk, last_close, pred_end, chg in rows:
+        kt.add_row(tk, fmt(last_close), fmt(pred_end), color_num(chg, "%"))
+    console.print(kt)
+
+
 def chart_view(data: dict, settings: dict):
     """Candlestick chart with indicator overlays + panels, terminal-rendered.
     All math comes from indicators.py — the same module the research agent
@@ -784,10 +836,11 @@ MENU = """[bold cyan]1[/bold cyan]. SMA backtest — out-of-sample (2019 → now
 [bold cyan]4[/bold cyan]. Ticker deep dive (stats, trades, equity chart)
 [bold cyan]5[/bold cyan]. Chart view (candlesticks + indicators: trend, volatility, volume, S/R)
 [bold cyan]6[/bold cyan]. Momentum rotation backtest (portfolio)   [dim]the strategy that earned it[/dim]
-[bold cyan]7[/bold cyan]. Settings (tickers, SMA windows, costs, risk engine, momentum, IBKR)
-[bold cyan]8[/bold cyan]. Refresh price data (force re-download)
-[bold cyan]9[/bold cyan]. IBKR paper account (connect, positions, live 15-min bars)
-[bold cyan]10[/bold cyan]. Quit"""
+[bold cyan]7[/bold cyan]. Kronos forecast (research agent)   [dim]unvalidated — analysis only, no orders[/dim]
+[bold cyan]8[/bold cyan]. Settings (tickers, SMA windows, costs, risk engine, momentum, IBKR)
+[bold cyan]9[/bold cyan]. Refresh price data (force re-download)
+[bold cyan]10[/bold cyan]. IBKR paper account (connect, positions, live 15-min bars)
+[bold cyan]11[/bold cyan]. Quit"""
 
 
 def main():
@@ -801,7 +854,7 @@ def main():
     while True:
         console.print(Panel(MENU, title="Menu", border_style="blue"))
         try:
-            choice = Prompt.ask("Choose", choices=[str(i) for i in range(1, 11)], default="1")
+            choice = Prompt.ask("Choose", choices=[str(i) for i in range(1, 12)], default="1")
         except (EOFError, KeyboardInterrupt):
             break
         try:
@@ -820,13 +873,15 @@ def main():
             elif choice == "6":
                 momentum_backtest(data, settings)
             elif choice == "7":
+                kronos_menu(settings)
+            elif choice == "8":
                 edit_settings(settings)
                 data = load_all_data(settings)  # in case tickers changed
-            elif choice == "8":
-                data = load_all_data(settings, force=True)
             elif choice == "9":
-                ibkr_menu(settings)
+                data = load_all_data(settings, force=True)
             elif choice == "10":
+                ibkr_menu(settings)
+            elif choice == "11":
                 break
         except (EOFError, KeyboardInterrupt):
             break

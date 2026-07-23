@@ -11,13 +11,15 @@
     "KO",
     "DIS",
     "NVDA",
-    "PLTR"
+    "PLTR",
+    "AVGO",
+    "ASML"
   ],
   "benchmark": "SPY",
   "sma_fast": 20,
   "sma_slow": 50,
   "commission_pct": 0.1,
-  "cash": 10000,
+  "cash": 1141420,
   "start": "2010-01-01",
   "end": "2026-07-18",
   "in_sample_end": "2018-12-31",
