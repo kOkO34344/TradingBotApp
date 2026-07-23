@@ -38,15 +38,16 @@ A fifth, smaller thing: `trading_agent_service.py` (the third-party TradingAgent
 
 ## Current app snapshot
 
-(from `trader_settings.json`, synced 2026-07-21)
+(from `trader_settings.json`, synced 2026-07-23)
 
-- **Watchlist:** AAPL, MSFT, GOOGL, AMZN, JPM, JNJ, PG, XOM, KO, DIS, NVDA, PLTR (12 now — NVDA and PLTR added since last sync) — plus SPY as benchmark
+- **Watchlist:** AAPL, MSFT, GOOGL, AMZN, JPM, JNJ, PG, XOM, KO, DIS, NVDA, PLTR, AVGO, ASML (14 now — AVGO and ASML added since last sync) — plus SPY as benchmark
 - **SMA windows:** 20 / 50 (default, known to lose to buy-and-hold)
 - **Cost model:** 0.1% per trade
-- **Starting cash (sim):** $10,000
+- **Starting cash (sim):** $1,141,420 — this now reflects the actual IBKR paper account balance, not the original $10,000 placeholder
 - **Risk engine:** off by default — togglable (trend filter + 2×ATR trailing stop + fixed % risk per trade)
 - **Momentum rotation:** top 3, 12-month lookback — the strategy with the best evidence so far
-- **IBKR:** port **4002** (IB Gateway paper — switched from TWS's 7497 now that the Gateway connection is the one that's actually verified), client id 9 — read-only in the *app* (`trader_app.py` menu), but `paper_trader.py` (separate script) now executes real orders through this connection
+- **Kronos forecast:** new menu item (7) — a foundation-model forecaster, analysis only in the app, unvalidated. See [[Kronos Research Agent]].
+- **IBKR:** port **4002** (IB Gateway paper — switched from TWS's 7497 now that the Gateway connection is the one that's actually verified), client id 9 — read-only in the *app* (`trader_app.py` menu), but `paper_trader.py` (separate script) now executes real orders through this connection, with a choice of signal (`--signal momentum` default, or `--signal kronos`)
 
 ## Recommended next steps
 

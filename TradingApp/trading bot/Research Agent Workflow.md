@@ -212,6 +212,7 @@ Then groups by confidence and plots accuracy curves. Healthy calibration: high-c
 - [[Graded Calls Tracker]] — live grading results
 - [[Research Agent Workflow]] — this note
 - [[Phase Milestones Dashboard]] — Phase 1 status
+- [[Kronos Research Agent]] — the project's second research agent, added 2026-07-23: a quantitative forecaster (foundation model) rather than an LLM writing a qualitative thesis. Runs alongside this one, not instead of it — both are unvalidated in different ways (this one ungraded, Kronos unbacktested).
 
 ## Files
 

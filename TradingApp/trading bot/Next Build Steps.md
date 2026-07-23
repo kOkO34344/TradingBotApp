@@ -56,7 +56,29 @@ for end_date in [2020-01-01, 2021-01-01, 2022-01-01, 2023-01-01, 2024-01-01]:
 
 **Why:** The 16.6% number comes from a hand-picked period with strong momentum in these 12 tickers. Fair validation checks if it works in other periods too — worth doing even though the strategy is already live on paper (this validates a running strategy, doesn't gate starting one).
 
-### 2.2: ~~Build `paper_trader.py`~~ — DONE 2026-07-21
+### 2.2: Backtest Kronos before trusting its forecasts [scope TBD]
+
+**What:** Kronos (the foundation-model forecaster, see [[Kronos Research Agent]])
+was integrated 2026-07-23 — `trader_app.py` menu item 7, `paper_trader.py
+--signal kronos` — but has never been backtested. It's opt-in and clearly
+labeled unvalidated everywhere it's wired in, but "wired in" isn't "earned
+evidence."
+
+**Why it matters:** Momentum rotation only got the right to run on paper
+after in/out-of-sample backtesting against buy-and-hold. Kronos hasn't been
+through any of that yet — its ranking has only been eyeballed, never scored.
+
+**How (sketch, not yet built):** Something like `grade_calls.py` but for
+Kronos's numeric predictions instead of `research_agent.py`'s qualitative
+calls — compare predicted % change (N trading days out) against actual
+realized return, across enough historical windows to say something about
+calibration, not just one lucky/unlucky run.
+
+**Not urgent, not blocking:** paper trading continues on momentum by default;
+this is about earning Kronos the same trust momentum already has, not about
+unblocking anything currently stalled.
+
+### 2.3: ~~Build `paper_trader.py`~~ — DONE 2026-07-21
 
 **What actually got built** (real, not the pseudocode originally sketched here):
 - Fresh (force-refetched) momentum signal, top-N of watchlist by trailing 12-month return

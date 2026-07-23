@@ -1,7 +1,7 @@
 ---
 tags: [moc, index]
 status: "Live"
-last_updated: 2026-07-21
+last_updated: 2026-07-23
 ---
 
 # Trading Bot — Map of Contents
@@ -23,6 +23,7 @@ This is the central index for the Trading Bot project. The codebase lives at `/U
 2. Periodically check the live paper positions (GOOGL/AAPL/JNJ) are healthy — stops present **and GTC** (see the DAY-vs-GTC bug in [[IBKR Integration]] — a stop can look fine for hours and then silently expire).
 3. Next `research_agent.py` re-run due ~2026-07-28 (weekly cadence); next `paper_trader.py` rebalance whenever the owner runs it (monthly, manual, no scheduler yet).
 4. Momentum rotation still hasn't had portfolio-level walk-forward validation — worth doing, not currently blocking anything.
+5. **New 2026-07-23:** Kronos (foundation-model forecaster) is now integrated — `trader_app.py` menu item 7, and `paper_trader.py --signal kronos` (opt-in, momentum stays default). Unvalidated — see [[Kronos Research Agent]]. Natural next step: backtest it the way momentum rotation was backtested, before trusting any of its output.
 
 ## The Vault by topic
 
@@ -39,6 +40,7 @@ This is the central index for the Trading Bot project. The codebase lives at `/U
 
 ### 🧠 **Research & Grading**
 - [[Research Agent Workflow]] — how `research_agent.py` works, what it outputs, where the notes live
+- [[Kronos Research Agent]] — the project's second research agent (quantitative forecast, foundation model); integrated into the app and `paper_trader.py`, still unvalidated
 - [[Call Grading System]] — how `grade_calls.py` scores calls (long > +0.5%, short < -0.5%, no-edge ±2%), calibration rules
 - [[Graded Calls Tracker]] — running log of research notes graded; accuracy by confidence bucket
 
