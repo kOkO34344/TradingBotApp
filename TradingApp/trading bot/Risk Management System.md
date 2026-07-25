@@ -2,6 +2,7 @@
 tags: [risk, execution, infrastructure]
 status: "live in code"
 source: ibkr_service.py
+last_updated: 2026-07-25
 ---
 
 # Risk Management System
@@ -105,7 +106,48 @@ Every order path (`place_bracket_order`, `place_market_order`) calls `guard.chec
 
 The "stop attachment" check (#2 above) verifies a stop order is submitted alongside the entry — it says nothing about whether that stop is still *alive* later. In production, `place_bracket_order`'s stop leg had no explicit time-in-force, so IBKR defaulted it to `DAY`, and it silently expired at end of the trading session. All three positions from the first `paper_trader.py` run (GOOGL, AAPL, JNJ) were briefly unprotected as a result — caught by re-checking positions, not by any automated alert.
 
-**Fix:** stop (and target, if used) legs now explicitly set `tif="GTC"` in `ibkr_service.py`, so they persist until the position is actually closed. **Residual risk:** RiskGuard has no ongoing check that a position's stop is still `PreSubmitted`/`GTC` — that verification is currently manual (part of the periodic position health-check in [[IBKR Integration]]), not code-enforced. A future improvement would be a standalone check (or scheduled job) that flags any open position with no matching GTC stop order.
+**Fix:** stop (and target, if used) legs now explicitly set `tif="GTC"` in `ibkr_service.py`, so they persist until the position is actually closed. **Residual risk (as first written 2026-07-21):** RiskGuard has no ongoing check that a position's stop is still `PreSubmitted`/`GTC` — that verification is currently manual, not code-enforced.
+
+**⚠️ That residual risk materialized on 2026-07-23, found 2026-07-25.** GOOGL's
+GTC stop worked correctly — the position gapped through it at the open
+rather than filling at the stop price — but the resulting close reached
+*neither* `trade_journal.csv` nor a Telegram alert. Root cause:
+`reflect_on_trades.py` (the "future improvement" this section called for)
+detected closes only via `ib.reqExecutions()`, and **IBKR serves executions
+for the current session only** — verified directly: a 30-day
+`ExecutionFilter` returned 0 rows. Any close happening while the script
+wasn't polling that exact session (overnight, a weekend, machine asleep) was
+invisible to it permanently; `LOOKBACK_DAYS` couldn't help because the data
+simply isn't there to request.
+
+**Fix (2026-07-25):** `reflect_on_trades.py` is now two-tier — `reqExecutions`
+first (exact fill price and P&L when available), then a position-snapshot
+diff (`ib.positions()` vs. the previous run's saved snapshot) as a fallback
+that cannot silently miss an event, at the cost of not knowing exit price or
+P&L for what it catches. Both tiers now write to `trade_journal.csv`
+directly (`CLOSE_FILLED` / `CLOSE_DETECTED`) — previously **neither tier
+journaled a close at all**; `paper_trader.py` only journals exits it places
+itself, so an autonomously-firing GTC stop reached the journal from nowhere.
+GOOGL's close was backfilled by hand as `CLOSE_RECONSTRUCTED` (inferred from
+daily bars: 07-23 opened at 321.13, below the 326.06 stop — filled at the
+open, est. -$422, ~$69 of that pure gap slippage).
+
+**Known remaining gap:** the snapshot tier journals and Telegram-alerts a
+detected close but writes **no reflection** — `build_prompt()` needs a
+realized P&L it doesn't have. So a weekend/overnight stop-out still leaves
+nothing in `trade_reflections/` for `research_agent.py`'s
+`load_reflections()` to learn from. Fixing that means reconstructing the
+exit from price bars, the way the GOOGL backfill did manually — not yet
+automated.
+
+**Also clarified 2026-07-25 — the daily-loss circuit breaker is a pre-trade
+gate, not a monitor.** `daily_realized_pnl()` reads IBKR's own `RealizedPnL`
+account value, and `check_order()` only consults it when an order is about
+to be *placed*. Nothing tried to place one on 07-23, so the breaker was
+never evaluated for GOOGL's loss at all — it cannot stop a loss that arrives
+from a stop firing on its own, only refuse the *next* order after one. Worth
+knowing before relying on it as a safety net under [[Autotrade
+(Experimental)]]'s unattended firings.
 
 ### Trade Journal Audit Trail
 

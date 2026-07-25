@@ -1,11 +1,31 @@
 ---
 tags: [autotrade, risk, experimental, execution]
 source: autotrade_runner.py
-status: "Built, loaded, OFF by default"
-last_updated: 2026-07-24
+status: "ARMED — enabled=true, signal=kronos, as of 2026-07-25"
+last_updated: 2026-07-25
 ---
 
 # Autotrade (Experimental)
+
+## ⚠️ Current state: ARMED
+
+As of 2026-07-25, `trader_settings.json`'s `autotrade` block reads
+`{"enabled": true, "signal": "kronos"}` — the owner flipped this on. First
+live firing is the next NYSE market open. Two things worth knowing before
+that:
+
+1. **The traded universe grew the same day** (watchlist is now 14 tickers,
+   see [[Watchlist Context]]) — the momentum/Kronos hourly IC screen below
+   was measured against the original set, not this one.
+2. **The $300 daily-loss circuit breaker won't necessarily catch a bad
+   stop-out** — it only evaluates when an order is about to be placed, not
+   continuously. See [[Risk Management System]]'s 2026-07-25 update.
+
+Also relevant: `paper_trader.execute_rebalance()` (which this feature calls
+under the hood) had its EUR→USD sizing conversion fixed 2026-07-25 — it
+previously needed a live FX quote and would fail with IBKR error 10197 under
+certain conditions, which would have made every hourly firing error out
+instead of trade. See [[IBKR Integration]].
 
 ## What it is
 
@@ -92,5 +112,7 @@ off state — check that explicitly, don't assume it.
 
 - [[Kronos Research Agent]] — the daily-cadence backtest this feature's design built on
 - [[ADR - Python Rules, Not Model Predictions]] — the approval-gate philosophy this is the documented exception to
-- [[Risk Management System]] — RiskGuard, unchanged by this feature
+- [[Risk Management System]] — RiskGuard, unchanged by this feature; the daily-loss breaker's pre-trade-only limitation
+- [[Watchlist Context]] — the traded universe this now rebalances hourly
+- [[IBKR Integration]] — the 2026-07-25 sizing fix that keeps this from erroring out on a missing market-data line
 - [[00 MOC - Trading Bot Vault]]

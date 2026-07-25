@@ -1,7 +1,7 @@
 ---
 tags: [roadmap, next-steps, project-management]
 status: "Live — prioritized action queue"
-last_updated: 2026-07-21
+last_updated: 2026-07-25
 ---
 
 # Next Build Steps — Prioritized Action Queue
@@ -10,21 +10,25 @@ This is the **exact sequence of work** that makes sense given where the project 
 
 ## Tier 1: Not due yet — don't run early
 
-### 1.1: `grade_calls.py --csv` — wait for notes to age
+### 1.1: `grade_calls.py` — wait for notes to age
 
 ```bash
 cd /Users/kaloyanivanov/TradingBotApp
-python3 grade_calls.py --csv
+python3 grade_calls.py
 ```
 
-**Why it's not urgent:** The 12 real research notes exist (2026-07-20/21) but are too fresh — the earliest is only ~1 day old as of 2026-07-21, short of even the 5-day forward-return horizon. Running this now would just show everything "pending." That's expected, not a problem to fix.
+**Why it's still not urgent:** Re-run 2026-07-25 (14 notes' worth of watchlist,
+38 total, refreshed the same day) — still 0/76 graded, exactly as expected.
+The 5-day horizon is **5 *trading* days**, not calendar days: the oldest
+notes (07-20/21) only reach 5 trading days old around **2026-07-30**, three
+days later than the original ~07-25 estimate, which conflated the two.
 
-**What to do once it IS due (~2026-07-25+):**
+**What to do once it IS due (~2026-07-30+):**
 - Copy the calibration report into [[Graded Calls Tracker]]
 - If high-conf > 65%, that's a good sign for the research agent specifically (doesn't gate paper trading, which is already running)
 - If high-conf < 55%, revisit the agent prompt
 
-**Frequency:** Weekly from ~2026-07-25 onward.
+**Frequency:** Weekly from ~2026-07-30 onward.
 
 ---
 
@@ -98,7 +102,9 @@ the only validated signal.
 - Sizing: `qty = floor((NetLiquidation_usd * risk_pct_per_trade%) / (2*ATR))`, clamped to RiskGuard's max order notional using the *buffered* entry price
 - Exits cancel the open stop leg and confirm the cancel before flattening; exits run before entries so RiskGuard's max-open-positions headroom is freed first
 - Entries go through `place_bracket_order` with a 2×ATR stop (now `tif="GTC"` — see the bug below)
-- `--dry-run` connects read-only, prints the proposal, asks nothing
+- `--dry-run` connects read-only (`readonly=True`, TWS-enforced as of
+  2026-07-25 — previously just a convention, not a socket-level guarantee),
+  prints the proposal, asks nothing
 
 **First real run, 2026-07-21:** bought GOOGL (14 sh), AAPL (15 sh), JNJ (19 sh) on paper account DUQ903866. Full detail in [[IBKR Integration]].
 

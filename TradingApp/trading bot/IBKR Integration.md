@@ -2,6 +2,7 @@
 tags: [infrastructure, broker, execution]
 status: "live and trading"
 connection_verified: 2026-07-21
+last_updated: 2026-07-25
 ---
 
 # IBKR Integration: Connection & Execution
@@ -152,13 +153,51 @@ The bot doesn't use streaming yet — `paper_trader.py` pulls fresh daily data (
 **First rebalance:** bought GOOGL (14 sh @ ~349.62 avg), AAPL (15 sh @ ~328.04 avg), JNJ (19 sh @ ~249.98 avg) — all sized from RiskGuard's risk budget (`qty = floor(NetLiq_usd * risk_pct_per_trade% / (2*ATR))`, clamped to `max_order_notional_usd`).
 
 **Two account quirks handled:**
-- The paper account is **EUR-denominated** (`NetLiquidation` reports in EUR) with no USD segment at all. `paper_trader.py` converts to USD via the live `EURUSD` forex rate before sizing — don't assume `accountSummary()` values are already USD.
+- The paper account is **EUR-denominated** (`NetLiquidation` reports in EUR) with no USD segment at all. `paper_trader.get_net_liquidation_usd()` converts to USD — see the 2026-07-25 update below for how this changed.
 - No live market-data subscription on this paper account — `market_price()` calls need `ib.reqMarketDataType(3)` (delayed data) first, or they raise "requires additional subscription."
+
+**⚠️ Update 2026-07-25: EUR→USD conversion no longer uses a live FX quote.**
+It used to call `market_price(forex_pair("EURUSD"))`, which needs an active
+market-data line — and that line isn't guaranteed. Hit in practice: IBKR
+error 10197 "No market data during competing live session" (something else
+was logged into the same account, holding the data line), which broke
+`paper_trader.py --dry-run` outright and would have broken **every hourly
+autotrade firing** the same way. Converts now via IBKR's own `ExchangeRate`
+account value instead — that arrives on the account channel, needs no
+subscription and no data line at all.
+
+`ExchangeRate` for currency C is the value of 1 C in the account's BASE
+currency, so `USD = BASE / rate_usd`. That direction is not assumed — it's
+checked at runtime against an independent yfinance `{BASE}USD=X` quote and
+**raises** on mismatch, because getting it backwards misstates equity by
+~29% on this account (1.137 vs 0.879) and would silently mis-size every
+order. (IBKR's own cash-balance identity — `sum(cash_C * rate_C) ==
+cash_BASE` — was tried as the check first and rejected: tested against a
+deliberately inverted rate, it still reconciled to within 0.26%, well inside
+any tolerance loose enough to survive normal rounding. The yfinance
+cross-check separates the two hypotheses by 29%, not 0.3%.)
 
 **⚠️ Safety bug found and fixed same day: stops defaulting to DAY, not GTC.**
 `place_bracket_order`'s stop leg didn't set a TIF, so IBKR defaulted it to `DAY` — a completely reasonable-looking `PreSubmitted` stop that silently **expires at end of the trading session**. All three positions above were briefly unprotected until this was caught (re-checking positions later showed the stops as `Cancelled` in `ib.trades()`, with zero executions — ruling out an actual stop-out). Fixed by setting `tif="GTC"` on the stop (and target, if used) legs in `ibkr_service.py`, then manually re-protecting all three positions with fresh GTC stops (journaled as "re-protect" entries in `trade_journal.csv`).
 
 **Operational lesson:** when checking a position's protection, checking `ib.openTrades()` minutes after placing isn't enough — a DAY order looks identical to a GTC one until end-of-session. Always check `order.tif == "GTC"` explicitly, and use `ib.trades()` (not just `openTrades()`) to see orders that have since been cancelled/expired.
+
+**⚠️ 2026-07-23/25: a GTC stop firing correctly still went unrecorded.** GOOGL's
+GTC stop worked exactly as designed — but the position gap-opened through it
+(07-23 opened at 321.13, below the 326.06 stop), and the close reached
+neither `trade_journal.csv` nor a Telegram alert until an audit caught it
+2026-07-25. This was a *detection* gap, not a stop-mechanism gap — see
+[[Risk Management System]]'s "residual risk" note (which predicted almost
+exactly this) for the fix (`reflect_on_trades.py`'s two-tier detection).
+
+**⚠️ 2026-07-25: connections now distinguish read-only from read/write at the
+socket, not just by convention.** `ibkr_service.connect()` gained a
+`readonly` parameter (`ib_async`'s `IB.connect(readonly=True)`, which makes
+TWS/Gateway itself reject order placement on that connection). Three
+call sites previously *claimed* "read-only" in their docstrings/help text
+while opening a normal read/write connection — `paper_trader.py --dry-run`,
+`reflect_on_trades.py`, and the new watchlist position-check — all now pass
+`readonly=True` for real. Default stays `False`, so no trading path changed.
 
 ## Asset-Class Specifics
 
@@ -225,4 +264,5 @@ Both are included in the file; run before committing any code changes.
 | Order gets `BLOCKED: require_stop_attached=true` | This is working as intended — add a stop to the order or edit `risk_limits.json` |
 | A stop shows `Cancelled` in `ib.trades()` with no matching fill | Check `order.tif` — if it was `DAY` (pre-2026-07-21 fix), it expired at end of session. Re-protect the position immediately with a fresh GTC stop. |
 | `market_price()` raises "requires additional subscription for API" | The account has no live data subscription — call `ib.reqMarketDataType(3)` for delayed data before requesting prices |
-| `NetLiquidation`/account values look ~10-15% off from expected USD | The account's base currency isn't USD (this paper account is EUR) — convert via the live `<CUR>USD` forex rate before using in sizing math |
+| `NetLiquidation`/account values look ~10-15% off from expected USD | The account's base currency isn't USD (this paper account is EUR) — `paper_trader.get_net_liquidation_usd()` converts via IBKR's `ExchangeRate` account value (not a live FX quote, as of 2026-07-25) |
+| `No market data during competing live session` (IBKR error 10197) | Another session is holding the data line. No longer breaks NetLiq conversion (fixed 2026-07-25, see above) — but still blocks anything that genuinely needs a live quote (e.g. entry price checks). Close the competing session. |

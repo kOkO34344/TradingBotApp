@@ -1,7 +1,7 @@
 ---
 tags: [moc, index]
 status: "Live"
-last_updated: 2026-07-24
+last_updated: 2026-07-25
 ---
 
 # Trading Bot — Map of Contents
@@ -13,18 +13,19 @@ This is the central index for the Trading Bot project. The codebase lives at `/U
 | Phase                        | Status                              | Key Files                                                                                                                          |
 | ---------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | **Phase 0** (setup)          | ✅ Done                              | Python 3.13, Claude Code, IBKR account live                                                                                        |
-| **Phase 1** (research agent) | 🟡 Real output, grading not due yet | `research_agent.py` → 12 notes in `research_log/`, all from 2026-07-20/21 — too fresh for the 5-day grading horizon (~2026-07-25+) |
+| **Phase 1** (research agent) | 🟡 Real output, grading not due yet | `research_agent.py` → 14 notes in `research_log/` (re-run 2026-07-25), oldest from 2026-07-20/21 — 5-*trading*-day grading horizon lands ~2026-07-30, not yet |
 | **Phase 2** (backtesting)    | ✅ Done, action taken                | SMA rejected (beats 1/10), momentum rotation identified (16.6% CAGR)                                                               |
-| **Phase 3** (paper trading)  | ✅ Built and LIVE                    | `paper_trader.py` built + run for real 2026-07-21 — open positions GOOGL(14)/AAPL(15)/JNJ(19) on paper account DUQ903866           |
+| **Phase 3** (paper trading)  | ✅ Built and LIVE                    | `paper_trader.py` live since 2026-07-21. **GOOGL closed 2026-07-23** (gapped through its stop, ~-$422, found + backfilled 2026-07-25). Current: AAPL(15)/JNJ(19), both GTC-protected. |
 | **Phase 4** (tiny live)      | ⏸ Later                             | After 2–3 months of paper evidence                                                                                                 |
 
 **Most urgent right now:**
-1. **Nothing is overdue.** Grading isn't meaningful until notes age ≥5 days (~2026-07-25) — don't run `grade_calls.py --csv` early just to have run it.
-2. Periodically check the live paper positions (GOOGL/AAPL/JNJ) are healthy — stops present **and GTC** (see the DAY-vs-GTC bug in [[IBKR Integration]] — a stop can look fine for hours and then silently expire).
-3. Next `research_agent.py` re-run due ~2026-07-28 (weekly cadence); next `paper_trader.py` rebalance whenever the owner runs it (monthly, manual, no scheduler yet).
+1. **Nothing is overdue.** Grading isn't meaningful until notes age ≥5 *trading* days (~2026-07-30) — don't run `grade_calls.py` early just to have run it (it was re-run 2026-07-25: still 0/76 graded, as expected).
+2. Periodically check the live paper positions (AAPL/JNJ) are healthy — stops present **and GTC**. This is now partly automated: `reflect_on_trades.py` gained a second detection tier 2026-07-25 (position-snapshot diff) specifically because its execution-based tier silently missed the GOOGL close below — see [[Risk Management System]]. Still worth an eyeball check periodically, not just trusting the automation.
+3. Next watchlist research re-run due ~2026-08-01 (weekly cadence, now `run_research_agent_watchlist.py`, supports `--group`); next `paper_trader.py` rebalance whenever the owner runs it (monthly, manual, no scheduler yet).
 4. Momentum rotation still hasn't had portfolio-level walk-forward validation — worth doing, not currently blocking anything.
 5. **2026-07-23:** Kronos (foundation-model forecaster) is integrated and now backtested — see [[Kronos Research Agent]]. Result: **no measurable forecasting skill found** (Spearman IC 0.036, 50% hit rate, in the one honest post-cutoff window its own training data allows). Stays wired in as opt-in only (`trader_app.py` menu item 7, `paper_trader.py --signal kronos`); momentum stays the default and the only validated signal.
-6. **New 2026-07-24:** Unattended "autotrade" toggle built — see [[Autotrade (Experimental)]]. An hourly IC screen showed no edge for EITHER candidate signal (momentum-hourly IC -0.037, Kronos-hourly IC -0.081, both ~coin-flip hit rates) but it was built anyway per explicit owner request, as a deliberate live paper experiment — the one documented exception to the project's "autonomy earned by evidence" rule. **Currently OFF** (`trader_app.py` menu item 8) — nothing trades unattended until that's flipped on.
+6. **2026-07-24:** Unattended "autotrade" toggle built — see [[Autotrade (Experimental)]]. An hourly IC screen showed no edge for EITHER candidate signal (momentum-hourly IC -0.037, Kronos-hourly IC -0.081, both ~coin-flip hit rates) but it was built anyway per explicit owner request, as a deliberate live paper experiment. **Currently ON, signal=kronos** as of 2026-07-25 — the owner armed it; first live firing is the next NYSE market open. RiskGuard is unaffected, but see #7 below for a real limit on what it actually protects against.
+7. **New 2026-07-25:** Watchlist is now named groups (`trader_app.py` menu 9) with validated symbols, not a raw comma-separated string — see [[Watchlist Context]]. Also: the $300 daily-loss circuit breaker is a **pre-trade gate, not a monitor** — it reads IBKR's live `RealizedPnL` only when an order is about to be placed, so it did nothing for GOOGL's stop firing on its own. Worth knowing before treating autotrade as automatically loss-capped.
 
 ## The Vault by topic
 
@@ -48,7 +49,7 @@ This is the central index for the Trading Bot project. The codebase lives at `/U
 
 ### 📊 **Reference & Definitions**
 - [[Indicators Reference]] — RSI, ATR, SMA, EMA, MACD, VWAP, Bollinger Bands (math + implementation notes)
-- [[Watchlist Context]] — AAPL, MSFT, GOOGL, AMZN, JPM, JNJ, PG, XOM, KO, DIS, NVDA, PLTR with sector/market-cap context
+- [[Watchlist Context]] — the 14-ticker watchlist, now stored as named groups (`watchlist.py`) with validated symbols; not synced from IBKR (no API for that)
 - [[Market Regimes]] — how to identify bull/bear/sideways; implications for signal reliability
 
 ### 🏗️ **Architecture & Decisions**

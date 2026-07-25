@@ -248,6 +248,18 @@ exposed as a CLI flag / function argument to raise it further if needed.
 tickers via Hugging Face + `mps` — model downloads and runs correctly,
 predictions are real numbers, not placeholders.
 
+## 2026-07-25 — routine re-run, no code change
+
+Re-ran `kronos_watchlist_forecast.py` against the full 14-ticker watchlist
+(`sample_count=10`, 20 trading days ahead) at the owner's request. Notable
+output: ASML predicted -37.4%, a much larger move than anything else in the
+set. Flagged to the owner as a reason for *more* suspicion, not more
+conviction — given the measured IC (~0.03 daily, ~-0.08 hourly, both
+statistically no signal), a larger predicted move isn't more trustworthy
+than a small one, it's just a noisier draw from the same no-edge
+distribution. Analysis-only, as always; no orders placed, nothing to
+journal.
+
 ## Related Notes
 
 - [[Kronos Overview]]

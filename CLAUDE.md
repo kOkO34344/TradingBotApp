@@ -201,28 +201,39 @@ that was never recorded, which is the original bug.
    `--dry-run` connects read-only and prints the proposal without asking.
    No scheduler yet — owner runs it manually. Next: a few more manual
    monthly cycles before even considering cron/launchd.
-3. **Research agent — ongoing, in progress.** All 12 watchlist tickers got
-   real notes 2026-07-20/21 (see `research_log/`). `grade_calls.py` isn't
-   meaningful yet — notes are too fresh for even the 5-day forward-return
-   horizon (earliest useful grading: ~2026-07-25+). Next actions:
-   - Re-run `python3 research_agent.py <TICKER>` on the watchlist weekly
-     (next due ~2026-07-28).
-   - Once notes are ≥5 days old, start running `python3 grade_calls.py`
-     and actually read the calibration report — don't just run it, look at it.
+3. **Research agent — ongoing, in progress.** Re-run 2026-07-25 on the full
+   14-ticker watchlist (grown from the original 12 via `AVGO`/`ASML`) — fresh
+   notes for all 14 in `research_log/`. `grade_calls.py` was actually run
+   2026-07-25: still 0 graded (38 notes × 2 horizons = 76 pending) — the
+   5-trading-day horizon needs the 07-20/21 notes to reach ~5 trading days
+   old, which lands **~2026-07-30**, not 07-25 as earlier estimated (calendar
+   days ≠ trading days). Next actions:
+   - Re-run `python3 run_research_agent_watchlist.py` weekly (next due
+     ~2026-08-01). `--group <name>` / `--list-groups` also work if only
+     part of the watchlist needs a refresh — see the Watchlist section below.
+   - Once notes are ≥5 trading days old (~2026-07-30+), run
+     `python3 grade_calls.py` again and actually read the calibration
+     report — don't just run it, look at it.
 4. **Paper trading — operational, not a build task.** `paper_trader.py` holds
-   real open positions (GOOGL/AAPL/JNJ, opened 2026-07-21, stops re-fixed to
-   GTC same day after the DAY-TIF bug above). Going forward:
+   real open positions. **GOOGL closed 2026-07-23** (gapped through its GTC
+   stop, ~-$422, found + backfilled 2026-07-25 — see Phase 3 status above);
+   current holdings are **AAPL (15) and JNJ (19)**, both confirmed 2026-07-25
+   with live GTC stops for their full quantity. Going forward:
    - Re-run monthly (or on-demand) for the next rebalance; check `--dry-run`
-     first if unsure what it'll propose.
+     first if unsure what it'll propose. `--dry-run` now connects genuinely
+     `readonly=True` (TWS-enforced) and no longer needs a live market-data
+     line to size — see the FX-conversion note above.
    - **Every position check must verify stops are GTC, not just "present."**
      Query `ib.trades()` (not just `ib.openTrades()` right after placing) and
      check `order.tif == "GTC"` — a DAY stop will look fine for hours and
-     then silently vanish at end of session. This is now fixed at the source
-     (`place_bracket_order`), but any positions opened before this fix, or
-     opened by other tools, should be checked.
-   - Periodically sanity-check the account is healthy: positions still have
-     working stops, no daily-loss circuit breaker trips, journal matches
-     what's actually on IBKR. Don't just assume the last run is still current.
+     then silently vanish at end of session.
+   - `reflect_on_trades.py` now catches closes two ways (executions +
+     position-snapshot diff, see the Close detection section above), so a
+     GOOGL-style silent close should surface within one 30-min cycle instead
+     of needing a manual audit to find. Still worth periodically checking
+     `trade_journal.csv` matches what's actually on IBKR — the snapshot tier
+     journals a close but not a reflection (no realized P&L to build the
+     prompt from), so a research-feedback gap remains for unattended closes.
 5. **Web UI (`TraderAppFullStack.txt`) — now legitimately unblocked.** Items
    1-2 are done AND real fills now exist in `trade_journal.csv`, so the
    original "a dashboard before fills exist would display zeros" objection
