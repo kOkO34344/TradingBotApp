@@ -59,9 +59,13 @@ File purposes are documented in each script's own module docstring
   Symbols are validated on entry against yfinance AND against what the order
   path can actually trade (US stocks): foreign listings (`9988.HK`), FX
   (`EUR.USD`), crypto (`BTC-USD`) and futures (`ES=F`) are dropped and
-  reported, never silently discarded. `--group <name>` / `--list-groups` work
-  on `run_research_agent_watchlist.py`. Has a `--selftest`-style
+  reported, never silently discarded. Has a `--selftest`-style
   `python3 watchlist.py` offline check.
+  `--group <name>` / `--list-groups` work on `run_research_agent_watchlist.py`
+  — that flag is written and working, but lives in a file that is still
+  UNTRACKED (like `run_notify.sh` / `daily_digest.py`, it came from another
+  session and depends on the untracked `TelegramBot/`), so it is not in any
+  commit yet. Committing it means committing that whole external set.
   **Removing a ticker you hold a position in is guarded**, and this is the
   reason why: `paper_trader.py` filters holdings with `if sym in tickers`, so
   a removed symbol's position goes invisible to it — the GTC stop survives but

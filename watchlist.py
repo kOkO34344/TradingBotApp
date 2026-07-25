@@ -204,8 +204,17 @@ def held_symbols(settings: dict) -> set[str] | None:
     """Symbols with a non-zero position on the paper account.
 
     Returns `None` if IBKR is unreachable — the caller MUST treat that as
-    "unknown", not "nothing held". Read-only: connects, reads positions,
-    disconnects. Never places or cancels anything.
+    "unknown", not "nothing held".
+
+    This function only connects, reads `ib.positions()` and disconnects — it
+    calls nothing that places or cancels an order. Note that is a property of
+    this code, NOT of the socket: `ibkr_service.connect()` takes no `readonly`
+    flag, so the connection is a normal read/write one. ib_async's
+    `IB.connect(readonly=True)` would make TWS itself refuse orders on this
+    connection; wiring that through `ibkr_service.connect()` would be a real
+    strengthening for every read-only caller here (this one, and
+    `paper_trader.py --dry-run`, whose help text already claims "read-only"
+    on the same convention-only basis).
     """
     try:
         import ibkr_service as ibs
