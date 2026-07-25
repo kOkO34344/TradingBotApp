@@ -306,8 +306,12 @@ def main():
         print("\nAll candidates ranked negative (dual filter) — target is 100% cash.")
 
     port = settings.get("ibkr_port", 4002)
-    print(f"\nConnecting to IBKR paper on port {port}...")
-    ib = ibs.connect(port=port, client_id=settings.get("ibkr_client_id", 9))
+    print(f"\nConnecting to IBKR paper on port {port}"
+          f"{' (read-only)' if args.dry_run else ''}...")
+    # --dry-run connects readonly so TWS itself rejects order placement, rather
+    # than relying on this path simply not reaching the order calls.
+    ib = ibs.connect(port=port, client_id=settings.get("ibkr_client_id", 9),
+                     readonly=args.dry_run)
     try:
         acct = ibs.verify_paper_account(ib)
         print(f"Connected. Paper account: {acct}")

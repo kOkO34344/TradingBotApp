@@ -206,15 +206,9 @@ def held_symbols(settings: dict) -> set[str] | None:
     Returns `None` if IBKR is unreachable — the caller MUST treat that as
     "unknown", not "nothing held".
 
-    This function only connects, reads `ib.positions()` and disconnects — it
-    calls nothing that places or cancels an order. Note that is a property of
-    this code, NOT of the socket: `ibkr_service.connect()` takes no `readonly`
-    flag, so the connection is a normal read/write one. ib_async's
-    `IB.connect(readonly=True)` would make TWS itself refuse orders on this
-    connection; wiring that through `ibkr_service.connect()` would be a real
-    strengthening for every read-only caller here (this one, and
-    `paper_trader.py --dry-run`, whose help text already claims "read-only"
-    on the same convention-only basis).
+    Connects with `readonly=True`, so TWS/Gateway itself rejects any order
+    placement on this connection — the read-only guarantee is enforced at the
+    broker, not merely by this function happening not to call order methods.
     """
     try:
         import ibkr_service as ibs
@@ -224,7 +218,7 @@ def held_symbols(settings: dict) -> set[str] | None:
     ib = None
     try:
         ib = ibs.connect(port=settings.get("ibkr_port", 4002),
-                         client_id=POSITION_CHECK_CLIENT_ID)
+                         client_id=POSITION_CHECK_CLIENT_ID, readonly=True)
         ibs.verify_paper_account(ib)
         return {p.contract.symbol for p in ib.positions() if p.position != 0}
     except Exception:

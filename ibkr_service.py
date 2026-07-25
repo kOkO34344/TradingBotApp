@@ -44,6 +44,16 @@ BASE_DIR = Path(__file__).parent
 RISK_FILE = BASE_DIR / "risk_limits.json"
 JOURNAL_FILE = BASE_DIR / "trade_journal.csv"
 
+# Best-effort phone alert on RiskGuard blocks (see journal() below). Never
+# lets a notification problem affect order logic — falls back to a no-op
+# if TelegramBot isn't configured yet.
+sys.path.insert(0, str(BASE_DIR / "TelegramBot"))
+try:
+    from notify import send_telegram
+except Exception:
+    def send_telegram(*args, **kwargs):  # pragma: no cover - best-effort only
+        return False
+
 DEFAULT_LIMITS = {
     "max_order_notional_usd": 5000,
     "max_open_positions": 5,
@@ -53,19 +63,28 @@ DEFAULT_LIMITS = {
 
 
 def connect(port: int = PAPER_PORT_TWS, host: str = "127.0.0.1", client_id: int = 1,
-            allow_live: bool = False) -> IB:
+            allow_live: bool = False, readonly: bool = False) -> IB:
     """Connect to a running TWS / IB Gateway instance. Defaults to paper trading.
 
     Live ports are refused unless allow_live=True is passed explicitly —
     a deliberate speed bump so automated code can't silently touch real
-    money because of a config typo."""
+    money because of a config typo.
+
+    readonly=True asks TWS/Gateway itself to reject any order placement on
+    this connection. Callers that only inspect state (position checks,
+    --dry-run proposals) should pass it: without it, "this code doesn't
+    place orders" is a property of the code, which a later edit can quietly
+    undo. With it, the guarantee is enforced at the other end of the socket
+    — the same "rules in code, not in convention" reasoning as the live-port
+    refusal above and RiskGuard below. Default stays False so every existing
+    trading path is unchanged."""
     if port in (LIVE_PORT_TWS, LIVE_PORT_GATEWAY) and not allow_live:
         raise RuntimeError(
             f"Port {port} is a LIVE trading port. Pass allow_live=True only "
             "after your strategy has months of paper-trading evidence behind it."
         )
     ib = IB()
-    ib.connect(host, port, clientId=client_id)
+    ib.connect(host, port, clientId=client_id, readonly=readonly)
     return ib
 
 
@@ -188,6 +207,15 @@ def journal(event: str, contract=None, action: str = "", quantity: float = "",
         w.writerow([datetime.now().isoformat(timespec="seconds"), event,
                     getattr(contract, "symbol", ""), getattr(contract, "secType", ""),
                     action, quantity, price, stop, target, status, detail])
+
+    # Real blocks (not the --selftest run against a temp journal path) are
+    # exactly the "something needs my attention" case worth a phone alert.
+    if event == "BLOCKED" and path == JOURNAL_FILE:
+        send_telegram(
+            f"\U0001f6ab RiskGuard BLOCKED an order\n"
+            f"{getattr(contract, 'symbol', '?')} {action} {quantity}\n"
+            f"Reason: {detail}"
+        )
 
 
 # ---------------------------------------------------------------- risk guard

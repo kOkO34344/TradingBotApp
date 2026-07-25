@@ -156,7 +156,7 @@ def main():
         pass
 
     print(f"Connecting to IBKR paper on port {settings_port} (read-only)...")
-    ib = ibs.connect(port=settings_port, client_id=CLIENT_ID)
+    ib = ibs.connect(port=settings_port, client_id=CLIENT_ID, readonly=True)
     try:
         ibs.verify_paper_account(ib)
 
@@ -193,11 +193,21 @@ def main():
                 continue
 
             prompt = build_prompt(symbol, side, shares, price, pnl, commission, f.execution.time)
+            emoji = "\U0001f4b0" if pnl > 0 else "\U0001f4c9"
             if run_agent(prompt):
                 reflected.add(f.execution.execId)
                 save_reflected_ids(reflected)
+                ibs.send_telegram(
+                    f"{emoji} Position closed: {symbol} {side} {shares} @ {price:.2f}\n"
+                    f"Realized P&L: ${pnl:,.2f}  ({outcome})\n"
+                    f"Reflection written to trade_reflections/"
+                )
             else:
                 print(f"  WARNING: reflection failed for {symbol}, will retry next run.")
+                ibs.send_telegram(
+                    f"\u26a0\ufe0f Position closed but reflection FAILED: {symbol} {side} "
+                    f"{shares} @ {price:.2f}, P&L ${pnl:,.2f}. Will retry next run."
+                )
     finally:
         ib.disconnect()
 
