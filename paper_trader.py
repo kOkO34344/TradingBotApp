@@ -140,21 +140,100 @@ def size_position(net_liq: float, price: float, atr_val: float, settings: dict, 
 
 
 def get_net_liquidation_usd(ib) -> float:
-    """NetLiquidation in the account's base currency, converted to USD if
-    needed — the watchlist is US equities, so all sizing math (price, ATR,
-    stops) is USD regardless of what currency the account itself holds."""
-    net_liq, currency = None, None
-    for v in ib.accountSummary():
+    """NetLiquidation converted to USD — the watchlist is US equities, so all
+    sizing math (price, ATR, stops) is USD whatever currency the account holds.
+
+    Converts using IBKR's own `ExchangeRate` account value rather than a live
+    FX quote. This used to call `market_price(forex_pair("EURUSD"))`, which
+    needs a market-data line and therefore fails whenever one isn't available
+    — observed 2026-07-25 as error 10197 "No market data during competing live
+    session", which took down `--dry-run` and would have taken down every
+    hourly autotrade firing. `ExchangeRate` arrives on the account channel, so
+    it needs no subscription and no data line.
+
+    `ExchangeRate` for currency C is the value of 1 C in the account's BASE
+    currency, so USD = BASE / rate_usd. That direction is NOT assumed — it is
+    checked at runtime against an independent FX quote from yfinance, because
+    getting it backwards misstates equity by ~29% on this account (1.137 vs
+    0.879) and would silently mis-size every order. A failed check raises;
+    sizing must never run on an unverified number.
+
+    The independent source is deliberately yfinance rather than IBKR's own
+    cash-balance arithmetic. That identity (sum(cash_C * rate_C) == cash_BASE)
+    was tried first and rejected: its sensitivity scales with how much
+    non-base cash the account holds, and on this account an inverted rate
+    still reconciled to within 0.26% — comfortably inside any tolerance loose
+    enough to survive rounding. yfinance separates the two hypotheses by 29%.
+    It adds no new failure mode: paper_trader has already downloaded every
+    ticker's history through yfinance before reaching this point.
+    """
+    net_liq, rates = {}, {}
+    for v in ib.accountValues():
+        try:
+            val = float(v.value)
+        except (TypeError, ValueError):
+            continue
         if v.tag == "NetLiquidation":
-            net_liq, currency = float(v.value), v.currency
-            break
-    if net_liq is None:
-        raise RuntimeError("Could not read NetLiquidation from account summary.")
-    if currency in ("USD", "BASE"):
-        return net_liq
-    rate = ibs.market_price(ib, ibs.forex_pair(f"{currency}USD"))
-    print(f"(account base currency is {currency}; converted at {currency}USD={rate:.4f})")
-    return net_liq * rate
+            net_liq[v.currency] = val
+        elif v.tag == "ExchangeRate":
+            rates[v.currency] = val
+
+    if not net_liq:
+        raise RuntimeError("Could not read NetLiquidation from account values.")
+    if "USD" in net_liq:
+        return net_liq["USD"]  # nothing to convert
+
+    base_ccy = next((c for c in net_liq if c != "BASE"), None)
+    base_value = net_liq.get("BASE", net_liq.get(base_ccy))
+    if base_value is None or base_ccy is None:
+        raise RuntimeError(f"Could not identify base currency from {sorted(net_liq)}.")
+
+    rate_usd = rates.get("USD")
+    if not rate_usd or rate_usd <= 0:
+        raise RuntimeError(
+            "No usable USD ExchangeRate in account values — cannot convert "
+            "NetLiquidation to USD, and sizing must not run on an unconverted number."
+        )
+
+    usd = base_value / rate_usd
+    _verify_fx_direction(base_ccy, base_value, usd)
+    print(f"(NetLiquidation {base_value:,.2f} {base_ccy} -> ${usd:,.2f} USD "
+          f"via IBKR ExchangeRate {rate_usd:.6f}; no market-data line needed)")
+    return usd
+
+
+def _verify_fx_direction(base_ccy: str, base_value: float, usd_value: float,
+                          tolerance: float = 0.05) -> None:
+    """Raise unless `usd_value` matches an independent {base_ccy}USD quote.
+
+    Catches an inverted ExchangeRate, which is otherwise invisible: both
+    directions produce a plausible-looking number. See
+    get_net_liquidation_usd's docstring for why this doesn't use IBKR's own
+    cash arithmetic.
+    """
+    import yfinance as yf
+
+    try:
+        fx = yf.download(f"{base_ccy}USD=X", period="5d", progress=False, auto_adjust=True)
+        if isinstance(fx.columns, pd.MultiIndex):
+            fx.columns = fx.columns.get_level_values(0)
+        ref = float(fx["Close"].dropna().iloc[-1])
+    except Exception as e:
+        raise RuntimeError(
+            f"Could not fetch a reference {base_ccy}USD rate to verify the direction of "
+            f"IBKR's ExchangeRate ({e}). Refusing to size orders on an unverified "
+            f"conversion."
+        )
+
+    expected = base_value * ref
+    if expected == 0 or abs(usd_value - expected) / abs(expected) > tolerance:
+        raise RuntimeError(
+            f"FX direction check FAILED: converted NetLiquidation to ${usd_value:,.2f} "
+            f"but {base_ccy}USD={ref:.4f} implies ${expected:,.2f} "
+            f"({abs(usd_value - expected) / abs(expected) * 100:.1f}% off). IBKR's "
+            f"ExchangeRate may be inverted relative to what this code assumes. Refusing "
+            f"to size orders on it."
+        )
 
 
 def execute_rebalance(ib, settings: dict, top: list, data: dict, top_n: int, signal_label: str,

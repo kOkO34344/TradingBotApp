@@ -127,7 +127,44 @@ File purposes are documented in each script's own module docstring
   "re-protect" entries, ~23:34 UTC). **Lesson: after ANY bracket order,
   verify the stop is GTC and still open — don't trust "PreSubmitted" checked
   minutes after placement to mean it stays protected hours or days later.**
+  **GOOGL closed 2026-07-23 and NOTHING recorded it — found 2026-07-25.**
+  Its GTC stop (326.06) gapped through: 07-23 opened 321.13, so the fill was
+  at the open, not the stop. Est. -$422 on 14 shares, ~$69 of that pure gap
+  slippage. No journal row, no reflection, no Telegram alert. Root cause:
+  `reflect_on_trades.py` detected closes only via `reqExecutions`, and IBKR
+  serves executions for the CURRENT SESSION ONLY — verified returning 0 rows
+  for a 30-day filter. Any close happening while the script isn't polling
+  that session (overnight, weekend, machine asleep) was invisible to it
+  permanently, and `LOOKBACK_DAYS` couldn't help because the data isn't there
+  to ask for. Fixed (see the close-detection note below); the GOOGL row was
+  backfilled as `CLOSE_RECONSTRUCTED` with its inference method in `detail`.
+  Two things this also exposed: nothing journaled autonomous stop fills at
+  all (`paper_trader.py` only journals exits it places itself), and the
+  `max_daily_loss_usd: 300` circuit breaker never saw a $422 loss because the
+  breaker reads the journal.
+  Remaining open positions verified 2026-07-25: AAPL 15 @ 328.04 and JNJ 19 @
+  249.98, both with live **GTC** stops covering the full quantity (309.10 /
+  237.61), and no orphaned GOOGL stop left behind.
 - Phase 4 (tiny real capital): locked until months of Phase 3 evidence.
+
+## Close detection is two-tier (`reflect_on_trades.py`)
+
+Do not "simplify" this back to one tier — the second exists because the first
+provably loses events (see the GOOGL incident above).
+
+1. **`reqExecutions`** — exact fill price, realized P&L, commission. Only ever
+   sees the current session.
+2. **Position-snapshot diff** — compares `ib.positions()` against
+   `trade_reflections/.position_snapshot.json` from the previous run. Catches
+   any close the execution tier missed, including partial reductions, at the
+   cost of not knowing exit price or P&L. Seeds silently on first run
+   (no snapshot ⇒ record baseline, report nothing), dedupes against tier 1 so
+   a close caught by both journals once.
+
+Both tiers now write to `trade_journal.csv` (`CLOSE_FILLED` / `CLOSE_DETECTED`),
+independently of whether the reflection agent call succeeds. **Detection time
+is not event time** for tier 2 — a weekend close is journaled Monday, and the
+row says so.
 
 ## Work queue for Claude Code (in order — finish the job)
 
@@ -275,6 +312,17 @@ If you add a new recurring/polling script, give it its own conditional
 
 ## Known environment gotchas
 
+- **Never size orders off a live FX quote.** `paper_trader.get_net_liquidation_usd`
+  converts the EUR-denominated account to USD using IBKR's own `ExchangeRate`
+  account value, NOT `market_price(forex_pair("EURUSD"))`. The old way needed a
+  market-data line and died with error 10197 "No market data during competing
+  live session" (hit 2026-07-25 — it took down `--dry-run` and would have taken
+  down every hourly autotrade firing). `ExchangeRate` for currency C is the
+  value of 1 C in BASE, so USD = BASE / rate_usd. That direction is verified at
+  runtime against an independent yfinance `{BASE}USD=X` quote and RAISES on
+  mismatch — inverting it misstates equity by ~29% (1.137 vs 0.879) and would
+  silently mis-size every order. IBKR's own cash-balance identity was tried as
+  the check first and rejected: an inverted rate still reconciled within 0.26%.
 - Owner's zsh doesn't allow `#` comments interactively — don't hand the owner
   paste-blocks containing comment lines (or tell them `setopt interactive_comments`).
 - Node/npm may not be installed yet — check before any frontend work.

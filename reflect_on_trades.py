@@ -40,6 +40,7 @@ from ib_async import ExecutionFilter
 BASE_DIR = Path(__file__).parent
 REFLECT_DIR = BASE_DIR / "trade_reflections"
 STATE_FILE = REFLECT_DIR / ".reflected_execids.json"
+SNAPSHOT_FILE = REFLECT_DIR / ".position_snapshot.json"
 RESEARCH_LOG_DIR = BASE_DIR / "research_log"
 JOURNAL_FILE = BASE_DIR / "trade_journal.csv"
 
@@ -57,6 +58,87 @@ def load_reflected_ids() -> set:
 def save_reflected_ids(ids: set) -> None:
     REFLECT_DIR.mkdir(exist_ok=True)
     STATE_FILE.write_text(json.dumps(sorted(ids)))
+
+
+# ------------------------------------------------- position-snapshot tier
+#
+# Why this exists, and why reqExecutions alone is not enough:
+#
+# IBKR only serves executions for the CURRENT session. Verified 2026-07-25:
+# reqExecutions with a 30-day ExecutionFilter returned 0 rows. So any close
+# that happens while this script isn't polling that same session — overnight,
+# over a weekend, machine asleep — is invisible to the execution tier
+# FOREVER, and LOOKBACK_DAYS can't help because the data isn't there to ask
+# for.
+#
+# That is not hypothetical: GOOGL's GTC stop fired 2026-07-23 (gapped through
+# at the open, -$422) and this script never saw it. Nothing reached
+# trade_journal.csv, which is exactly the state the project's rule 6 ("if it
+# isn't in the journal, it didn't happen") exists to prevent.
+#
+# So: compare ib.positions() against a snapshot from the previous run. A
+# position that shrank or vanished closed somehow, whether or not an
+# execution record survives. Less precise than a real fill (no exit price, no
+# broker-reported P&L) but it cannot silently miss the event.
+
+def load_snapshot() -> dict | None:
+    """Previous run's positions, or None if this is the first ever run."""
+    if SNAPSHOT_FILE.exists():
+        try:
+            return json.loads(SNAPSHOT_FILE.read_text())
+        except Exception:
+            return None  # corrupt state re-seeds rather than crashing the job
+    return None
+
+
+def save_snapshot(positions: dict) -> None:
+    REFLECT_DIR.mkdir(exist_ok=True)
+    SNAPSHOT_FILE.write_text(json.dumps(
+        {"taken_at": datetime.now().isoformat(timespec="seconds"), "positions": positions},
+        indent=2, sort_keys=True))
+
+
+def current_positions(ib) -> dict:
+    return {p.contract.symbol: {"qty": float(p.position), "avg_cost": float(p.avgCost)}
+            for p in ib.positions() if p.position != 0}
+
+
+def diff_positions(prev: dict, cur: dict) -> list[dict]:
+    """Symbols whose absolute position shrank since the previous snapshot.
+
+    Only movement TOWARD zero counts — adding to a position, or flipping to a
+    larger opposite one, is not a close.
+    """
+    closes = []
+    for sym, before in prev.items():
+        qty_before = float(before.get("qty", 0) or 0)
+        qty_after = float(cur.get(sym, {}).get("qty", 0) or 0)
+        if qty_before == 0 or abs(qty_after) >= abs(qty_before):
+            continue
+        closes.append({
+            "symbol": sym,
+            "qty_before": qty_before,
+            "qty_after": qty_after,
+            "qty_closed": abs(qty_before) - abs(qty_after),
+            "avg_cost": float(before.get("avg_cost", 0) or 0),
+            "fully_closed": qty_after == 0,
+        })
+    return closes
+
+
+def journal_close(symbol: str, action: str, qty: float, price, detail: str,
+                  event: str = "CLOSE_DETECTED") -> None:
+    """Record a close in trade_journal.csv.
+
+    Both tiers call this. Before it existed, an autonomously-firing GTC stop
+    reached the journal from nowhere: paper_trader.py only journals exits it
+    places itself.
+    """
+    try:
+        ibs.journal(event=event, contract=ibs.stock(symbol), action=action,
+                    quantity=qty, price=price, status="detected", detail=detail)
+    except Exception as e:  # journaling must never take the whole run down
+        print(f"  WARNING: could not journal {symbol} close: {e}", file=sys.stderr)
 
 
 def latest_research_note(symbol: str) -> str:
@@ -174,8 +256,51 @@ def main():
                 continue  # opening fill or no realized P&L attached
             new_closes.append(f)
 
+        # ---- tier 2: position-snapshot diff (catches what executions lose) ----
+        prev = load_snapshot()
+        cur = current_positions(ib)
+        snapshot_closes = []
+        if prev is None:
+            # First ever run: seed silently. Everything currently open is the
+            # baseline, not a close.
+            print(f"Seeding position snapshot with {len(cur)} open position(s) "
+                  f"— no history to compare against yet.")
+        else:
+            handled = {f.contract.symbol for f in new_closes}
+            window_start = prev.get("taken_at", "unknown")
+            for c in diff_positions(prev.get("positions", {}), cur):
+                if c["symbol"] in handled:
+                    continue  # tier 1 already has it, with exact fill data
+                c["window_start"] = window_start
+                snapshot_closes.append(c)
+        save_snapshot(cur)
+
+        for c in snapshot_closes:
+            sym, qty = c["symbol"], c["qty_closed"]
+            kind = "fully closed" if c["fully_closed"] else "reduced"
+            print(f"  {sym} {kind}: {c['qty_before']:g} -> {c['qty_after']:g} "
+                  f"(no execution record; detected by position diff)")
+            detail = (
+                f"{kind} between {c['window_start']} and detection. No IBKR execution "
+                f"record — reqExecutions serves only the current session, so exit price "
+                f"and realized P&L are UNKNOWN here. Entry avg cost {c['avg_cost']:.2f}. "
+                f"Detection time is not the event time: a close over a weekend or "
+                f"overnight is journaled at the next run."
+            )
+            if args.dry_run:
+                continue
+            journal_close(sym, "SELL" if c["qty_before"] > 0 else "BUY",
+                          qty, "", detail)
+            ibs.send_telegram(
+                f"\U0001f4c9 Position {kind}: {sym} {c['qty_before']:g} -> {c['qty_after']:g}\n"
+                f"Detected by position diff — no execution record, so exit price and "
+                f"P&L are unknown.\nEntry avg cost {c['avg_cost']:.2f}. "
+                f"Journaled to trade_journal.csv."
+            )
+
         if not new_closes:
-            print("No newly-closed positions since last run.")
+            if not snapshot_closes:
+                print("No newly-closed positions since last run.")
             return
 
         print(f"{len(new_closes)} newly-closed position(s) to reflect on.")
@@ -191,6 +316,13 @@ def main():
 
             if args.dry_run:
                 continue
+
+            # Journal first, and independently of the reflection: a failed
+            # agent call must not cost us the record of the close itself.
+            journal_close(symbol, side.upper(), shares, price,
+                          f"{outcome} realized P&L {pnl:+.2f} USD (commission {commission:.2f}), "
+                          f"IBKR execId {f.execution.execId}, fill time {f.execution.time}",
+                          event="CLOSE_FILLED")
 
             prompt = build_prompt(symbol, side, shares, price, pnl, commission, f.execution.time)
             emoji = "\U0001f4b0" if pnl > 0 else "\U0001f4c9"

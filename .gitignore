@@ -40,6 +40,7 @@ KronosAI/backtest_logs/
 trade_reflect.log
 trade_reflect_launchd.log
 trade_reflections/.reflected_execids.json
+trade_reflections/.position_snapshot.json
 
 # TelegramBot: runtime log of send failures (for debugging delivery, not
 # meaningful version-controlled content)
