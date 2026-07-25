@@ -138,10 +138,16 @@ File purposes are documented in each script's own module docstring
   permanently, and `LOOKBACK_DAYS` couldn't help because the data isn't there
   to ask for. Fixed (see the close-detection note below); the GOOGL row was
   backfilled as `CLOSE_RECONSTRUCTED` with its inference method in `detail`.
-  Two things this also exposed: nothing journaled autonomous stop fills at
-  all (`paper_trader.py` only journals exits it places itself), and the
-  `max_daily_loss_usd: 300` circuit breaker never saw a $422 loss because the
-  breaker reads the journal.
+  This also exposed that nothing journaled autonomous stop fills at all
+  (`paper_trader.py` only journals exits it places itself).
+  **The `max_daily_loss_usd: 300` breaker did not fire on this $422 loss, and
+  journaling closes does NOT fix that** — `daily_realized_pnl()` reads IBKR's
+  own `RealizedPnL` account value, not the journal, and `check_order()` only
+  consults it when an order is being placed. Nothing tried to place one on
+  07-23, so the breaker was simply never evaluated. It is a pre-trade gate,
+  not a monitor: it cannot stop a loss that arrives from a stop firing on its
+  own, only refuse the NEXT order after one. Worth knowing before trusting it
+  as a safety net under unattended autotrade.
   Remaining open positions verified 2026-07-25: AAPL 15 @ 328.04 and JNJ 19 @
   249.98, both with live **GTC** stops covering the full quantity (309.10 /
   237.61), and no orphaned GOOGL stop left behind.
@@ -165,6 +171,16 @@ Both tiers now write to `trade_journal.csv` (`CLOSE_FILLED` / `CLOSE_DETECTED`),
 independently of whether the reflection agent call succeeds. **Detection time
 is not event time** for tier 2 — a weekend close is journaled Monday, and the
 row says so.
+
+**Tier 2 journals and texts but writes NO reflection**, because `build_prompt`
+needs a realized P&L it doesn't have. So a weekend/overnight stop-out leaves
+no `trade_reflections/*.md`, and nothing for `research_agent.py`'s
+`load_reflections()` to feed on — the feedback loop has a hole exactly where
+the unattended closes are. Fixing it means reconstructing the exit from bars
+(as the GOOGL backfill did by hand) rather than trusting IBKR for it.
+The snapshot is advanced only after every detected close is journaled, and
+never on `--dry-run` — advancing first would move the baseline past a close
+that was never recorded, which is the original bug.
 
 ## Work queue for Claude Code (in order — finish the job)
 

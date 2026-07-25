@@ -273,7 +273,6 @@ def main():
                     continue  # tier 1 already has it, with exact fill data
                 c["window_start"] = window_start
                 snapshot_closes.append(c)
-        save_snapshot(cur)
 
         for c in snapshot_closes:
             sym, qty = c["symbol"], c["qty_closed"]
@@ -297,6 +296,17 @@ def main():
                 f"P&L are unknown.\nEntry avg cost {c['avg_cost']:.2f}. "
                 f"Journaled to trade_journal.csv."
             )
+
+        # Advance the snapshot only AFTER every close above is journaled, and
+        # never on a --dry-run. Saving earlier would move the baseline past a
+        # close that hadn't been recorded yet — if the process then died, or
+        # send_telegram stalled through its retry ladder long enough for
+        # launchd to kill the job, that close would be lost permanently. That
+        # is precisely the failure mode this tier exists to prevent. Detecting
+        # the same close twice is harmless by comparison (a duplicate journal
+        # row); losing it is not.
+        if not args.dry_run:
+            save_snapshot(cur)
 
         if not new_closes:
             if not snapshot_closes:
