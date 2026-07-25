@@ -25,6 +25,8 @@ from rich.panel import Panel
 from rich.prompt import Prompt, IntPrompt, FloatPrompt, Confirm
 from rich.table import Table
 
+import watchlist as wl
+
 warnings.filterwarnings("ignore")
 
 APP_DIR = Path(__file__).parent
@@ -33,6 +35,14 @@ DATA_DIR.mkdir(exist_ok=True)
 SETTINGS_FILE = APP_DIR / "trader_settings.json"
 
 DEFAULT_SETTINGS = {
+    # The watchlist is stored as "watchlist_groups" (see watchlist.py) with
+    # "tickers" DERIVED from it. Deliberately no "watchlist_groups" key here:
+    # load_settings() shallow-merges saved over defaults, so a default groups
+    # dict would override an existing install's real watchlist while its
+    # (longer) saved "tickers" list survived — silently shrinking the traded
+    # universe on the next save. Leaving it absent makes watchlist.get_groups()
+    # migrate from this "tickers" list instead, which is right for both a
+    # fresh install and an existing one.
     "tickers": ["AAPL", "MSFT", "GOOGL", "AMZN", "JPM", "JNJ", "PG", "XOM", "KO", "DIS"],
     "benchmark": "SPY",
     "sma_fast": 20,
@@ -760,7 +770,9 @@ def ibkr_menu(settings: dict):
 def edit_settings(settings: dict):
     while True:
         console.print(Panel(
-            f"1. Tickers: [bold]{', '.join(settings['tickers'])}[/bold]\n"
+            f"1. Watchlist: [bold]{len(settings['tickers'])} tickers[/bold] in "
+            f"[bold]{len(wl.get_groups(settings))} group(s)[/bold] "
+            f"[dim]— edit in main menu 9[/dim]\n"
             f"2. SMA windows: [bold]{settings['sma_fast']}/{settings['sma_slow']}[/bold]\n"
             f"3. Cost per trade: [bold]{settings['commission_pct']}%[/bold]\n"
             f"4. Starting cash: [bold]${settings['cash']:,}[/bold]\n"
@@ -778,10 +790,14 @@ def edit_settings(settings: dict):
             title="Settings", border_style="cyan"))
         choice = Prompt.ask("Change which", choices=[str(i) for i in range(1, 10)], default="9")
         if choice == "1":
-            raw = Prompt.ask("Tickers (comma-separated)", default=",".join(settings["tickers"]))
-            tickers = [t.strip().upper() for t in raw.split(",") if t.strip()]
-            if tickers:
-                settings["tickers"] = tickers
+            # Deliberately NOT editable here. The watchlist is stored as groups
+            # (settings["watchlist_groups"]) with settings["tickers"] derived
+            # from them — a raw list edit here would set "tickers" without
+            # touching the groups, and the next group save would silently
+            # revert it. One editor, one source of truth.
+            console.print("[yellow]Edit the watchlist from main menu 9 — it's stored as "
+                          "named groups with validation, and this list is derived "
+                          "from them.[/yellow]")
         elif choice == "2":
             fast = IntPrompt.ask("Fast SMA", default=settings["sma_fast"])
             slow = IntPrompt.ask("Slow SMA", default=settings["sma_slow"])
@@ -809,7 +825,7 @@ def edit_settings(settings: dict):
             settings["in_sample_end"] = Prompt.ask("In-sample ends (YYYY-MM-DD)", default=settings["in_sample_end"])
             settings["out_of_sample_start"] = Prompt.ask("Out-of-sample starts (YYYY-MM-DD)",
                                                          default=settings["out_of_sample_start"])
-            console.print("[yellow]Date range changed — refresh data (menu 8) to re-download.[/yellow]")
+            console.print("[yellow]Date range changed — refresh data (main menu 11) to re-download.[/yellow]")
         elif choice == "6":
             settings["risk_engine"] = not settings.get("risk_engine", False)
             if settings["risk_engine"]:
@@ -861,10 +877,170 @@ MENU = """[bold cyan]1[/bold cyan]. SMA backtest — out-of-sample (2019 → now
 [bold cyan]6[/bold cyan]. Momentum rotation backtest (portfolio)   [dim]the strategy that earned it[/dim]
 [bold cyan]7[/bold cyan]. Kronos forecast (research agent)   [dim]backtested, no edge found — analysis only[/dim]
 [bold cyan]8[/bold cyan]. Autotrade toggle   [dim yellow]EXPERIMENTAL — unattended, no edge shown[/dim yellow]
-[bold cyan]9[/bold cyan]. Settings (tickers, SMA windows, costs, risk engine, momentum, IBKR)
-[bold cyan]10[/bold cyan]. Refresh price data (force re-download)
-[bold cyan]11[/bold cyan]. IBKR paper account (connect, positions, live 15-min bars)
-[bold cyan]12[/bold cyan]. Quit"""
+[bold cyan]9[/bold cyan]. Watchlist (named groups, validated symbols)   [dim]what everything else trades/researches[/dim]
+[bold cyan]10[/bold cyan]. Settings (SMA windows, costs, risk engine, momentum, IBKR)
+[bold cyan]11[/bold cyan]. Refresh price data (force re-download)
+[bold cyan]12[/bold cyan]. IBKR paper account (connect, positions, live 15-min bars)
+[bold cyan]13[/bold cyan]. Quit"""
+
+
+def _show_watchlist(groups: dict):
+    """Render the groups and the derived traded universe."""
+    table = Table(title="Watchlist groups", show_footer=True)
+    table.add_column("Group", style="bold cyan", footer="[bold]traded universe[/bold]")
+    table.add_column("N", justify="right", footer=f"[bold]{len(wl.flatten(groups))}[/bold]")
+    table.add_column("Tickers")
+    for name, syms in groups.items():
+        table.add_row(name, str(len(syms)), ", ".join(syms) if syms else "[dim]empty[/dim]")
+    console.print(table)
+    console.print("[dim]Every group's tickers are merged (deduped) into one traded universe — "
+                  "that union is what\nthe research agent, Kronos, paper_trader and autotrade all "
+                  "read as settings['tickers'].[/dim]")
+
+
+def watchlist_menu(settings: dict):
+    """Edit the watchlist as named groups, with symbols validated on the way in.
+
+    Groups mirror how the owner organizes watchlists in IBKR, but are NOT
+    synced from it: the TWS API exposes no watchlist endpoint (see
+    watchlist.py's docstring). This is the place the list is maintained.
+
+    Two guards this menu exists to provide, over the old raw comma-separated
+    string edit: every added symbol is validated against yfinance AND against
+    what the order path can actually trade (US stocks), and removing a symbol
+    you hold a position in is warned about loudly — paper_trader.py filters
+    holdings by the watchlist, so a removed ticker's position becomes
+    invisible to it and stops being managed."""
+    groups = wl.get_groups(settings)
+
+    while True:
+        console.print()
+        _show_watchlist(groups)
+        if settings.get("autotrade", {}).get("enabled"):
+            console.print("[yellow]Autotrade is ON — anything added here becomes eligible "
+                          "for unattended orders on the next hourly run.[/yellow]")
+
+        choice = Prompt.ask(
+            "1=add  2=remove  3=new group  4=rename group  5=delete group  6=back",
+            choices=["1", "2", "3", "4", "5", "6"], default="6")
+
+        if choice == "1":
+            if not groups:
+                console.print("[yellow]No groups yet — create one first (3).[/yellow]")
+                continue
+            names = list(groups)
+            target = Prompt.ask("Add to which group", choices=names, default=names[0])
+            raw = Prompt.ask("Tickers to add (comma-separated)", default="").strip()
+            if not raw:
+                continue
+            wanted = [t for t in (x.strip() for x in raw.split(",")) if t]
+            with console.status("[bold cyan]Validating symbols..."):
+                ok, notes = wl.validate_symbols(wanted)
+            for sym, reason in notes:
+                style = "green" if reason.startswith("KEPT") else "red"
+                console.print(f"  [{style}]{sym}: {reason}[/{style}]")
+            added = [s for s in ok if s not in groups[target]]
+            dupes = [s for s in ok if s in groups[target]]
+            for s in dupes:
+                console.print(f"  [dim]{s}: already in {target}[/dim]")
+            if not added:
+                console.print("[yellow]Nothing added.[/yellow]")
+                continue
+            groups[target].extend(added)
+            wl.save_groups(settings, groups)
+            save_settings(settings)
+            console.print(f"[green]Added to {target}: {', '.join(added)}[/green]")
+
+        elif choice == "2":
+            raw = Prompt.ask("Tickers to remove (comma-separated)", default="").strip()
+            if not raw:
+                continue
+            wanted = [wl.normalize_symbol(x) for x in raw.split(",") if x.strip()]
+            present = [s for s in wanted if wl.group_of(groups, s)]
+            missing = [s for s in wanted if s not in present]
+            for s in missing:
+                console.print(f"  [dim]{s}: not in any group[/dim]")
+            if not present:
+                continue
+
+            # A removed ticker you still hold becomes invisible to paper_trader
+            # (it filters holdings by the watchlist), so the position would sit
+            # there unmanaged. Check before, not after.
+            with console.status("[bold cyan]Checking open positions on IBKR..."):
+                held = wl.held_symbols(settings)
+            if held is None:
+                console.print("[yellow]Could not reach IBKR — open positions UNKNOWN. "
+                              "If you hold any of these, paper_trader will stop\n"
+                              "managing them (its stop stays, but nothing will exit "
+                              "it).[/yellow]")
+            else:
+                clash = [s for s in present if s in held]
+                if clash:
+                    console.print(f"[bold red]You hold open positions in: "
+                                  f"{', '.join(clash)}[/bold red]")
+                    console.print("[red]Removing them from the watchlist makes paper_trader "
+                                  "blind to those positions — it will neither\nmanage nor exit "
+                                  "them. Close the positions first, or keep them listed.[/red]")
+
+            if not Confirm.ask(f"Remove {', '.join(present)} from the watchlist?", default=False):
+                continue
+            for name in groups:
+                groups[name] = [s for s in groups[name] if s not in present]
+            union = wl.save_groups(settings, groups)
+            save_settings(settings)
+            console.print(f"[green]Removed: {', '.join(present)}[/green]")
+            top_n = settings.get("momentum_top_n", 3)
+            if len(union) < top_n + 1:
+                console.print(f"[red]Watchlist is down to {len(union)} tickers but momentum "
+                              f"holds top {top_n} — signals need at least {top_n + 1}.[/red]")
+
+        elif choice == "3":
+            name = Prompt.ask("New group name").strip()
+            if not name:
+                continue
+            if name in groups:
+                console.print(f"[yellow]{name} already exists.[/yellow]")
+                continue
+            groups[name] = []
+            wl.save_groups(settings, groups)
+            save_settings(settings)
+            console.print(f"[green]Created group {name}.[/green]")
+
+        elif choice == "4":
+            if not groups:
+                continue
+            names = list(groups)
+            old = Prompt.ask("Rename which group", choices=names, default=names[0])
+            new = Prompt.ask("New name").strip()
+            if not new or new == old:
+                continue
+            if new in groups:
+                console.print(f"[yellow]{new} already exists.[/yellow]")
+                continue
+            groups = {(new if k == old else k): v for k, v in groups.items()}
+            wl.save_groups(settings, groups)
+            save_settings(settings)
+            console.print(f"[green]Renamed {old} → {new}.[/green]")
+
+        elif choice == "5":
+            if not groups:
+                continue
+            names = list(groups)
+            target = Prompt.ask("Delete which group", choices=names, default=names[-1])
+            # Tickers that live ONLY in this group leave the traded universe too.
+            orphaned = [s for s in groups[target] if wl.group_of(groups, s) == [target]]
+            if orphaned:
+                console.print(f"[yellow]These are only in {target} and will leave the "
+                              f"traded universe: {', '.join(orphaned)}[/yellow]")
+            if not Confirm.ask(f"Delete group {target}?", default=False):
+                continue
+            del groups[target]
+            wl.save_groups(settings, groups)
+            save_settings(settings)
+            console.print(f"[green]Deleted group {target}.[/green]")
+
+        else:
+            return
 
 
 def autotrade_menu(settings: dict):
@@ -926,7 +1102,7 @@ def main():
     while True:
         console.print(Panel(MENU, title="Menu", border_style="blue"))
         try:
-            choice = Prompt.ask("Choose", choices=[str(i) for i in range(1, 13)], default="1")
+            choice = Prompt.ask("Choose", choices=[str(i) for i in range(1, 14)], default="1")
         except (EOFError, KeyboardInterrupt):
             break
         try:
@@ -949,13 +1125,16 @@ def main():
             elif choice == "8":
                 autotrade_menu(settings)
             elif choice == "9":
+                watchlist_menu(settings)
+                data = load_all_data(settings)  # the traded universe may have changed
+            elif choice == "10":
                 edit_settings(settings)
                 data = load_all_data(settings)  # in case tickers changed
-            elif choice == "10":
-                data = load_all_data(settings, force=True)
             elif choice == "11":
-                ibkr_menu(settings)
+                data = load_all_data(settings, force=True)
             elif choice == "12":
+                ibkr_menu(settings)
+            elif choice == "13":
                 break
         except (EOFError, KeyboardInterrupt):
             break

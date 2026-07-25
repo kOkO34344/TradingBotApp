@@ -43,6 +43,29 @@ File purposes are documented in each script's own module docstring
   including in any future web dashboard.
 - `trading_agent_service.py` — third-party TradingAgents wrapper. NEVER RUN yet;
   daily-granularity only, candidate for one evaluation run vs research_agent.
+- `watchlist.py` — the watchlist is stored as NAMED GROUPS
+  (`trader_settings.json`'s `watchlist_groups`), with `tickers` DERIVED as the
+  deduped union and regenerated on every save. Groups are the source of truth;
+  `tickers` stays the contract every consumer reads (paper_trader,
+  autotrade_runner, research agent, Kronos, trader_app), so nothing downstream
+  changed. Edit via `trader_app.py` menu 9 ONLY — the old raw ticker edit in
+  Settings was removed deliberately, because writing `tickers` directly would
+  desync it from the groups and be silently reverted on the next group save.
+  Groups mirror how the owner organizes IBKR watchlists but are **not synced
+  from IBKR**: the TWS API exposes no watchlist endpoint (verified against
+  ib_async 2.1.0 — watchlists are a client-side TWS UI feature). Auto-sync
+  would require IBKR's separate Client Portal Web API (second gateway, browser
+  login, session keepalive) — considered 2026-07-25 and deliberately not built.
+  Symbols are validated on entry against yfinance AND against what the order
+  path can actually trade (US stocks): foreign listings (`9988.HK`), FX
+  (`EUR.USD`), crypto (`BTC-USD`) and futures (`ES=F`) are dropped and
+  reported, never silently discarded. `--group <name>` / `--list-groups` work
+  on `run_research_agent_watchlist.py`. Has a `--selftest`-style
+  `python3 watchlist.py` offline check.
+  **Removing a ticker you hold a position in is guarded**, and this is the
+  reason why: `paper_trader.py` filters holdings with `if sym in tickers`, so
+  a removed symbol's position goes invisible to it — the GTC stop survives but
+  nothing will ever manage or exit that position again.
 
 ## Empirical findings so far (do not re-litigate without new evidence)
 
