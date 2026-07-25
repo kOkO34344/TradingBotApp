@@ -41,6 +41,12 @@ trade_reflect.log
 trade_reflect_launchd.log
 trade_reflections/.reflected_execids.json
 
+# TelegramBot: runtime log of send failures (for debugging delivery, not
+# meaningful version-controlled content)
+TelegramBot/failed_sends.log
+daily_digest.log
+daily_digest_launchd.log
+
 # Kronos backtest checkpoint: raw intermediate walk-forward results, saved
 # so a crash in reporting doesn't cost re-running the (slow) forecasting
 # loop. Machine state for --from-checkpoint, not meaningful version-controlled
