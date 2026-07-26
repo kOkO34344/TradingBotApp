@@ -2,7 +2,7 @@
 tags: [risk, execution, infrastructure]
 status: "live in code"
 source: ibkr_service.py
-last_updated: 2026-07-25
+last_updated: 2026-07-27
 ---
 
 # Risk Management System
@@ -59,48 +59,86 @@ Every order path (`place_bracket_order`, `place_market_order`) calls `guard.chec
 
 ```json
 {
-  "max_order_notional_usd": 5000,
-  "max_open_positions": 5,
-  "max_daily_loss_usd": 300,
+  "max_order_notional_usd": 50000,
+  "max_open_positions": 8,
+  "max_daily_loss_usd": 2000,
   "require_stop_attached": true
 }
 ```
 
-| Rule | Default | Why |
-|---|---|---|
-| `max_order_notional_usd` | $5,000 | A single bad trade can't exceed 50% of account equity |
-| `max_open_positions` | 5 | Avoids over-concentration; matches the plan's "max 5 positions" |
-| `max_daily_loss_usd` | $300 | Circuit breaker: if realized losses hit $300 today, bot stops trading for the day |
-| `require_stop_attached` | true | No bare orders without a stop; prevents "hope and pray" trades |
+| Rule | Value | Applies to | Why |
+|---|---|---|---|
+| `max_order_notional_usd` | $50,000 | **entries only** | Caps new exposure per order (~4.4% of the $1.14M paper account) |
+| `max_open_positions` | 8 | **entries only** | Avoids over-concentration |
+| `max_daily_loss_usd` | $2,000 | **entries only** | Circuit breaker: stops opening new risk after a bad day |
+| `require_stop_attached` | true | all orders | No bare orders without a stop; prevents "hope and pray" trades |
+
+**Values raised 2026-07-27** from 5000/5/300. The old ones were mis-scaled to a
+$1.14M account: $5,000 was 0.44% per order and was overriding the 2×ATR risk
+model entirely (the model wanted ~3,291 AMZN shares; the cap allowed 21,
+deploying just 1.3% of the account), and $300 was *less than a single
+position's stop-loss risk* (~$314), so one ordinary stop-out tripped the
+breaker.
 
 ### Enforcement Points
 
-**All checked before submission:**
+**All checked before submission. Every exposure limit is gated on `opening`
+and can never block an exit** — see the 2026-07-27 incident below.
 
-1. **Notional size check**
+1. **Notional size check** (entries only)
    ```
-   if quantity * est_price > max_order_notional_usd:
+   if opening and quantity * est_price > max_order_notional_usd:
        → BLOCKED, logged to journal, printed to stderr
    ```
 
-2. **Stop attachment check**
+2. **Stop attachment check** (all orders — deliberately ungated, rule 2)
    ```
    if require_stop_attached and not has_stop:
        → BLOCKED
    ```
 
-3. **Open positions check** (only for new entries)
+3. **Open positions check** (entries only)
    ```
    if opening and len(current_positions) >= max_open_positions:
        → BLOCKED
    ```
 
-4. **Daily loss circuit breaker**
+4. **Daily loss circuit breaker** (entries only)
    ```
-   realized_pnl = extract from ib.accountValues()
-   if realized_pnl <= -abs(max_daily_loss_usd):
-       → BLOCKED, "done for the day"
+   if opening:
+       realized_pnl = extract from ib.accountValues()
+       if realized_pnl <= -abs(max_daily_loss_usd):
+           → BLOCKED, "done for the day"
    ```
+
+### ⚠️ A risk limit blocked an EXIT — found and fixed 2026-07-27
+
+The notional cap and the daily-loss breaker used to apply to **every** order,
+including ones that flatten or reduce a position. `paper_trader.py` had been
+passing `opening=False` for exits correctly all along — but only
+`max_open_positions` actually honoured it.
+
+**A limit caps NEW exposure. Blocking a close *raises* risk, which is the
+opposite of the job.** It also traps *winners* specifically: a position bought
+under the cap that appreciates past it becomes un-exitable.
+
+That is exactly what happened during an approved Kronos rebalance:
+
+| | Entry notional | At exit | Result |
+|---|---|---|---|
+| AAPL | 15 × 328.04 = $4,921 | 15 × 333.80 = **$5,007** | BLOCKED |
+| JNJ | 19 × 249.98 = $4,750 | 19 × 263.40 = **$5,005** | BLOCKED |
+
+Both had been bought *under* the then-$5,000 cap. The rebalance silently held
+instead of rotating — journal rows `BLOCKED JNJ` / `BLOCKED AAPL` at
+`2026-07-27T01:51`.
+
+**Fix:** both checks gated on `opening`. The breaker case matters more than
+the cap: after a bad day you would otherwise be unable to close out of
+anything, which is precisely when getting out matters most.
+`require_stop_attached` stays ungated (an exit needs no stop of its own; exit
+paths pass `allow_no_stop=True`). Two selftest cases now cover the exemption —
+`python3 ibkr_service.py --selftest`.
 
 ### Known gap, found and fixed 2026-07-21: the stop check is about *placement*, not *persistence*
 

@@ -260,6 +260,43 @@ than a small one, it's just a noisier draw from the same no-edge
 distribution. Analysis-only, as always; no orders placed, nothing to
 journal.
 
+## 2026-07-27 — re-run + first ranking-vs-momentum comparison
+
+Re-ran `kronos_watchlist_forecast.py` on all 14 tickers (20 trading days,
+`sample_count=10`, ~81s on `mps`). Top-3 **AMZN +8.5% / MSFT +6.9% /
+DIS +6.4%**; bottom **AAPL -14.6% / JNJ -14.8% / ASML -37.4%**.
+
+**ASML's extreme call is persistent, not a noisy draw.** The 2026-07-25 entry
+above flagged -37.4%; this run produced -37.36%, and two further runs the same
+night gave -36.63% and -39.39%. So it is a *stable* model belief, which is a
+different thing from the noise explanation offered on 07-25 — worth correcting
+here rather than leaving both readings in the log. Checked the input data
+directly: clean bars, no split artifact, and ASML is genuinely **+151% over 12
+months** (595 → 1803). The model is calling violent mean-reversion after that
+run-up. Still no reason for conviction (the IC is flat), but the right
+description is "consistent extreme forecast", not "noisy draw".
+
+**Per-ticker noise, measured.** Three consecutive runs on identical data put
+GOOGL at **+2.69% / -3.72% / +4.38%** — an 8-point spread at
+`sample_count=10`. The top-3 held stable across all three runs, so a top-N
+rotation is unaffected, but no single ticker's number should be read alone.
+
+**New: the ranking correlates ~0.92 with plain momentum.** Against the hourly
+momentum ranking in `autotrade_runner.log` (2026-07-25): **Spearman 0.916**,
+Pearson 0.825, bottom six (KO, JPM, XOM, AAPL, JNJ, ASML) in *identical*
+order, 2 of 3 top names shared. Filed in CLAUDE.md as an **open hypothesis,
+not a finding** — one snapshot, n=14, two different cadences two days apart.
+If it survives a proper test (rank correlation across the ~24 rebalance dates
+`kronos_backtest.py` already covers), it would mean Kronos is an expensive
+momentum proxy: ~81s of GPU inference to reproduce a trailing-return sort that
+*outscored* it on the hourly IC screen (-0.037 vs -0.081).
+
+**First time Kronos drove a real order attempt.** `paper_trader.py --signal
+kronos` was run for real (owner-approved) and placed **zero trades** — both
+exits blocked by a RiskGuard bug, all three entries cancelled by IBKR error
+10349 (Gateway Order Preset forcing DAY TIF). Neither failure was Kronos's
+doing. See CLAUDE.md Phase 3 status.
+
 ## Related Notes
 
 - [[Kronos Overview]]

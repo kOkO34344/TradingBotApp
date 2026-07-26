@@ -2,7 +2,7 @@
 tags: [infrastructure, broker, execution]
 status: "live and trading"
 connection_verified: 2026-07-21
-last_updated: 2026-07-25
+last_updated: 2026-07-27
 ---
 
 # IBKR Integration: Connection & Execution
@@ -266,3 +266,5 @@ Both are included in the file; run before committing any code changes.
 | `market_price()` raises "requires additional subscription for API" | The account has no live data subscription — call `ib.reqMarketDataType(3)` for delayed data before requesting prices |
 | `NetLiquidation`/account values look ~10-15% off from expected USD | The account's base currency isn't USD (this paper account is EUR) — `paper_trader.get_net_liquidation_usd()` converts via IBKR's `ExchangeRate` account value (not a live FX quote, as of 2026-07-25) |
 | `No market data during competing live session` (IBKR error 10197) | Another session is holding the data line. No longer breaks NetLiq conversion (fixed 2026-07-25, see above) — but still blocks anything that genuinely needs a live quote (e.g. entry price checks). Close the competing session. |
+| `Order TIF was set to DAY based on order preset` (IBKR error **10349**), order immediately `Cancelled` | **Gateway/TWS-side config, not a code bug.** An Order Preset is forcing DAY time-in-force, which collides with the explicit `tif="GTC"` the bracket legs set (the 2026-07-21 fix), and IBKR cancels the order rather than accepting it. Hit 2026-07-27: it cancelled **all three** bracket entries of a rebalance. Fix in **Global Configuration → Presets** — clear the DAY TIF override for stocks. This will cancel every bracket order until changed. |
+| `ib.positions()` returns `[]` on an account that holds positions | The positions request timed out during `IB.connect()` and `connectAsync` **swallowed it** (`asyncio.wait_for(..., timeout=4)` + `return_exceptions=True`, and `raiseSyncErrors` defaults False). The connection looks healthy; the cache is just empty. Never treat an empty `ib.positions()` as "flat" — re-request and let a timeout raise. See [[Risk Management System]] and the tier-2 note in CLAUDE.md. |

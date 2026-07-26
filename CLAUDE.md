@@ -111,6 +111,27 @@ File purposes are documented in each script's own module docstring
   running anyway per explicit owner request (see rule 7) — a deliberate live
   paper experiment, not a validated strategy.
 
+## Open hypotheses (NOT findings — do not cite these as evidence)
+
+Kept separate from Empirical Findings on purpose: these are single
+observations that have not met this project's evidence bar. Promote one only
+after testing it properly.
+
+- **Kronos may be an expensive momentum proxy.** Its 2026-07-27 daily forecast
+  ranking correlated **Spearman 0.916** (Pearson 0.825) with the hourly
+  momentum ranking from `autotrade_runner.log` two days earlier — bottom six
+  (KO, JPM, XOM, AAPL, JNJ, ASML) in *identical* order, 2 of 3 top names
+  shared. If it holds, Kronos costs ~81s of GPU inference to land where a
+  trailing-return sort already is, and it scored *worse* than that sort on the
+  hourly IC screen (-0.081 vs -0.037). **One snapshot, n=14, two different
+  cadences two days apart — that is nowhere near enough.** Proper test:
+  compute the rank correlation across the ~24 rebalance dates
+  `kronos_backtest.py` already covers.
+- **Kronos per-ticker output is noisier than `sample_count=10` suggests.**
+  Three consecutive runs on identical data put GOOGL at +2.69% / -3.72% /
+  +4.38% — an 8-point spread. Top-3 was stable across all three, so top-N
+  rotation is unaffected, but no individual number should be read alone.
+
 ## Current phase status
 
 - Phase 1 (research agent): built, needs real runs + graded calls accumulating.
@@ -160,7 +181,23 @@ File purposes are documented in each script's own module docstring
   as a safety net under unattended autotrade.
   Remaining open positions verified 2026-07-25: AAPL 15 @ 328.04 and JNJ 19 @
   249.98, both with live **GTC** stops covering the full quantity (309.10 /
-  237.61), and no orphaned GOOGL stop left behind.
+  237.61), and no orphaned GOOGL stop left behind. **Re-verified directly
+  against IBKR 2026-07-27** — still open, still `tif=GTC`, `PreSubmitted`.
+  **A Kronos rebalance was attempted 2026-07-27 and placed ZERO trades.**
+  Approved (AMZN/MSFT/DIS in, AAPL/JNJ out), and every single leg failed, for
+  two unrelated reasons — both now understood, one still open:
+  1. Both **exits were BLOCKED by RiskGuard's notional cap**, which applied to
+     closes as well as opens. Fixed and merged same day (see rule 3).
+  2. All three **entries were CANCELLED by IBKR, error 10349** "Order TIF was
+     set to DAY based on order preset". **STILL OPEN — Gateway-side config,
+     not code.** An Order Preset forces DAY TIF and collides with the explicit
+     GTC bracket legs from the 2026-07-21 fix, so IBKR cancels rather than
+     accepts. Fix in Gateway's Global Configuration → Presets. **Until this is
+     changed, every bracket order will be cancelled** — including every
+     autotrade firing. Check this before trusting any rebalance to work.
+  Net effect: the account was unchanged, still AAPL 15 / JNJ 19. Note the
+  failure mode was *silent in the worst way* — an approved rebalance that
+  looks like it ran and simply holds instead of rotating.
 - Phase 4 (tiny real capital): locked until months of Phase 3 evidence.
 
 ## Close detection is two-tier (`reflect_on_trades.py`)
@@ -227,8 +264,13 @@ that was never recorded, which is the original bug.
 4. **Paper trading — operational, not a build task.** `paper_trader.py` holds
    real open positions. **GOOGL closed 2026-07-23** (gapped through its GTC
    stop, ~-$422, found + backfilled 2026-07-25 — see Phase 3 status above);
-   current holdings are **AAPL (15) and JNJ (19)**, both confirmed 2026-07-25
-   with live GTC stops for their full quantity. Going forward:
+   current holdings are **AAPL (15) and JNJ (19)**, re-verified directly
+   against IBKR 2026-07-27 with live GTC stops for their full quantity.
+   **BLOCKER before the next rebalance: fix the Gateway Order Preset forcing
+   DAY TIF (error 10349).** Until that is cleared in Global Configuration →
+   Presets, every bracket entry is cancelled on arrival — the 2026-07-27
+   rebalance placed zero trades because of it. Verify with a single small
+   dry-run-then-real entry before trusting a full rotation. Going forward:
    - Re-run monthly (or on-demand) for the next rebalance; check `--dry-run`
      first if unsure what it'll propose. `--dry-run` now connects genuinely
      `readonly=True` (TWS-enforced) and no longer needs a live market-data
@@ -373,6 +415,31 @@ If you add a new recurring/polling script, give it its own conditional
   `launchctl unload ~/Library/LaunchAgents/com.tradingbotapp.vaultsync.plist`.
 - `(base)` conda is always in the prompt; the project venv must ALSO show
   `(.venv)`. If imports fail, that's the first thing to check.
+- **A Gateway Order Preset can silently cancel every bracket order.** IBKR
+  error **10349** "Order TIF was set to DAY based on order preset" — the
+  preset overrides the explicit `tif="GTC"` on bracket legs and IBKR cancels
+  instead of accepting. Hit 2026-07-27, killed all three entries of an
+  approved rebalance. Fix in Gateway's **Global Configuration → Presets**.
+  This is invisible from the code side: `place_bracket_order` returns, the
+  journal records SUBMIT, and the RESULT row just says `Cancelled`.
+- **Never read an empty `ib.positions()` as "the account is flat."**
+  `IB.connect()` fetches positions as a best-effort startup request;
+  `connectAsync` gathers it under `asyncio.wait_for(..., timeout=4)` with
+  `return_exceptions=True` and, unless `raiseSyncErrors=True`, **swallows a
+  timeout** — returning a connected, healthy-looking `IB` with an empty
+  position cache. Indistinguishable from a genuinely flat account unless you
+  re-request and let the timeout raise. Caused a phantom full-liquidation in
+  `reflect_on_trades.py` (see the close-detection section).
+- **IB Gateway can stop answering new API connections** while still appearing
+  up (the port stays open). Seen 2026-07-27 after a run of connects with
+  distinct client_ids — subsequent read-only checks hung indefinitely. Kill
+  stray python processes holding connections and restart Gateway.
+- **GitHub: `gh` is installed manually at `~/.local/bin/gh`** — there is no
+  Homebrew on this machine, so upgrades mean re-downloading the release zip
+  and `install -m 755` over it. Auth token is in the macOS keyring, config in
+  `~/.config/gh/`, and `gh auth setup-git` is configured so `git push` works.
+  Remote is the private repo `kOkO34344/TradingBotApp`. A Pylint GitHub
+  Actions workflow runs on PRs (`.github/workflows/pylint.yml`).
 
 ## Practical
 

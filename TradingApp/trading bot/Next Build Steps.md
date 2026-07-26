@@ -1,12 +1,39 @@
 ---
 tags: [roadmap, next-steps, project-management]
 status: "Live — prioritized action queue"
-last_updated: 2026-07-25
+last_updated: 2026-07-27
 ---
 
 # Next Build Steps — Prioritized Action Queue
 
 This is the **exact sequence of work** that makes sense given where the project stands right now. Updated 2026-07-21: **Phase 3 is built and live** — `paper_trader.py` exists and already executed a real rebalance on the paper account. This file previously assumed Phase 3 hadn't started; that's no longer true. Tiers below are reordered to match.
+
+## Tier 0: BLOCKER — fix before any further trading (added 2026-07-27)
+
+### 0.1: Clear the Gateway Order Preset forcing DAY TIF
+
+**Every bracket order is currently cancelled on arrival.** IBKR error
+**10349** — "Order TIF was set to DAY based on order preset" — the preset
+overrides the explicit `tif="GTC"` on bracket legs and IBKR cancels rather
+than accepts. On 2026-07-27 this killed all three entries of an approved
+Kronos rebalance; the account simply held instead of rotating.
+
+**Fix:** IB Gateway → **Global Configuration → Presets** → clear the DAY TIF
+override for stocks.
+
+**Then verify before trusting a full rotation:** place one small bracket entry
+and confirm it reaches `PreSubmitted`/`Filled` with `order.tif == "GTC"`,
+rather than `Cancelled`. This is Gateway-side config — nothing in the codebase
+can detect or work around it, and it will silently break every autotrade
+firing too.
+
+### 0.2: Restart IB Gateway if API connections hang
+
+Seen 2026-07-27: Gateway kept the port open but stopped answering new API
+connections; read-only position checks hung indefinitely. Kill stray python
+processes still holding connections, then restart Gateway.
+
+---
 
 ## Tier 1: Not due yet — don't run early
 
