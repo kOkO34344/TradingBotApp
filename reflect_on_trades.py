@@ -28,6 +28,7 @@ Usage:
 """
 
 import argparse
+import asyncio
 import json
 import subprocess
 import sys
@@ -47,6 +48,10 @@ JOURNAL_FILE = BASE_DIR / "trade_journal.csv"
 CLIENT_ID = 11  # distinct from paper_trader.py's (9) so both can run concurrently
 LOOKBACK_DAYS = 3  # ExecutionFilter window; dedup via STATE_FILE handles overlap
 PNL_SENTINEL_ABS = 1_000_000  # IBKR uses a huge sentinel float for "not applicable"
+# Deliberately far more generous than connectAsync's 4s startup default — see
+# fetch_positions_confirmed(). We would rather wait than misread a slow
+# Gateway as a flat account.
+POSITIONS_TIMEOUT = 30.0
 
 
 def load_reflected_ids() -> set:
@@ -98,9 +103,42 @@ def save_snapshot(positions: dict) -> None:
         indent=2, sort_keys=True))
 
 
-def current_positions(ib) -> dict:
+def fetch_positions_confirmed(ib) -> dict:
+    """Positions from a round-trip IBKR actually ANSWERED. Raises otherwise.
+
+    Do not replace this with a bare ib.positions() — that is the bug this
+    function exists to prevent, and it has already fired once in production.
+
+    ib.positions() reads a cache that IB.connect() fills as a best-effort
+    startup request. connectAsync gathers those requests under
+    asyncio.wait_for(..., timeout=4) with return_exceptions=True and, unless
+    raiseSyncErrors=True is passed, SWALLOWS a timeout: it logs "positions
+    request timed out" and hands back a connected, healthy-looking IB whose
+    position cache is simply empty. ib.positions() then returns [] for an
+    account that holds positions.
+
+    That empty list is indistinguishable from a genuinely flat account, and
+    tier 2 reads flat as "everything closed" — so one slow Gateway response
+    manufactures a phantom full liquidation: bogus CLOSE_DETECTED journal
+    rows, Telegram alerts about closes that never happened, and worst of all
+    a snapshot advanced to {}, discarding the real baseline.
+
+    Not hypothetical. 2026-07-25T20:29:38 journaled AAPL 15->0 and JNJ 19->0
+    while both were open on IBKR with live GTC stops — on a Saturday, with no
+    session between that run and the 16:27:14 snapshot in which they were
+    still present. Reproduced deterministically 2026-07-27 by suppressing the
+    positions reply.
+
+    The fix is to re-request explicitly and let a timeout RAISE instead of
+    degrading to []. An answered request that returns no positions is a real
+    flat account — IBKR always terminates the position stream with
+    positionEnd, and that is what resolves this future — so the two cases stop
+    being the same value. A timeout is an error, not data, and the caller must
+    abort the run rather than journal anything.
+    """
+    positions = ib.run(ib.reqPositionsAsync(), timeout=POSITIONS_TIMEOUT)
     return {p.contract.symbol: {"qty": float(p.position), "avg_cost": float(p.avgCost)}
-            for p in ib.positions() if p.position != 0}
+            for p in positions if p.position != 0}
 
 
 def diff_positions(prev: dict, cur: dict) -> list[dict]:
@@ -221,11 +259,73 @@ def run_agent(prompt: str) -> bool:
     return True
 
 
+def selftest() -> int:
+    """Offline checks for the tier-2 logic. No IB Gateway needed.
+
+    The regression that matters here is NOT the diff arithmetic — it is that a
+    failed positions fetch must raise instead of quietly looking like a flat
+    account. Assert that directly, with a stub that never answers.
+    """
+    failures = []
+
+    def check(name, cond):
+        print(f"  {'ok  ' if cond else 'FAIL'}  {name}")
+        if not cond:
+            failures.append(name)
+
+    print("diff_positions:")
+    prev = {"AAPL": {"qty": 15.0, "avg_cost": 328.0}, "JNJ": {"qty": 19.0, "avg_cost": 250.0}}
+    check("no change -> no closes", diff_positions(prev, prev) == [])
+    check("added to a position is not a close",
+          diff_positions(prev, {**prev, "AAPL": {"qty": 20.0, "avg_cost": 330.0}}) == [])
+    gone = diff_positions(prev, {"AAPL": prev["AAPL"]})
+    check("vanished position -> one fully_closed",
+          len(gone) == 1 and gone[0]["symbol"] == "JNJ" and gone[0]["fully_closed"])
+    part = diff_positions(prev, {**prev, "JNJ": {"qty": 5.0, "avg_cost": 250.0}})
+    check("reduced position -> partial close",
+          len(part) == 1 and part[0]["qty_closed"] == 14.0 and not part[0]["fully_closed"])
+
+    print("fetch_positions_confirmed:")
+
+    class _Unanswered:
+        """Stands in for a Gateway that accepts the connection but never
+        answers the positions request — the 2026-07-25 production failure."""
+        def reqPositionsAsync(self):
+            return None
+        def run(self, _awaitable, timeout=None):
+            raise asyncio.TimeoutError()
+
+    try:
+        result = fetch_positions_confirmed(_Unanswered())
+        check(f"unanswered request must raise, not return {result!r}", False)
+    except (asyncio.TimeoutError, TimeoutError):
+        check("unanswered request raises instead of reporting a flat account", True)
+
+    class _Flat:
+        """A genuinely flat account still returns cleanly — the fix must not
+        turn 'really has no positions' into an error."""
+        def reqPositionsAsync(self):
+            return None
+        def run(self, _awaitable, timeout=None):
+            return []
+
+    check("genuinely flat account returns {} without raising",
+          fetch_positions_confirmed(_Flat()) == {})
+
+    print("FAILED" if failures else "\nAll tier-2 selftests passed.")
+    return 1 if failures else 0
+
+
 def main():
     ap = argparse.ArgumentParser(description="Reflect on newly-closed paper-trading positions.")
     ap.add_argument("--dry-run", action="store_true",
                      help="Show what would be reflected on, call no agent.")
+    ap.add_argument("--selftest", action="store_true",
+                     help="Run offline tier-2 logic checks and exit (no IBKR connection).")
     args = ap.parse_args()
+
+    if args.selftest:
+        sys.exit(selftest())
 
     REFLECT_DIR.mkdir(exist_ok=True)
     reflected = load_reflected_ids()
@@ -258,7 +358,19 @@ def main():
 
         # ---- tier 2: position-snapshot diff (catches what executions lose) ----
         prev = load_snapshot()
-        cur = current_positions(ib)
+        # Confirmed round-trip, not the connect-time cache: an unanswered
+        # request must abort this run, never be read as "the account is flat".
+        # Leaving the snapshot untouched costs us nothing — the next run
+        # re-reads the same baseline and any real close is still waiting in
+        # the diff. See fetch_positions_confirmed().
+        try:
+            cur = fetch_positions_confirmed(ib)
+        except (asyncio.TimeoutError, TimeoutError):
+            print("ERROR: IBKR did not answer the positions request within "
+                  f"{POSITIONS_TIMEOUT:g}s — aborting without journaling or "
+                  "advancing the snapshot. No close is lost; the next run "
+                  "re-checks against the same baseline.", file=sys.stderr)
+            sys.exit(1)
         snapshot_closes = []
         if prev is None:
             # First ever run: seed silently. Everything currently open is the

@@ -160,12 +160,36 @@ provably loses events (see the GOOGL incident above).
 
 1. **`reqExecutions`** — exact fill price, realized P&L, commission. Only ever
    sees the current session.
-2. **Position-snapshot diff** — compares `ib.positions()` against
+2. **Position-snapshot diff** — compares live positions against
    `trade_reflections/.position_snapshot.json` from the previous run. Catches
    any close the execution tier missed, including partial reductions, at the
    cost of not knowing exit price or P&L. Seeds silently on first run
    (no snapshot ⇒ record baseline, report nothing), dedupes against tier 1 so
    a close caught by both journals once.
+
+**Tier 2 must fetch positions via `fetch_positions_confirmed()`, never a bare
+`ib.positions()`** — and the reason is a bug that already fired in production.
+`ib.positions()` reads a cache filled by a best-effort startup request inside
+`IB.connect()`: `connectAsync` gathers those under `asyncio.wait_for(...,
+timeout=4)` with `return_exceptions=True` and, unless `raiseSyncErrors=True`,
+**swallows a timeout** — logging "positions request timed out" and returning a
+connected, healthy-looking `IB` whose position cache is empty. An empty
+`ib.positions()` is therefore ambiguous: genuinely flat, or the fetch failed.
+Tier 2 read it as flat, i.e. "everything closed."
+
+Result on 2026-07-25T20:29:38: phantom `CLOSE_DETECTED` rows for AAPL 15→0 and
+JNJ 19→0 while both were open on IBKR with live GTC stops — on a **Saturday**,
+with no session between that run and the 16:27:14 snapshot that still showed
+them. It also advanced the snapshot to `{}`, discarding the real baseline.
+Reproduced deterministically 2026-07-27 and fixed by re-requesting positions
+explicitly and letting a timeout **raise** (run aborts, nothing journaled,
+snapshot untouched) instead of degrading to `[]`. An *answered* request that
+returns nothing is a real flat account — `positionEnd` resolves the future —
+so the two cases are no longer the same value.
+
+Note this is the same swallow mechanism behind the "benign" connect warnings
+in work-queue item 1 ("open orders request timed out"). Benign there, a
+fabricated liquidation here — don't generalize "that warning is harmless."
 
 Both tiers now write to `trade_journal.csv` (`CLOSE_FILLED` / `CLOSE_DETECTED`),
 independently of whether the reflection agent call succeeds. **Detection time
