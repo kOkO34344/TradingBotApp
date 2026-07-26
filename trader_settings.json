@@ -32,6 +32,6 @@
   "ibkr_client_id": 9,
   "autotrade": {
     "enabled": false,
-    "signal": "momentum"
+    "signal": "kronos"
   }
 }

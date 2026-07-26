@@ -13,3 +13,13 @@ timestamp,event,symbol,sec_type,action,quantity,price,stop,target,status,detail
 2026-07-21T23:34:37,SUBMIT,AAPL,STK,SELL,15.0,,309.1,,submitted,re-protect: standalone GTC stop (original DAY stop expired)
 2026-07-21T23:34:37,RESULT,AAPL,STK,SELL,15.0,,309.1,,PreSubmitted,re-protect stop
 2026-07-23T16:30:00,CLOSE_RECONSTRUCTED,GOOGL,STK,SELL,14,321.13,326.06,,Filled (inferred),"RECONSTRUCTED 2026-07-25, not observed live. GTC stop 326.06 GAPPED THROUGH: 2026-07-23 opened 321.13, below the stop, so the fill was at the open, not the stop price. Date/price inferred from daily bars (first bar with Low<=stop; Open<stop => gap). No IBKR execution record exists to confirm — reqExecutions serves only the current session, verified returning 0 rows for a 30-day filter. Est. P&L -422.10 USD vs -353.08 if filled at the stop (-69.02 slippage). Position confirmed flat and no orphaned stop order remains."
+2026-07-25T20:29:38,CLOSE_DETECTED,AAPL,STK,SELL,15.0,,,,detected,"fully closed between 2026-07-25T16:27:14 and detection. No IBKR execution record — reqExecutions serves only the current session, so exit price and realized P&L are UNKNOWN here. Entry avg cost 328.04. Detection time is not the event time: a close over a weekend or overnight is journaled at the next run."
+2026-07-25T20:29:38,CLOSE_DETECTED,JNJ,STK,SELL,19.0,,,,detected,"fully closed between 2026-07-25T16:27:14 and detection. No IBKR execution record — reqExecutions serves only the current session, so exit price and realized P&L are UNKNOWN here. Entry avg cost 249.98. Detection time is not the event time: a close over a weekend or overnight is journaled at the next run."
+2026-07-27T01:51:25,BLOCKED,JNJ,STK,SELL,19.0,263.4,,,blocked,"notional $5,005 exceeds limit $5,000"
+2026-07-27T01:51:29,BLOCKED,AAPL,STK,SELL,15.0,333.8,,,blocked,"notional $5,007 exceeds limit $5,000"
+2026-07-27T01:51:29,SUBMIT,AMZN,STK,BUY,21,232.71,217.74,,submitted,bracket order
+2026-07-27T01:51:30,RESULT,AMZN,STK,BUY,21,232.71,217.74,,Cancelled,bracket placed (parent status shown)
+2026-07-27T01:51:31,SUBMIT,MSFT,STK,BUY,13,383.31,359.0,,submitted,bracket order
+2026-07-27T01:51:32,RESULT,MSFT,STK,BUY,13,383.31,359.0,,Cancelled,bracket placed (parent status shown)
+2026-07-27T01:51:32,SUBMIT,DIS,STK,BUY,52,95.37,90.83,,submitted,bracket order
+2026-07-27T01:51:33,RESULT,DIS,STK,BUY,52,95.37,90.83,,Cancelled,bracket placed (parent status shown)

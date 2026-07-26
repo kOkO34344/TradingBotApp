@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd /Users/kaloyanivanov/TradingBotApp && find . -maxdepth 1 -type f -not -name \".DS_Store\" -exec stat -f \"%Sm %N\" -t \"%Y-%m-%d %H:%M\" {} \\\\; | sort && echo \"---subdirs---\" && find . -mindepth 2 -type f -not -path \"*/.venv/*\" -not -path \"*/.git/*\" -not -path \"*/price_data/*\" -not -name \".DS_Store\" -exec stat -f \"%Sm %N\" -t \"%Y-%m-%d %H:%M\" {} \\\\; | sort)",
+      "Bash(for f in research_log/*.md; do echo -n \"$f: \"; grep -A2 \"^## Direction\" \"$f\" | tail -1 | head -c 120; echo; done)",
+      "Bash(cd \"/Users/kaloyanivanov/TradingBotApp/TradingApp/trading bot\" && for f in *.md; do echo \"=== $f ===\"; grep -n \"</content>\\\\|last_synced\" \"$f\"; done)"
+    ]
+  }
+}
