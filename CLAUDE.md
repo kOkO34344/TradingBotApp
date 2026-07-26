@@ -15,6 +15,16 @@ Brokers (paper account first, always).
 3. **RiskGuard limits live in `risk_limits.json`** (order notional, max positions,
    daily-loss circuit breaker). Enforced in code, never in prompts. Changing
    limits is an explicit edit, not a side effect.
+   **Every exposure limit is gated on `opening` and never blocks an exit.**
+   A limit caps NEW exposure; blocking a close raises risk, which is the
+   opposite of the job. Learned the hard way 2026-07-27: the then-$5,000
+   notional cap blocked the exits for BOTH open positions — AAPL (bought
+   15 × 328.04 = $4,921) and JNJ (19 × 249.98 = $4,750) were under the cap
+   at entry, appreciated to $5,007/$5,005, and became un-exitable, so the
+   rebalance silently held instead of rotating. The cap trapped *winners*
+   specifically. `opening=False` had been passed correctly all along —
+   only `max_open_positions` honoured it. Limits raised the same day to
+   50000 / 2000 / 8. `require_stop_attached` stays ungated (rule 2).
 4. **Honest backtesting.** In/out-of-sample split, after costs, vs buy-and-hold
    SPY. Never tune parameters until a backtest looks good and call it validated.
    Negative results get reported, not massaged.
