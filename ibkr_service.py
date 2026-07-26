@@ -234,21 +234,48 @@ class RiskGuard:
 
     def check(self, ib: IB, contract, quantity: float, est_price: float,
               has_stop: bool, opening: bool = True) -> tuple[bool, str]:
+        """Decide whether an order may reach the broker.
+
+        Every limit here caps NEW EXPOSURE, so the exposure-sized ones are
+        gated on `opening` and never apply to an order that flattens or
+        reduces a position. A risk limit must not be able to trap you in a
+        position — blocking an exit raises risk, which is the opposite of
+        the job.
+
+        That is not hypothetical: on 2026-07-27 the notional cap blocked the
+        exits for both open positions. AAPL was bought at 15 x 328.04 =
+        $4,921 and JNJ at 19 x 249.98 = $4,750, both under the then-$5,000
+        cap; they appreciated to $5,007 and $5,005 and became un-exitable
+        through paper_trader. The cap trapped winners specifically, and the
+        rebalance silently held instead of rotating. `opening=False` was
+        being passed correctly all along — only max_open_positions honoured
+        it.
+
+        The daily-loss breaker is gated for the same reason, and it matters
+        more there: after a bad day you would otherwise be unable to close
+        out of anything, which is exactly when getting out matters most.
+
+        `require_stop_attached` is deliberately NOT gated — it is checked
+        for openings only in the sense that closers pass allow_no_stop=True,
+        and an exit needs no stop of its own. Do not weaken it (project
+        rule 2).
+        """
         L = self.limits
         if quantity <= 0:
             return False, "quantity must be positive"
         notional = quantity * est_price
-        if notional > L["max_order_notional_usd"]:
+        if opening and notional > L["max_order_notional_usd"]:
             return False, (f"notional ${notional:,.0f} exceeds limit "
                            f"${L['max_order_notional_usd']:,.0f}")
         if L["require_stop_attached"] and not has_stop:
             return False, "no stop attached (require_stop_attached=true)"
         if opening and len(ib.positions()) >= L["max_open_positions"]:
             return False, f"already at max_open_positions={L['max_open_positions']}"
-        pnl = daily_realized_pnl(ib)
-        if pnl is not None and pnl <= -abs(L["max_daily_loss_usd"]):
-            return False, (f"daily loss circuit breaker: realized {pnl:,.0f} <= "
-                           f"-{L['max_daily_loss_usd']:,.0f}. Done for the day.")
+        if opening:
+            pnl = daily_realized_pnl(ib)
+            if pnl is not None and pnl <= -abs(L["max_daily_loss_usd"]):
+                return False, (f"daily loss circuit breaker: realized {pnl:,.0f} <= "
+                               f"-{L['max_daily_loss_usd']:,.0f}. Done for the day.")
         return True, "ok"
 
 
@@ -407,6 +434,17 @@ def _selftest() -> int:
         check("guard blocks at max positions", not ok and "max_open_positions" in r)
         ok, r = g.check(FakeIB(), stock("AAPL"), 0, 100.0, has_stop=True)
         check("guard blocks zero quantity", not ok)
+
+        # A limit must cap new exposure, never trap you in a position. On
+        # 2026-07-27 an oversized-notional block hit the EXITS for both open
+        # positions (bought under the cap, appreciated past it) and the
+        # rebalance silently held instead of rotating.
+        ok, r = g.check(FakeIB(), stock("AAPL"), 1000, 100.0,
+                        has_stop=True, opening=False)
+        check("guard allows oversized EXIT (closing reduces risk)", ok)
+        ok, r = g.check(FakeIB(n_pos=5), stock("AAPL"), 10, 100.0,
+                        has_stop=True, opening=False)
+        check("guard allows EXIT at max positions", ok)
 
         # journal roundtrip
         jp = Path(td) / "journal.csv"
