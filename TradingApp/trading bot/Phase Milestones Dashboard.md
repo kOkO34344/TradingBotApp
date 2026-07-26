@@ -1,7 +1,7 @@
 ---
 tags: [project-management, phases, roadmap]
-status: "Live, Phase 3 built and running on paper"
-last_updated: 2026-07-21
+status: "Phase 3 BLOCKED — Gateway Order Preset cancels all bracket orders"
+last_updated: 2026-07-27
 ---
 
 # Phase Milestones Dashboard
@@ -83,7 +83,29 @@ This is the quick-reference status of each phase. Detailed rationale lives in [[
 1. Momentum rotation hasn't had portfolio-level walk-forward validation — worth doing, doesn't block continued paper trading
 2. Phase 1 grading will start once notes age enough (~2026-07-25+) — informs confidence in the *research* agent, doesn't gate the *trading* loop (which is rules-based, not agent-based)
 
-**Next action:** Keep running `paper_trader.py` (monthly rebalance or on-demand), periodically verify positions/stops are healthy, let evidence accumulate toward the 2-3 month exit criteria.
+**🔴 BLOCKED as of 2026-07-27 — no order can currently execute.** A Kronos
+rebalance was approved and placed **zero trades**; the account held instead of
+rotating. Two unrelated causes, one fixed and one still open:
+
+1. ✅ **Fixed same day** — RiskGuard's notional cap applied to *exits* as well
+   as entries, so both AAPL and JNJ (bought under the then-$5,000 cap,
+   appreciated past it to ~$5,007/$5,005) were **un-exitable**. A limit that
+   blocks a close raises risk. Both the cap and the daily-loss breaker are now
+   gated on `opening`. Limits also rescaled to 50000/2000/8. See
+   [[Risk Management System]].
+2. 🔴 **STILL OPEN** — IBKR error **10349**, "Order TIF was set to DAY based on
+   order preset": a Gateway Order Preset overrides the explicit GTC on bracket
+   legs, so IBKR **cancels every bracket entry**. Gateway-side config, not
+   code. Fix in Global Configuration → Presets. This breaks autotrade firings
+   too. See [[Next Build Steps]] Tier 0.
+
+Holdings re-verified directly against IBKR 2026-07-27: **AAPL 15 @ 328.04**
+and **JNJ 19 @ 249.98**, both with live GTC stops (309.10 / 237.61).
+
+**Next action:** clear the Order Preset (Tier 0 in [[Next Build Steps]]),
+verify one small bracket entry actually reaches `PreSubmitted` with
+`tif="GTC"`, *then* resume monthly rebalances and let evidence accumulate
+toward the 2-3 month exit criteria.
 
 ---
 

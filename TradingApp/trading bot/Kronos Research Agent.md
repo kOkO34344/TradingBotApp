@@ -2,7 +2,7 @@
 tags: [research, kronos, agent, workflow]
 source: KronosAI/kronos_agent.py
 status: "Integrated, backtested — no measurable edge found"
-last_updated: 2026-07-23
+last_updated: 2026-07-27
 ---
 
 # Kronos Research Agent
@@ -81,6 +81,39 @@ Log.md`.
 **If revisited:** re-run with 2-3 different seeds to confirm the IC finding
 is stable (not urgent — a result this flat is unlikely to flip on a
 different draw, but hasn't been formally confirmed).
+
+## Live forecast re-run, 2026-07-27 — two observations worth keeping
+
+Re-ran `kronos_watchlist_forecast.py` on all 14 watchlist tickers (20 trading
+days ahead, `sample_count=10`, ~81s on MPS). Top-3: **AMZN +8.5%, MSFT +6.9%,
+DIS +6.4%**; bottom: AAPL -14.6%, JNJ -14.8%, ASML -37.4%.
+
+**1. Kronos's ranking looks a lot like a momentum ranking.** Against the
+hourly momentum ranking from `autotrade_runner.log` (2026-07-25):
+**Spearman 0.916**, Pearson 0.825, with the bottom six (KO, JPM, XOM, AAPL,
+JNJ, ASML) in *exactly* the same order and 2 of 3 top names shared.
+
+This is a **hypothesis, not a finding** — one snapshot, n=14, two different
+cadences (hourly 400-bar vs daily 400-day) two days apart. It is deliberately
+NOT in CLAUDE.md's Empirical Findings, which requires a real evidence bar.
+But it is worth testing properly, because if it holds, Kronos is an expensive
+momentum proxy: ~81s of GPU inference to land where a trailing-return sort
+already was — and it scored *worse* than that sort on the hourly IC screen
+(-0.081 vs -0.037). **Proper test:** compute that rank correlation across the
+~24 rebalance dates the walk-forward backtest already covers.
+
+**2. Run-to-run variance is large enough to matter for individual names.**
+Three consecutive runs on *identical* data put GOOGL at **+2.69%, -3.72%,
++4.38%** — an 8-point spread, at the `sample_count=10` default. The top-3 was
+stable across all three runs, so a top-N rotation is not affected, but no
+individual Kronos number should be read as meaningful on its own. This is a
+sharper version of the `sample_count` finding above.
+
+**On the ASML -37.4% outlier:** verified *not* a data artifact — clean bars,
+no split, and the stock is genuinely +151% over 12 months (595 → 1803). The
+model is calling violent mean-reversion after that run. A sustained -2.3%/day
+for 20 straight days is an extraordinary prediction and the single best
+reason to be wary of these numbers.
 
 ## Related Notes
 
