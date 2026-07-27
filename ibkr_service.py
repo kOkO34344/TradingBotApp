@@ -208,13 +208,25 @@ def journal(event: str, contract=None, action: str = "", quantity: float = "",
                     getattr(contract, "symbol", ""), getattr(contract, "secType", ""),
                     action, quantity, price, stop, target, status, detail])
 
-    # Real blocks (not the --selftest run against a temp journal path) are
+    # Real events (not the --selftest run against a temp journal path) that are
     # exactly the "something needs my attention" case worth a phone alert.
-    if event == "BLOCKED" and path == JOURNAL_FILE:
+    if path != JOURNAL_FILE:
+        return
+    symbol = getattr(contract, "symbol", "?")
+    if event == "BLOCKED":
         send_telegram(
             f"\U0001f6ab RiskGuard BLOCKED an order\n"
-            f"{getattr(contract, 'symbol', '?')} {action} {quantity}\n"
+            f"{symbol} {action} {quantity}\n"
             f"Reason: {detail}"
+        )
+    elif event == "UNPROTECTED":
+        # Naked exposure. Nothing auto-fixes this — it needs a human now.
+        send_telegram(
+            f"\U0001f6a8 UNPROTECTED POSITION — no live GTC stop\n"
+            f"{symbol}: {quantity} shares filled\n"
+            f"{detail}\n"
+            f"Place a GTC stop manually, and check Gateway's Order Presets "
+            f"(error 10349 forces DAY TIF and cancels the stop leg)."
         )
 
 
@@ -302,6 +314,82 @@ def wait_for_status(ib: IB, trade, timeout_s: float = 30.0):
     return trade
 
 
+# Order types that actually protect a position. STP LMT is included because
+# IBKR accepts it as a bracket exit leg, even though we never place one.
+STOP_ORDER_TYPES = ("STP", "STP LMT", "TRAIL", "TRAIL LIMIT")
+
+# An order in one of these states is still working at IBKR. Anything else
+# (Cancelled, ApiCancelled, Inactive, Filled) protects nothing from here on.
+LIVE_ORDER_STATUS = ("PendingSubmit", "PreSubmitted", "Submitted", "ApiPending")
+
+
+def stop_protection_status(stops: list[dict], filled_qty: float) -> tuple[bool, str]:
+    """Is `filled_qty` shares covered by live, GTC stop orders? Pure function.
+
+    `stops` are plain dicts ({"qty", "tif", "status"}) so this stays testable
+    offline — see `_open_stops_for()` for the live-Trade adapter.
+
+    "Present" is not the bar; GTC is (rule 2 + the 2026-07-21 incident where a
+    DAY stop looked fine for hours and then silently expired at the close,
+    leaving three positions unprotected overnight). A DAY stop here counts as
+    NO protection, deliberately.
+    """
+    live = [s for s in stops if s.get("status") in LIVE_ORDER_STATUS]
+    if not live:
+        return False, f"no live stop order found for {filled_qty:g} shares"
+
+    gtc = [s for s in live if s.get("tif") == "GTC"]
+    if not gtc:
+        tifs = ", ".join(sorted({str(s.get("tif")) for s in live}))
+        return False, (f"stop order(s) exist but NONE are GTC (tif={tifs}) — a DAY stop "
+                       f"expires at the session close and stops protecting anything")
+
+    covered = sum(float(s.get("qty", 0)) for s in gtc)
+    # Tolerance for float noise on fractional quantities only.
+    if covered + 1e-6 < filled_qty:
+        return False, (f"GTC stop covers only {covered:g} of {filled_qty:g} shares — "
+                       f"{filled_qty - covered:g} shares unprotected")
+    return True, f"GTC stop covers {covered:g}/{filled_qty:g} shares"
+
+
+def _open_stops_for(trades, symbol: str, exit_action: str) -> list[dict]:
+    """Reduce live Trade objects to the plain dicts stop_protection_status wants."""
+    out = []
+    for t in trades:
+        order = t.order
+        if getattr(t.contract, "symbol", None) != symbol:
+            continue
+        if order.orderType not in STOP_ORDER_TYPES or order.action != exit_action:
+            continue
+        out.append({"qty": float(order.totalQuantity),
+                    "tif": order.tif,
+                    "status": t.orderStatus.status})
+    return out
+
+
+def verify_stop_protection(ib: IB, contract, exit_action: str, filled_qty: float,
+                           settle_s: float = 1.5) -> tuple[bool, str]:
+    """Confirm a filled position is covered by a live full-size GTC stop.
+
+    Journals `UNPROTECTED` and fires a phone alert when it isn't. Deliberately
+    does NOT place a replacement stop — auto-remediation is a separate decision
+    and silently fixing this would hide how often it happens.
+
+    This exists because a bracket can half-survive: IBKR error 10349 (an Order
+    Preset forcing DAY TIF) cancels legs individually, so the parent can fill
+    while its stop is rejected, leaving naked exposure that nothing detects.
+    """
+    ib.reqAllOpenOrders()
+    ib.sleep(settle_s)
+    stops = _open_stops_for(ib.openTrades(), contract.symbol, exit_action)
+    ok, reason = stop_protection_status(stops, filled_qty)
+    if not ok:
+        journal("UNPROTECTED", contract, exit_action, filled_qty,
+                status="NO GTC STOP", detail=reason)
+        print(f"UNPROTECTED POSITION: {contract.symbol} — {reason}", file=sys.stderr)
+    return ok, reason
+
+
 def place_market_order(ib: IB, contract, quantity: float, action: str = "BUY",
                        guard: RiskGuard | None = None, allow_no_stop: bool = False,
                        allow_live: bool = False, opening: bool = True):
@@ -385,10 +473,24 @@ def place_bracket_order(ib: IB, contract, quantity: float, action: str,
     journal("SUBMIT", contract, action, quantity, entry_limit, stop_price,
             target_price or "", status="submitted", detail="bracket order")
     trades = [ib.placeOrder(contract, o) for o in [parent] + children]
-    ib.sleep(1)
-    journal("RESULT", contract, action, quantity, entry_limit, stop_price,
-            target_price or "", status=trades[0].orderStatus.status,
-            detail="bracket placed (parent status shown)")
+
+    # Wait for the parent to actually resolve. The old code slept a flat 1s and
+    # journalled whatever status the parent happened to hold at that instant —
+    # a snapshot, not an outcome. On 2026-07-27 that recorded two brackets that
+    # went on to fill (AMZN 21, DIS 52) as "Cancelled", and the account ran two
+    # positions ahead of the journal for a full day before anyone noticed.
+    parent_trade = trades[0]
+    wait_for_status(ib, parent_trade)
+    st = parent_trade.orderStatus
+    filled = float(st.filled or 0)
+    journal("RESULT", contract, action, quantity, st.avgFillPrice or entry_limit,
+            stop_price, target_price or "", status=st.status,
+            detail=f"bracket parent: filled {filled:g}/{quantity:g}")
+
+    # A filled parent whose stop leg didn't survive is a rule-2 violation, and
+    # nothing downstream would have caught it.
+    if filled > 0:
+        verify_stop_protection(ib, contract, exit_action, filled)
     return trades
 
 
@@ -467,6 +569,54 @@ def _selftest() -> int:
     check("bracket rejects bad action", raises(lambda: _validate_bracket("HOLD", 100.0, 95.0)))
     ok_valid = not raises(lambda: _validate_bracket("BUY", 100.0, 95.0))
     check("bracket accepts valid BUY", ok_valid)
+
+    # stop-protection predicate — the check that a filled bracket kept its stop
+    def stp(qty, tif="GTC", status="PreSubmitted"):
+        return {"qty": qty, "tif": tif, "status": status}
+
+    ok, r = stop_protection_status([stp(15)], 15)
+    check("protection: full-size GTC stop passes", ok)
+    ok, r = stop_protection_status([stp(10), stp(5)], 15)
+    check("protection: two GTC stops sum to full size", ok)
+    ok, r = stop_protection_status([], 15)
+    check("protection: no stop at all fails", not ok and "no live stop" in r)
+    ok, r = stop_protection_status([stp(15, tif="DAY")], 15)
+    check("protection: DAY stop counts as unprotected", not ok and "GTC" in r)
+    ok, r = stop_protection_status([stp(10)], 15)
+    check("protection: partial cover fails", not ok and "unprotected" in r)
+    ok, r = stop_protection_status([stp(15, status="Cancelled")], 15)
+    check("protection: cancelled stop is not protection", not ok)
+    ok, r = stop_protection_status([stp(15, status="Inactive")], 15)
+    check("protection: inactive stop is not protection", not ok)
+    # The exact 2026-07-27 shape: parent filled, stop leg killed by error 10349.
+    ok, r = stop_protection_status([stp(21, status="Cancelled"), stp(21, tif="DAY")], 21)
+    check("protection: 10349 shape (cancelled GTC + DAY survivor) fails", not ok)
+
+    # the live-Trade adapter, with duck-typed stand-ins
+    class FakeOrder:
+        def __init__(self, action, otype, qty, tif):
+            self.action, self.orderType, self.totalQuantity, self.tif = action, otype, qty, tif
+
+    class FakeTrade:
+        def __init__(self, sym, action, otype, qty, tif, status):
+            self.contract = stock(sym)
+            self.order = FakeOrder(action, otype, qty, tif)
+            self.orderStatus = type("S", (), {"status": status})()
+
+    live = [FakeTrade("AAPL", "SELL", "STP", 15, "GTC", "PreSubmitted"),
+            FakeTrade("JNJ", "SELL", "STP", 19, "GTC", "PreSubmitted"),   # other symbol
+            FakeTrade("AAPL", "BUY", "LMT", 15, "GTC", "Submitted")]      # not a stop
+    found = _open_stops_for(live, "AAPL", "SELL")
+    check("adapter picks only this symbol's stops", len(found) == 1 and found[0]["qty"] == 15)
+    check("adapter output feeds the predicate", stop_protection_status(found, 15)[0])
+
+    # UNPROTECTED must be journallable like any other event
+    with tempfile.TemporaryDirectory() as td:
+        jp = Path(td) / "j.csv"
+        journal("UNPROTECTED", stock("AAPL"), "SELL", 15,
+                status="NO GTC STOP", detail="selftest", path=jp)
+        rows = list(csv.reader(open(jp)))
+        check("journal records UNPROTECTED", len(rows) == 2 and rows[1][1] == "UNPROTECTED")
 
     print(f"\n{'ALL PASS' if not failures else f'{len(failures)} FAILURES: {failures}'}")
     return 1 if failures else 0

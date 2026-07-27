@@ -96,8 +96,20 @@ def journal_freshness() -> str:
             rows = list(csv.reader(f))
         if len(rows) < 2:
             return "trade_journal.csv exists but has no entries yet."
-        last_ts = rows[-1][0]
-        last_dt = datetime.fromisoformat(last_ts)
+        # The newest EVENT, not the last line written. Reconstruction and
+        # correction rows (CLOSE_RECONSTRUCTED, RESULT_CORRECTED, NOTE) are
+        # appended later but carry the timestamp of the event they describe,
+        # so the file is not sorted by time and rows[-1] can be months old.
+        stamps = []
+        for r in rows[1:]:
+            try:
+                stamps.append(datetime.fromisoformat(r[0]))
+            except (ValueError, IndexError):
+                continue
+        if not stamps:
+            return "trade_journal.csv exists but has no readable timestamps."
+        last_dt = max(stamps)
+        last_ts = last_dt.isoformat(timespec="seconds")
         days = (datetime.now() - last_dt).total_seconds() / 86400
         return f"Last journal entry {days:.1f}d ago ({last_ts})."
     except Exception as e:

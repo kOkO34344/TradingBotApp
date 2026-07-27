@@ -183,21 +183,31 @@ after testing it properly.
   249.98, both with live **GTC** stops covering the full quantity (309.10 /
   237.61), and no orphaned GOOGL stop left behind. **Re-verified directly
   against IBKR 2026-07-27** — still open, still `tif=GTC`, `PreSubmitted`.
-  **A Kronos rebalance was attempted 2026-07-27 and placed ZERO trades.**
-  Approved (AMZN/MSFT/DIS in, AAPL/JNJ out), and every single leg failed, for
-  two unrelated reasons — both now understood, one still open:
+  **The 2026-07-27 Kronos rebalance HALF-EXECUTED, and the journal recorded it
+  as a total failure.** Approved (AMZN/MSFT/DIS in, AAPL/JNJ out). What the
+  journal said at the time: both exits blocked, all three entries `Cancelled`,
+  zero trades, account unchanged. What had actually happened, verified
+  read-only against IBKR on 2026-07-28:
   1. Both **exits were BLOCKED by RiskGuard's notional cap**, which applied to
-     closes as well as opens. Fixed and merged same day (see rule 3).
-  2. All three **entries were CANCELLED by IBKR, error 10349** "Order TIF was
-     set to DAY based on order preset". **STILL OPEN — Gateway-side config,
-     not code.** An Order Preset forces DAY TIF and collides with the explicit
-     GTC bracket legs from the 2026-07-21 fix, so IBKR cancels rather than
-     accepts. Fix in Gateway's Global Configuration → Presets. **Until this is
-     changed, every bracket order will be cancelled** — including every
-     autotrade firing. Check this before trusting any rebalance to work.
-  Net effect: the account was unchanged, still AAPL 15 / JNJ 19. Note the
-  failure mode was *silent in the worst way* — an approved rebalance that
-  looks like it ran and simply holds instead of rotating.
+     closes as well as opens. True, and fixed the same day (see rule 3).
+  2. **AMZN 21 @ 232.73 and DIS 52 @ 95.39 FILLED**, each with a live
+     full-quantity **GTC** stop (217.74 / 90.83, `PreSubmitted`). Only **MSFT**
+     was cancelled by IBKR error 10349 "Order TIF was set to DAY based on
+     order preset" — 1 of 3 legs, not 3 of 3. The preset is still a real
+     Gateway-side problem (Global Configuration → Presets) and can kill a
+     bracket non-deterministically, but it is **not** an absolute blocker and
+     never was.
+  Net effect: the account went from 2 positions to **4** — AAPL 15, JNJ 19,
+  DIS 52, AMZN 21 — while every record here and in `trade_journal.csv` said it
+  was unchanged, for a full day. Root cause of the false record:
+  `place_bracket_order` journalled the PARENT's status after a fixed
+  `ib.sleep(1)` and never looked again, so a bracket that filled seconds later
+  was recorded `Cancelled` permanently, and the stop leg was never checked at
+  all. Fixed 2026-07-28 — it now waits for a terminal status and verifies a
+  covering GTC stop actually survived. Corrections appended to
+  `trade_journal.csv` as `RESULT_CORRECTED` / `NOTE` rows (originals left in
+  place, annotated). **Lesson: a `Cancelled` RESULT row written one second
+  after placement is not evidence the order died.**
 - Phase 4 (tiny real capital): locked until months of Phase 3 evidence.
 
 ## Close detection is two-tier (`reflect_on_trades.py`)
@@ -288,13 +298,17 @@ that was never recorded, which is the original bug.
 4. **Paper trading — operational, not a build task.** `paper_trader.py` holds
    real open positions. **GOOGL closed 2026-07-23** (gapped through its GTC
    stop, ~-$422, found + backfilled 2026-07-25 — see Phase 3 status above);
-   current holdings are **AAPL (15) and JNJ (19)**, re-verified directly
-   against IBKR 2026-07-27 with live GTC stops for their full quantity.
-   **BLOCKER before the next rebalance: fix the Gateway Order Preset forcing
-   DAY TIF (error 10349).** Until that is cleared in Global Configuration →
-   Presets, every bracket entry is cancelled on arrival — the 2026-07-27
-   rebalance placed zero trades because of it. Verify with a single small
-   dry-run-then-real entry before trusting a full rotation. Going forward:
+   current holdings are **AAPL (15 @ 328.04), JNJ (19 @ 249.98), DIS (52 @
+   95.39) and AMZN (21 @ 232.73)** — four positions, each with a live
+   full-quantity GTC stop (309.10 / 237.61 / 90.83 / 217.74), verified directly
+   against IBKR 2026-07-28. DIS and AMZN came from the 2026-07-27 rebalance
+   that the journal wrongly recorded as `Cancelled` (see Phase 3 status above).
+   **Before the next rebalance: fix the Gateway Order Preset forcing DAY TIF
+   (error 10349)** in Global Configuration → Presets. It killed the MSFT leg on
+   2026-07-27 while AMZN and DIS went through, so it is intermittent rather
+   than a hard blocker — which is worse to reason about, not better. Verify
+   with a single small dry-run-then-real entry before trusting a full rotation.
+   Going forward:
    - Re-run monthly (or on-demand) for the next rebalance; check `--dry-run`
      first if unsure what it'll propose. `--dry-run` now connects genuinely
      `readonly=True` (TWS-enforced) and no longer needs a live market-data
@@ -439,13 +453,22 @@ If you add a new recurring/polling script, give it its own conditional
   `launchctl unload ~/Library/LaunchAgents/com.tradingbotapp.vaultsync.plist`.
 - `(base)` conda is always in the prompt; the project venv must ALSO show
   `(.venv)`. If imports fail, that's the first thing to check.
-- **A Gateway Order Preset can silently cancel every bracket order.** IBKR
+- **A Gateway Order Preset can cancel bracket orders, intermittently.** IBKR
   error **10349** "Order TIF was set to DAY based on order preset" — the
   preset overrides the explicit `tif="GTC"` on bracket legs and IBKR cancels
-  instead of accepting. Hit 2026-07-27, killed all three entries of an
-  approved rebalance. Fix in Gateway's **Global Configuration → Presets**.
-  This is invisible from the code side: `place_bracket_order` returns, the
-  journal records SUBMIT, and the RESULT row just says `Cancelled`.
+  instead of accepting. Hit 2026-07-27 and killed **one of three** entries in
+  an approved rebalance (MSFT); AMZN and DIS were accepted and filled with
+  their GTC stops intact. Don't assume it's all-or-nothing. Fix in Gateway's
+  **Global Configuration → Presets**.
+- **A `Cancelled` RESULT row seconds after placement does not mean the order
+  died.** Until 2026-07-28 `place_bracket_order` journalled the parent order's
+  status after a fixed `ib.sleep(1)` — a snapshot, not an outcome. Two orders
+  that filled were recorded `Cancelled` and the account silently ran two
+  positions ahead of every record for a day. It now waits for a terminal
+  status via `wait_for_status()` and then verifies a covering GTC stop is
+  actually live, journalling `UNPROTECTED` + texting if one isn't. When
+  auditing the journal, trust `RESULT_CORRECTED` rows over the original
+  `RESULT` row for anything before 2026-07-28.
 - **Never read an empty `ib.positions()` as "the account is flat."**
   `IB.connect()` fetches positions as a best-effort startup request;
   `connectAsync` gathers it under `asyncio.wait_for(..., timeout=4)` with
