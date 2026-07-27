@@ -529,7 +529,19 @@ def place_bracket_order(ib: IB, contract, quantity: float, action: str,
         print(f"ORDER BLOCKED: {reason}", file=sys.stderr)
         return None
 
-    parent = LimitOrder(action, quantity, entry_limit)
+    # The PARENT's tif must be explicit too, and this is not cosmetic. Leaving
+    # it unset is what triggered IBKR error 10349 "Order TIF was set to DAY
+    # based on order preset" — the preset was filling in the blank we left,
+    # and announcing it. Proved by probe 2026-07-28: the error's reqId is
+    # always the parent's, and the stop leg (which always carried an explicit
+    # tif="GTC") kept GTC at IBKR throughout. Setting it ourselves leaves the
+    # preset nothing to override.
+    #
+    # DAY is the right value HERE, unlike the stop below: an entry limit is
+    # priced off today's close and should expire with the session rather than
+    # fire days later at a price the signal never justified. It is the STOP
+    # that must outlive the day (see the GTC comment below).
+    parent = LimitOrder(action, quantity, entry_limit, tif="DAY")
     parent.orderId = ib.client.getReqId()
     parent.transmit = False
     children = []

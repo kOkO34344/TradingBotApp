@@ -234,11 +234,13 @@ after testing it properly.
      closes as well as opens. True, and fixed the same day (see rule 3).
   2. **AMZN 21 @ 232.73 and DIS 52 @ 95.39 FILLED**, each with a live
      full-quantity **GTC** stop (217.74 / 90.83, `PreSubmitted`). Only **MSFT**
-     was cancelled by IBKR error 10349 "Order TIF was set to DAY based on
-     order preset" — 1 of 3 legs, not 3 of 3. The preset is still a real
-     Gateway-side problem (Global Configuration → Presets) and can kill a
-     bracket non-deterministically, but it is **not** an absolute blocker and
-     never was.
+     did not fill. IBKR error 10349 "Order TIF was set to DAY based on order
+     preset" was reported at the time and blamed for the cancellations — that
+     diagnosis was **wrong** and was corrected 2026-07-28 by direct probe:
+     10349 is a warning about the PARENT order's unset TIF, it never touched
+     the GTC stop legs, and it does not cancel anything. See the 10349 entry
+     under Known environment gotchas. Whatever stopped MSFT specifically, it
+     was not the preset.
   Net effect: the account went from 2 positions to **4** — AAPL 15, JNJ 19,
   DIS 52, AMZN 21 — while every record here and in `trade_journal.csv` said it
   was unchanged, for a full day. Root cause of the false record:
@@ -374,12 +376,10 @@ that was never recorded, which is the original bug.
    full-quantity GTC stop (309.10 / 237.61 / 90.83 / 217.74), verified directly
    against IBKR 2026-07-28. DIS and AMZN came from the 2026-07-27 rebalance
    that the journal wrongly recorded as `Cancelled` (see Phase 3 status above).
-   **Before the next rebalance: fix the Gateway Order Preset forcing DAY TIF
-   (error 10349)** in Global Configuration → Presets. It killed the MSFT leg on
-   2026-07-27 while AMZN and DIS went through, so it is intermittent rather
-   than a hard blocker — which is worse to reason about, not better. Verify
-   with a single small dry-run-then-real entry before trusting a full rotation.
-   Going forward:
+   **The "Gateway Order Preset blocker" is CLOSED** — it was a missing `tif`
+   on our own parent order, fixed in code 2026-07-28 and verified by probe
+   (no 10349, LMT `tif=DAY` / STP `tif=GTC`). No Gateway change is or was
+   needed. Going forward:
    - Re-run monthly (or on-demand) for the next rebalance; check `--dry-run`
      first if unsure what it'll propose. `--dry-run` now connects genuinely
      `readonly=True` (TWS-enforced) and no longer needs a live market-data
@@ -547,13 +547,27 @@ If you add a new recurring/polling script, give it its own conditional
   automated script already pinned `.venv/bin/python`; the interactive app was
   the only entry point without a launcher, which is why it was the one that
   broke.
-- **A Gateway Order Preset can cancel bracket orders, intermittently.** IBKR
-  error **10349** "Order TIF was set to DAY based on order preset" — the
-  preset overrides the explicit `tif="GTC"` on bracket legs and IBKR cancels
-  instead of accepting. Hit 2026-07-27 and killed **one of three** entries in
-  an approved rebalance (MSFT); AMZN and DIS were accepted and filled with
-  their GTC stops intact. Don't assume it's all-or-nothing. Fix in Gateway's
-  **Global Configuration → Presets**.
+- **IBKR error 10349 was OUR BUG, not a Gateway preset needing a GUI fix.**
+  RESOLVED 2026-07-28 by direct probe against the paper account — do not
+  reopen this as a Gateway issue. `place_bracket_order` built the parent
+  `LimitOrder` with **no explicit `tif`**. The Order Preset filled in the
+  blank with DAY and *announced* it: "Order TIF was set to DAY based on order
+  preset". Three things the probe established that the 07-27 guess got wrong:
+  1. The error's `reqId` is always the **parent's**, never the stop's.
+  2. The **stop leg was never affected** — it always carried an explicit
+     `tif="GTC"` and IBKR held it as GTC throughout, confirmed via
+     `reqAllOpenOrders` (not the local order object, which proves nothing).
+  3. It is a **warning, not a rejection**. Both legs stayed `PreSubmitted`.
+     `ib_async` logs a scary `Canceled order: Trade(...status='Cancelled')`
+     line that does NOT match IBKR's authoritative view — which is why AMZN
+     and DIS filled on 07-27 while the journal claimed everything cancelled.
+  Fix: `parent = LimitOrder(action, quantity, entry_limit, tif="DAY")`. Re-probe
+  returned LMT `tif=DAY` / STP `tif=GTC`, both PreSubmitted, **no 10349 at
+  all**. DAY is correct for the parent — an entry limit priced off today's
+  close should expire with the session; it is the STOP that must outlive the
+  day. **Never leave a TIF unset on any order**: an unset field is one the
+  broker's config gets to fill in, and you will not necessarily be told what
+  it chose.
 - **A `Cancelled` RESULT row seconds after placement does not mean the order
   died.** Until 2026-07-28 `place_bracket_order` journalled the parent order's
   status after a fixed `ib.sleep(1)` — a snapshot, not an outcome. Two orders
