@@ -313,17 +313,45 @@ that was never recorded, which is the original bug.
    monthly cycles before even considering cron/launchd.
 3. **Research agent — ongoing, in progress.** Re-run 2026-07-25 on the full
    14-ticker watchlist (grown from the original 12 via `AVGO`/`ASML`) — fresh
-   notes for all 14 in `research_log/`. `grade_calls.py` was actually run
-   2026-07-25: still 0 graded (38 notes × 2 horizons = 76 pending) — the
-   5-trading-day horizon needs the 07-20/21 notes to reach ~5 trading days
-   old, which lands **~2026-07-30**, not 07-25 as earlier estimated (calendar
-   days ≠ trading days). Next actions:
+   notes for all 14 in `research_log/`. Re-run `grade_calls.py --csv`
+   2026-07-28: **still 0 graded, 76 pending — verified genuinely pending, not
+   a fetch bug** (checked the underlying yfinance data directly rather than
+   trusting the "pending" label). `forward_return()` needs `days + 1` bars, so
+   the 5d horizon needs **6** sessions from the note date, not 5.
+   **The project has ZERO real graded calls. It never had any.** The 4 grades
+   that `graded_calls.csv` carried until 2026-07-28 came from two SYNTHETIC
+   TEST NOTES (`AAPL_2026-05-15`, `MSFT_2026-06-01`, each literally headed
+   "SYNTHETIC TEST NOTE — not a real call") that were deleted in `bdee3c8`
+   when real runs started. The CSV kept their grades, and `daily_digest.py`
+   read that file and cheerfully reported "4 graded, 0 pending" every morning
+   for days — fabricated calibration evidence, presented as a track record,
+   in the one file that exists to gate autonomy. The `--csv` re-run overwrote
+   it. Don't reintroduce synthetic notes into `research_log/`; if you need
+   them for testing, write them to a temp dir.
+   Note also **2026-07-24 (Friday) has no bar in yfinance for any ticker**
+   (verified across SPY/MSFT/AAPL) — trading-day math over this window is off
+   by one if you assume a normal week.
+   Actual arrival of the first real grades (measured 2026-07-28, sessions
+   available 07-20,21,22,23,27):
+   | Notes | 5d grades | 21d grades |
+   |---|---|---|
+   | 07-20 (1)  | needs 1 more session  | needs 17 more |
+   | 07-21 (11) | needs 2 more sessions | needs 18 more |
+   | 07-23 (12) | needs 4 more sessions | needs 20 more |
+   | 07-25 (14) | needs 5 more sessions | needs 21 more |
+   So the first handful of 5d grades land ~2026-07-29, the bulk ~early
+   August, and nothing at 21d until late August. Next actions:
    - Re-run `python3 run_research_agent_watchlist.py` weekly (next due
      ~2026-08-01). `--group <name>` / `--list-groups` also work if only
      part of the watchlist needs a refresh — see the Watchlist section below.
-   - Once notes are ≥5 trading days old (~2026-07-30+), run
-     `python3 grade_calls.py` again and actually read the calibration
-     report — don't just run it, look at it.
+   - Re-run `python3 grade_calls.py --csv` from ~2026-07-29 and actually read
+     the calibration report — don't just run it, look at it. Treat any
+     report claiming grades from notes not in `research_log/` as corrupt.
+   - Pending-call shape as of 2026-07-28 (worth knowing before grading):
+     **74% no-edge** (28/38), 16% long, 11% short, and confidence is clustered
+     low (18 calls at 3/10, none above 6/10). A mostly-no-edge, low-confidence
+     book is cheap to be "right" about under the ±2% flat band — read the
+     eventual win rate with that in mind rather than as skill.
 4. **Paper trading — operational, not a build task.** `paper_trader.py` holds
    real open positions. **GOOGL closed 2026-07-23** (gapped through its GTC
    stop, ~-$422, found + backfilled 2026-07-25 — see Phase 3 status above);
