@@ -441,6 +441,63 @@ def place_market_order(ib: IB, contract, quantity: float, action: str = "BUY",
     return trade
 
 
+class OrderErrorCollector:
+    """Captures IBKR's error/warning messages for a specific set of order IDs.
+
+    IBKR explains order rejections out-of-band, on the error channel — not in
+    orderStatus, which only ever says `Cancelled`. Without this, the single
+    most useful sentence ("Order TIF was set to DAY based on order preset",
+    error 10349) exists nowhere afterwards: not in the journal, not in the
+    Gateway logs on disk (they're encrypted), not anywhere a later session can
+    read it. That happened on 2026-07-27 and cost a day of guessing at which
+    of several plausible causes had cancelled an entry.
+
+    Usage:
+        with OrderErrorCollector(ib, order_ids) as errs:
+            ...place orders, wait...
+        errs.summary()   # "" if IBKR said nothing
+    """
+
+    # IBKR sends plenty of routine chatter (2104 "market data farm connection
+    # is OK", 2158, etc.). These are not order problems and would drown the
+    # journal detail column.
+    IGNORED_CODES = frozenset({1100, 1101, 1102, 2103, 2104, 2105, 2106, 2107,
+                               2108, 2119, 2158, 2168, 2169})
+
+    def __init__(self, ib: IB, order_ids):
+        self.ib = ib
+        self.order_ids = set(order_ids)
+        self.errors = []
+
+    def _on_error(self, reqId, errorCode, errorString, contract=None):
+        if errorCode in self.IGNORED_CODES:
+            return
+        # reqId is the orderId for order-related messages; -1 is system-wide.
+        if reqId in self.order_ids:
+            self.errors.append((reqId, errorCode, str(errorString).strip()))
+
+    def __enter__(self):
+        self.ib.errorEvent += self._on_error
+        return self
+
+    def __exit__(self, *exc):
+        self.ib.errorEvent -= self._on_error
+        return False
+
+    def summary(self) -> str:
+        """One-line, journal-safe rendering of everything IBKR said."""
+        seen, out = set(), []
+        for _, code, msg in self.errors:
+            if (code, msg) in seen:
+                continue
+            seen.add((code, msg))
+            out.append(f"IBKR {code}: {msg}")
+        return "; ".join(out)
+
+    def codes(self) -> set:
+        return {code for _, code, _ in self.errors}
+
+
 def _validate_bracket(action: str, entry_limit: float, stop_price: float) -> None:
     if action not in ("BUY", "SELL"):
         raise ValueError("action must be BUY or SELL")
@@ -494,20 +551,33 @@ def place_bracket_order(ib: IB, contract, quantity: float, action: str,
 
     journal("SUBMIT", contract, action, quantity, entry_limit, stop_price,
             target_price or "", status="submitted", detail="bracket order")
-    trades = [ib.placeOrder(contract, o) for o in [parent] + children]
 
-    # Wait for the parent to actually resolve. The old code slept a flat 1s and
-    # journalled whatever status the parent happened to hold at that instant —
-    # a snapshot, not an outcome. On 2026-07-27 that recorded two brackets that
-    # went on to fill (AMZN 21, DIS 52) as "Cancelled", and the account ran two
-    # positions ahead of the journal for a full day before anyone noticed.
-    parent_trade = trades[0]
-    wait_for_status(ib, parent_trade)
+    all_orders = [parent] + children
+    with OrderErrorCollector(ib, [o.orderId for o in all_orders]) as errs:
+        trades = [ib.placeOrder(contract, o) for o in all_orders]
+
+        # Wait for the parent to actually resolve. The old code slept a flat 1s
+        # and journalled whatever status the parent happened to hold at that
+        # instant — a snapshot, not an outcome. On 2026-07-27 that recorded two
+        # brackets that went on to fill (AMZN 21, DIS 52) as "Cancelled", and
+        # the account ran two positions ahead of the journal for a full day.
+        parent_trade = trades[0]
+        wait_for_status(ib, parent_trade)
+
     st = parent_trade.orderStatus
     filled = float(st.filled or 0)
+    detail = f"bracket parent: filled {filled:g}/{quantity:g}"
+    if errs.summary():
+        # Whatever IBKR said about WHY goes in the journal, verbatim. A bare
+        # "Cancelled" row is what made 10349 take a day to identify.
+        detail += f" | {errs.summary()}"
     journal("RESULT", contract, action, quantity, st.avgFillPrice or entry_limit,
-            stop_price, target_price or "", status=st.status,
-            detail=f"bracket parent: filled {filled:g}/{quantity:g}")
+            stop_price, target_price or "", status=st.status, detail=detail)
+
+    if 10349 in errs.codes():
+        print("\n*** IBKR error 10349: an Order Preset forced DAY TIF and overrode the "
+              "explicit GTC on this bracket's stop leg. Fix in Gateway/TWS Global "
+              "Configuration -> Presets. ***", file=sys.stderr)
 
     # A filled parent whose stop leg didn't survive is a rule-2 violation, and
     # nothing downstream would have caught it.
@@ -631,6 +701,34 @@ def _selftest() -> int:
     found = _open_stops_for(live, "AAPL", "SELL")
     check("adapter picks only this symbol's stops", len(found) == 1 and found[0]["qty"] == 15)
     check("adapter output feeds the predicate", stop_protection_status(found, 15)[0])
+
+    # IBKR error capture — the thing that made 10349 invisible for a day
+    class FakeEvent:
+        def __init__(self): self.handlers = []
+        def __iadd__(self, h): self.handlers.append(h); return self
+        def __isub__(self, h): self.handlers.remove(h); return self
+        def emit(self, *a):
+            for h in list(self.handlers):
+                h(*a)
+
+    class FakeErrIB:
+        def __init__(self): self.errorEvent = FakeEvent()
+
+    fib = FakeErrIB()
+    with OrderErrorCollector(fib, [101, 102]) as errs:
+        fib.errorEvent.emit(101, 10349, "Order TIF was set to DAY based on order preset", None)
+        fib.errorEvent.emit(102, 2104, "Market data farm connection is OK", None)  # noise
+        fib.errorEvent.emit(999, 201, "Order rejected - some other order", None)   # not ours
+        fib.errorEvent.emit(101, 10349, "Order TIF was set to DAY based on order preset", None)
+    check("error collector keeps order-preset error", 10349 in errs.codes())
+    check("error collector drops routine chatter", 2104 not in errs.codes())
+    check("error collector ignores other orders' errors", 201 not in errs.codes())
+    check("error collector dedupes repeats", errs.summary().count("10349") == 1)
+    check("error summary is journal-safe one-liner", "\n" not in errs.summary())
+    check("collector unsubscribes on exit", not fib.errorEvent.handlers)
+    with OrderErrorCollector(fib, [1]) as quiet:
+        pass
+    check("silent placement summarises to empty string", quiet.summary() == "")
 
     # UNPROTECTED must be journallable like any other event
     with tempfile.TemporaryDirectory() as td:
