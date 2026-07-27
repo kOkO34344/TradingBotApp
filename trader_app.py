@@ -25,6 +25,7 @@ from rich.panel import Panel
 from rich.prompt import Prompt, IntPrompt, FloatPrompt, Confirm
 from rich.table import Table
 
+import signal_policy as sp
 import watchlist as wl
 
 warnings.filterwarnings("ignore")
@@ -59,7 +60,7 @@ DEFAULT_SETTINGS = {
     "momentum_lookback_m": 12,
     "ibkr_port": 7497,
     "ibkr_client_id": 7,
-    "autotrade": {"enabled": False, "signal": "momentum"},
+    "autotrade": {"enabled": False, "signal": "kronos"},
 }
 
 console = Console()
@@ -1058,10 +1059,13 @@ def autotrade_menu(settings: dict):
     indistinguishable from noise). Turning this on runs either signal
     live on the PAPER account as a deliberate experiment, per the owner's
     explicit choice — not because either is validated. See CLAUDE.md."""
-    autotrade = settings.get("autotrade", {"enabled": False, "signal": "momentum"})
+    autotrade = settings.get("autotrade", {"enabled": False, "signal": sp.DEFAULT_SIGNAL})
     state = "[green]ON[/green]" if autotrade.get("enabled") else "[red]OFF[/red]"
+    cur_sig = sp.resolve_signal(settings)
+    sig_warn = ("  [red](DISABLED — autotrade will refuse to fire)[/red]"
+                if cur_sig in sp.DISABLED_SIGNALS and not sp.momentum_opt_in(settings) else "")
     console.print(Panel(
-        f"Current state: {state}   Signal: [bold]{autotrade.get('signal', 'momentum')}[/bold]\n\n"
+        f"Current state: {state}   Signal: [bold]{cur_sig}[/bold]{sig_warn}\n\n"
         "[dim]Unattended hourly rebalancing via a separate launchd job "
         "(autotrade_runner.py) — no y/n prompt when on, RiskGuard still\n"
         "fully enforced. Both signals (momentum-hourly, kronos-hourly) "
@@ -1082,12 +1086,20 @@ def autotrade_menu(settings: dict):
             console.print("[yellow]Reminder: unattended, no edge shown in testing, "
                           "paper account only.[/yellow]")
     elif action == "2":
-        sig = Prompt.ask("Signal", choices=["momentum", "kronos"],
-                         default=autotrade.get("signal", "momentum"))
+        sig = Prompt.ask("Signal", choices=list(sp.KNOWN_SIGNALS),
+                         default=sp.resolve_signal(settings))
         autotrade["signal"] = sig
         settings["autotrade"] = autotrade
         save_settings(settings)
         console.print(f"[bold]Autotrade signal set to {sig}.[/bold]")
+        if sig in sp.DISABLED_SIGNALS and not sp.momentum_opt_in(settings):
+            # Saved, but say plainly that it won't actually trade — a setting
+            # that looks applied and silently does nothing is the failure mode
+            # this whole project keeps getting bitten by.
+            console.print("[red]Note: this signal is DISABLED (owner instruction, "
+                          "2026-07-28).[/red]\n[red]autotrade_runner will refuse to fire "
+                          "and text you instead of placing orders. To really enable it, add "
+                          '"allow_momentum": true to the autotrade block.[/red]')
 
 
 def main():

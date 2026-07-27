@@ -40,12 +40,40 @@ Brokers (paper account first, always).
    prompt — RiskGuard stays fully enforced regardless. Off by default
    (`trader_settings.json`'s `autotrade.enabled`). See the Autotrade section
    below before touching this.
+8. **Kronos is the project's main signal; momentum is DISABLED.** Owner
+   instruction, 2026-07-28: momentum does not run again until Koko explicitly
+   asks for it in that session. Enforced in code by `signal_policy.py`, not by
+   convention — `paper_trader.compute_signal()` and
+   `autotrade_signals.compute_live_momentum_hourly()` raise `SignalDisabled`
+   unless a caller passes `allow_momentum=True`, and every
+   `.get("signal", ...)` fallback now defaults to `kronos` so config drift
+   can't resurrect it. `autotrade_runner.py` **refuses to fire** on a disabled
+   signal (logs + texts, places nothing) rather than substituting a different
+   one. Same opt-in pattern as rules 1 and 2 — don't pass `allow_momentum`
+   without the owner asking in that session.
+   **This runs against the project's own evidence, deliberately and with the
+   owner's knowledge — record it that way, don't rationalize it.** Momentum
+   rotation is still the only strategy family that ever earned Phase 3
+   (~18.5% CAGR vs SPY 16%); Kronos measured Spearman IC 0.036 / 50.0% hit
+   rate daily and IC -0.081 / 46.4% hourly, i.e. the enabled signal scored
+   *worse* than the disabled one on the only head-to-head screen. Kronos being
+   the focus is a research direction, not a validated edge. Rules 4 and 5 are
+   unchanged: paper only, graded evidence, negative results reported. Backtest
+   and research scripts (`strategy_shootout.py`, `broad_universe_momentum.py`)
+   are NOT gated — they place no orders, and gating evidence-generation would
+   defeat rule 4.
 
 ## Architecture
 
 File purposes are documented in each script's own module docstring
 (`trader_app.py`, `ibkr_service.py`, `research_agent.py`, `grade_calls.py`,
 `indicators.py`) — read those rather than duplicating them here.
+
+- `signal_policy.py` is the SINGLE SOURCE OF TRUTH for which signal may run
+  and which is the default (rule 8). Every live signal path imports it;
+  nothing decides this locally. Has a `python3 signal_policy.py` offline
+  selftest. To change the project's focus signal, change `DEFAULT_SIGNAL` /
+  `DISABLED_SIGNALS` there — not in five `.get()` fallbacks.
 
 - `indicators.py` is the SINGLE SOURCE OF TRUTH for technical math, shared by
   trader_app charts and research_agent prompts (human and AI see identical
@@ -271,8 +299,9 @@ that was never recorded, which is the original bug.
    "completed orders request timed out") — harmless on a fresh account with
    no order history, not a code bug.
 2. ~~Phase 3 paper-trading loop~~ (`paper_trader.py`) — DONE 2026-07-21 and
-   run for real once. Signal: fresh (force-refetched) momentum ranking, top-N
-   of watchlist. Sizing: `qty = floor((NetLiq_usd * risk_pct_per_trade%) /
+   run for real once. Signal: **Kronos forecast ranking, top-N of watchlist**
+   (default since 2026-07-28, rule 8; it was momentum until then, which is why
+   older journal rows and reflections are labelled `momentum`). Sizing: `qty = floor((NetLiq_usd * risk_pct_per_trade%) /
    (2*ATR))`, clamped to `risk_limits.json`'s max order notional using the
    *buffered* entry price (not raw market price — a real bug hit and fixed
    during the first run). Exits cancel the open stop leg and confirm the
@@ -342,8 +371,13 @@ live paper experiment at the owner's explicit, twice-confirmed request, not
 because either signal is validated. See rule 7.
 
 - **Toggle:** `trader_settings.json`'s `"autotrade": {"enabled": bool,
-  "signal": "momentum"|"kronos"}`. Set via `trader_app.py` menu item 8, or
-  edit the JSON directly. Defaults to `enabled: false`.
+  "signal": "kronos", "allow_momentum": false}`. Set via `trader_app.py` menu
+  item 8, or edit the JSON directly. Defaults to `enabled: false`. Per rule 8
+  the only signal that will actually fire is `kronos`; setting `momentum` here
+  makes the runner **refuse to fire and text you**, placing nothing — it never
+  silently swaps in the other signal. `trader_app.py` menu 8 says so at the
+  moment you pick it, rather than letting a setting look applied and quietly
+  do nothing.
 - **Schedule:** `com.tradingbotapp.autotrade.plist`, hourly 16:00-23:00 local
   (this machine runs EEST/EET) — a superset of NYSE 9:30-16:00 ET year-round
   (the two DST regimes keep a constant ~7h gap). `autotrade_runner.py` does

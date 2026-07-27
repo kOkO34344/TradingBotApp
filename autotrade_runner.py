@@ -23,7 +23,13 @@ money must never run this without new evidence overturning that finding.
 
 Toggle + signal selection live in trader_settings.json's "autotrade"
 block, set via trader_app.py's menu (editing the JSON directly works too):
-    "autotrade": {"enabled": false, "signal": "momentum"}
+    "autotrade": {"enabled": false, "signal": "kronos"}
+
+Kronos is the project's main signal (owner decision, 2026-07-28). If the
+configured signal is a disabled one (momentum), this script REFUSES to fire
+— it logs, texts, and places nothing. It never substitutes a different
+signal, because "acted=True" in the log with no record of which signal
+actually chose the position is worse than not trading. See signal_policy.py.
 
 No-op (exits immediately, no journal entry, no Telegram, one line to
 autotrade_runner.log) unless BOTH:
@@ -56,11 +62,13 @@ Usage: normally only invoked by launchd. Safe to run manually to test:
   python3 autotrade_runner.py --force --dry-run   same, but print only, no orders
 """
 import argparse
+import sys
 from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
 import ibkr_service as ibs
+import signal_policy as sp
 import trader_app as ta
 from paper_trader import execute_rebalance
 # autotrade_signals is NOT imported here — it pulls in torch transitively
@@ -112,7 +120,27 @@ def main():
             _log(f"market closed ({now_ny.strftime('%Y-%m-%d %H:%M %Z')}) — no-op")
             return
 
-    signal = autotrade.get("signal", "momentum")
+    signal = sp.resolve_signal(settings)
+    allow_momentum = sp.momentum_opt_in(settings)
+
+    # Refuse to fire on a disabled signal rather than substituting a different
+    # one. Silently trading kronos because momentum was blocked would be the
+    # worst outcome: the log would say "acted", and nobody would know which
+    # signal actually put the position on.
+    try:
+        sp.assert_allowed(signal, allow_momentum, context="autotrade_runner")
+    except sp.SignalDisabled as e:
+        _log(f"REFUSED to fire — configured signal '{signal}' is disabled. No orders placed.")
+        ibs.send_telegram(
+            f"⛔ autotrade did NOT fire\n"
+            f"trader_settings.json's autotrade.signal is '{signal}', which is disabled.\n"
+            f"No orders were placed and no other signal was substituted.\n"
+            f"Set it to '{sp.DEFAULT_SIGNAL}', or add \"allow_momentum\": true if you "
+            f"really want momentum running unattended."
+        )
+        print(e, file=sys.stderr)
+        return
+
     _log(f"autotrade firing — signal={signal}, force={args.force}, dry_run={args.dry_run}")
 
     import autotrade_signals as asig  # lazy — see the import comment at the top of this file
@@ -122,7 +150,8 @@ def main():
             top, data, ranked = asig.compute_live_kronos_hourly(settings)
             signal_label = "kronos-hourly"
         else:
-            top, data, ranked = asig.compute_live_momentum_hourly(settings)
+            top, data, ranked = asig.compute_live_momentum_hourly(
+                settings, allow_momentum=allow_momentum)
             signal_label = "momentum-hourly"
 
         top_n = settings.get("momentum_top_n", 3)

@@ -7,13 +7,19 @@ execute_rebalance() expects, so the exact same sizing/execution path
 works regardless of which signal produced the ranking — same pattern as
 kronos_agent.forecast_signal / paper_trader.compute_signal.
 
+Kronos is the project's main signal (owner decision, 2026-07-28).
+compute_live_momentum_hourly() is DISABLED and raises unless a caller passes
+allow_momentum=True — see signal_policy.py.
+
 IMPORTANT CONTEXT — read before trusting either signal's picks: both were
 screened at this exact cadence in KronosAI/kronos_ic_hourly.py (2026-07-24)
 and showed no measurable edge — momentum-hourly IC -0.037 / 48.5% hit
 rate, Kronos-hourly IC -0.081 / 46.4% hit rate (336 pooled pairs, both
-indistinguishable from noise). This module exists because the owner chose
-to run it live anyway as a deliberate paper-only experiment, not because
-either signal is validated. See CLAUDE.md's empirical findings.
+indistinguishable from noise). Note that makes the ENABLED signal the one
+that screened worse of the two; that is a known, deliberate consequence of
+the focus decision, not an oversight. This module exists because the owner
+chose to run it live anyway as a deliberate paper-only experiment, not
+because either signal is validated. See CLAUDE.md's empirical findings.
 
 `data[t]` returned here is HOURLY OHLCV (capitalized columns, matching
 trader_app.fetch's convention) — NOT daily. ind.atr(data[t]) on this
@@ -30,6 +36,8 @@ import sys
 from pathlib import Path
 
 import pandas as pd
+
+import signal_policy as sp
 
 sys.path.insert(0, str(Path(__file__).parent / "KronosAI"))
 from kronos_ic_hourly import fetch_hourly, kronos_forecast_at, LOOKBACK, PRED_LEN
@@ -49,10 +57,17 @@ def _fetch_all(tickers: list) -> dict:
     return data
 
 
-def compute_live_momentum_hourly(settings: dict):
+def compute_live_momentum_hourly(settings: dict, allow_momentum: bool = False):
     """Trailing LOOKBACK-bar (hourly) return, ranked — the same
     lookback/horizon momentum-style baseline kronos_ic_hourly.py screened
-    (IC -0.037, 48.5% hit rate)."""
+    (IC -0.037, 48.5% hit rate).
+
+    DISABLED unless allow_momentum=True — momentum does not run again until
+    the owner asks for it (2026-07-28). The gate is here, at the computation,
+    not at the caller. See signal_policy.py.
+    """
+    sp.assert_allowed("momentum", allow_momentum,
+                      context="autotrade_signals.compute_live_momentum_hourly")
     top_n = settings.get("momentum_top_n", 3)
     dual = settings.get("risk_engine", False)
     tickers = settings["tickers"]

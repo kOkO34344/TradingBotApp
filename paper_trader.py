@@ -11,17 +11,15 @@ explicit y/n -> execute (exits first, then entries, with ATR-based stops
 sized from RiskGuard's risk budget) -> everything journals to
 trade_journal.csv via ibkr_service.
 
-Signal: momentum rotation (default, top-N of watchlist by trailing N-month
-return — the strategy that's actually earned Phase 3), or Kronos
-(--signal kronos, KronosAI/kronos_agent.py's forecast ranking). Both
-return the same (top, data, ranked) shape, so everything downstream of
-signal selection — sizing, approval, execution, journaling — is identical
-regardless of which produced `top`. Kronos was walk-forward backtested
-2026-07-23 (see CLAUDE.md empirical findings): near-zero information
-coefficient (0.036) and a 50% directional hit rate — no measurable
-forecasting skill detected in the one honest post-cutoff window
-available. It's kept as an opt-in signal for reference/re-testing, not
-because it's shown any edge; momentum stays the default.
+Signal: KRONOS is the default and the project's main signal
+(KronosAI/kronos_agent.py's forecast ranking) — owner decision, 2026-07-28.
+Momentum rotation is DISABLED and will not compute without an explicit
+`--signal momentum --allow-momentum`; see signal_policy.py for the gate and
+for the honest note on what the evidence actually says (momentum is the only
+family that earned Phase 3; Kronos's measured IC is ~0). Both signals return
+the same (top, data, ranked) shape, so everything downstream of signal
+selection — sizing, approval, execution, journaling — is identical regardless
+of which produced `top`.
 
 Sizing: qty = floor((NetLiquidation * risk_pct_per_trade%) / (2*ATR)),
 clamped so qty*price never exceeds RiskGuard's max_order_notional_usd. This
@@ -29,10 +27,12 @@ ties position size to stop distance (2x daily ATR-14), not the other way
 around, per the knowledge base's risk rules.
 
 Usage:
-  python3 paper_trader.py                    full run: momentum signal, propose, ask, execute
-  python3 paper_trader.py --signal kronos    same, but ranked by Kronos's forecast instead
+  python3 paper_trader.py                    full run: Kronos signal, propose, ask, execute
   python3 paper_trader.py --dry-run          connect + compute + print only, no
                                               orders, no approval prompt
+  python3 paper_trader.py --signal momentum --allow-momentum
+                                             momentum, owner opt-in only (refused
+                                             without the second flag)
 """
 
 import argparse
@@ -44,6 +44,7 @@ import pandas as pd
 
 import ibkr_service as ibs
 import indicators as ind
+import signal_policy as sp
 import trader_app as ta
 
 STOP_ATR_MULT = 2.0
@@ -58,10 +59,17 @@ LIVE_DATA_DIR = Path(__file__).parent / "price_data_live"
 LIVE_DATA_DIR.mkdir(exist_ok=True)
 
 
-def compute_signal(settings: dict):
+def compute_signal(settings: dict, allow_momentum: bool = False):
     """Fresh momentum ranking: top-N of watchlist by trailing N-month return.
     Always re-fetches through today (force=True) — ranking off a stale
-    price_data/ cache would drive real paper orders off old prices."""
+    price_data/ cache would drive real paper orders off old prices.
+
+    DISABLED unless allow_momentum=True. Momentum does not run again until the
+    owner asks for it in that session (2026-07-28); the gate lives here rather
+    than at the call sites so no caller can reach the computation by forgetting
+    to check. See signal_policy.py.
+    """
+    sp.assert_allowed("momentum", allow_momentum, context="paper_trader.compute_signal")
     top_n = settings.get("momentum_top_n", 3)
     lookback = settings.get("momentum_lookback_m", 12)
     dual = settings.get("risk_engine", False)
@@ -355,26 +363,41 @@ def main():
         description="Phase 3 paper-trading loop: rule-based rebalance with mandatory human approval.")
     ap.add_argument("--dry-run", action="store_true",
                     help="Connect read-only, compute and print the proposal, place no orders, ask nothing.")
-    ap.add_argument("--signal", choices=["momentum", "kronos"], default="momentum",
-                    help="Ranking source (default: momentum, the validated strategy). "
-                         "kronos = KronosAI/kronos_agent.py's forecast ranking — backtested, no "
-                         "measurable edge found (IC 0.036, 50% hit rate), opt-in only.")
+    ap.add_argument("--signal", choices=list(sp.KNOWN_SIGNALS), default=None,
+                    help=f"Ranking source (default: {sp.DEFAULT_SIGNAL}, the project's main "
+                         "signal). momentum is disabled and additionally requires "
+                         "--allow-momentum.")
+    ap.add_argument("--allow-momentum", action="store_true",
+                    help="Owner opt-in to run the disabled momentum signal in THIS invocation. "
+                         "Do not pass this unless the owner asked for momentum in this session.")
     args = ap.parse_args()
 
     settings = ta.load_settings()
     tickers = settings["tickers"]
     top_n = settings.get("momentum_top_n", 3)
+    signal = sp.resolve_signal(settings, requested=args.signal)
 
-    if args.signal == "kronos":
+    # Check before any fetching or connecting, and report it as a refusal
+    # rather than a traceback — this is an expected answer, not a crash.
+    try:
+        sp.assert_allowed(signal, args.allow_momentum, context="paper_trader")
+    except sp.SignalDisabled as e:
+        print(f"\n{e}\n", file=sys.stderr)
+        return 2
+
+    if signal == "kronos":
         sys.path.insert(0, str(Path(__file__).parent / "KronosAI"))
         import kronos_agent as ka
         print("Computing Kronos forecast signal from fresh data "
-              "(backtested, no measurable edge found — opted in via --signal kronos)...")
+              "(project's main signal; measured IC ~0 — this is a research "
+              "direction, not a validated edge)...")
         top, data, ranked = ka.forecast_signal(settings)
         rank_label = f"predicted {ka.PRED_LEN}-trading-day return"
     else:
-        print("Computing momentum signal from fresh data...")
-        top, data, ranked = compute_signal(settings)
+        # Raises SignalDisabled unless --allow-momentum was passed. Let it
+        # propagate: refusing loudly beats quietly trading a different signal.
+        print("Computing momentum signal from fresh data (owner opt-in)...")
+        top, data, ranked = compute_signal(settings, allow_momentum=args.allow_momentum)
         rank_label = f"trailing {settings.get('momentum_lookback_m', 12)}-mo return"
 
     print(f"\nRanking ({rank_label}):")
@@ -395,11 +418,11 @@ def main():
         acct = ibs.verify_paper_account(ib)
         print(f"Connected. Paper account: {acct}")
         ib.reqMarketDataType(3)  # delayed data — this paper account has no live-data subscription
-        execute_rebalance(ib, settings, top, data, top_n, signal_label=args.signal,
+        execute_rebalance(ib, settings, top, data, top_n, signal_label=signal,
                           auto_approve=False, dry_run=args.dry_run)
     finally:
         ib.disconnect()
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main() or 0)
