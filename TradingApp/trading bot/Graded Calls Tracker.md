@@ -1,14 +1,26 @@
 ---
 tags: [research, grading, tracker, weekly]
 status: "Live — update after running grade_calls.py"
-last_updated: 2026-07-21
+last_updated: 2026-07-28
 ---
 
 # Graded Calls Tracker
 
 Weekly calibration results from `grade_calls.py --csv`. This is the live evidence of whether the research agent is any good.
 
-**Next action:** `python3 grade_calls.py --csv` and fill in the latest row below. Then evaluate.
+**Next action:** `.venv/bin/python grade_calls.py --csv` from **~2026-07-29**,
+then fill in the latest row below.
+
+> [!danger] Any pre-2026-07-28 numbers in this file are void
+> The 4 grades that existed until then came from two **synthetic test
+> notes**, not real calls — see [[Call Grading System]]. The project's real
+> record is: **0 graded, 76 pending, as of 2026-07-28.**
+
+**Read the first real report against the pending book's shape:** 38 notes,
+**74% no-edge** (28/38), 16% long, 11% short, with confidence clustered low
+(18 calls at 3/10, none above 6/10). A mostly-no-edge, low-confidence book is
+cheap to be "right" about under the ±2% flat band — the headline win rate will
+flatter the skill behind it. Judge the long/short calls separately.
 
 ---
 

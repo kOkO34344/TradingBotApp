@@ -1,6 +1,6 @@
 ---
 tags: [trading-bot, project-overview]
-status: "Backtesting done (SMA rejected, momentum rotation is the live candidate). Phase 1 research agent has real output now — 12 notes across the full watchlist — grading due ~2026-07-25 (notes are still too fresh). Phase 3 (paper_trader.py) BUILT and LIVE since 2026-07-21: first real rebalance executed on the paper account (GOOGL/AAPL/JNJ). A DAY-vs-GTC stop-expiry bug was found and fixed the same day."
+status: "Phase 3 live: 4 open paper positions (AAPL/JNJ/DIS/AMZN), all GTC-stopped. Signal is KRONOS as of 2026-07-28; momentum validated but disabled in code. Launch with ./trader_app.sh. Research grading: 0 real graded calls so far, first ones ~2026-07-29."
 source: /Users/kaloyanivanov/TradingBotApp
 last_synced: 2026-07-21
 ---
@@ -47,7 +47,8 @@ A fifth, smaller thing: `trading_agent_service.py` (the third-party TradingAgent
 - **Risk engine:** off by default — togglable (trend filter + 2×ATR trailing stop + fixed % risk per trade)
 - **Momentum rotation:** top 3, 12-month lookback — the strategy with the best evidence so far
 - **Kronos forecast:** new menu item (7) — a foundation-model forecaster, analysis only in the app, unvalidated. See [[Kronos Research Agent]].
-- **IBKR:** port **4002** (IB Gateway paper — switched from TWS's 7497 now that the Gateway connection is the one that's actually verified), client id 9 — read-only in the *app* (`trader_app.py` menu), but `paper_trader.py` (separate script) now executes real orders through this connection, with a choice of signal (`--signal momentum` default, or `--signal kronos`)
+- **Launch with `./trader_app.sh`, NOT `python3 trader_app.py`** (new 2026-07-28). On this machine `python3` is conda base, which has pandas/rich/yfinance/ib_async but **not torch** — so the app starts and backtests fine and only the Kronos menu fails, with `No module named 'torch'` even though torch is installed in `.venv`. A partial environment is a good disguise. The launcher pins `.venv/bin/python`; the app also warns at startup if it's running under the wrong interpreter, and the Kronos import error now distinguishes "wrong interpreter" from "genuinely missing".
+- **IBKR:** port **4002** (IB Gateway paper — switched from TWS's 7497 now that the Gateway connection is the one that's actually verified), client id 9 — read-only in the *app* (`trader_app.py` menu), but `paper_trader.py` (separate script) now executes real orders through this connection. **Signal is Kronos by default** as of 2026-07-28; momentum requires `--signal momentum --allow-momentum` and is otherwise refused.
 
 ## Recommended next steps
 

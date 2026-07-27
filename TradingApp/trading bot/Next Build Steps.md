@@ -1,61 +1,115 @@
 ---
 tags: [roadmap, next-steps, project-management]
 status: "Live — prioritized action queue"
-last_updated: 2026-07-27
+last_updated: 2026-07-28
 ---
 
 # Next Build Steps — Prioritized Action Queue
 
 This is the **exact sequence of work** that makes sense given where the project stands right now. Updated 2026-07-21: **Phase 3 is built and live** — `paper_trader.py` exists and already executed a real rebalance on the paper account. This file previously assumed Phase 3 hadn't started; that's no longer true. Tiers below are reordered to match.
 
-## Tier 0: BLOCKER — fix before any further trading (added 2026-07-27)
+## Tier 0: Open risks — do these before unattended autotrade (rewritten 2026-07-28)
 
-### 0.1: Clear the Gateway Order Preset forcing DAY TIF
+The 2026-07-27 blockers are **both closed**. What replaced them are three
+failure modes that are now *visible* rather than silent, but not yet *fixed*.
+Full plan with effort estimates lives in `Handoff.md` at the repo root.
 
-**Every bracket order is currently cancelled on arrival.** IBKR error
-**10349** — "Order TIF was set to DAY based on order preset" — the preset
-overrides the explicit `tif="GTC"` on bracket legs and IBKR cancels rather
-than accepts. On 2026-07-27 this killed all three entries of an approved
-Kronos rebalance; the account simply held instead of rotating.
+### 0.1 ✅ CLOSED — the "Gateway Order Preset" was our own bug
 
-**Fix:** IB Gateway → **Global Configuration → Presets** → clear the DAY TIF
-override for stocks.
+IBKR error **10349** was never a Gateway config problem and never cancelled
+anything. `place_bracket_order` built the parent `LimitOrder` with no explicit
+`tif`; the Order Preset filled in the blank with DAY and announced it. Proved
+by direct probe 2026-07-28 (1-share KO bracket at 50% below market,
+unfillable, cancelled immediately): the error's `reqId` is always the
+**parent's**, the stop leg always kept `tif="GTC"` at IBKR, and both legs
+stayed `PreSubmitted` — a warning, not a rejection. Fixed by setting
+`tif="DAY"` on the parent. Re-probe: no 10349 at all.
+**Do not reopen this as a Gateway issue.** See [[IBKR Integration]].
 
-**Then verify before trusting a full rotation:** place one small bracket entry
-and confirm it reaches `PreSubmitted`/`Filled` with `order.tif == "GTC"`,
-rather than `Cancelled`. This is Gateway-side config — nothing in the codebase
-can detect or work around it, and it will silently break every autotrade
-firing too.
+### 0.2: Gateway goes unresponsive and the close monitor dies silently
 
-### 0.2: Restart IB Gateway if API connections hang
+`reflect_on_trades.main()` calls `ibs.connect()` **outside any try/except**, so
+a refused connection kills the script. The `.sh` wrapper logs a traceback and
+exits 0 — **no Telegram**. The monitor that exists to catch unattended
+stop-outs was already dead for most of 07-26 and 07-27, and looked exactly
+like a quiet market.
 
-Seen 2026-07-27: Gateway kept the port open but stopped answering new API
-connections; read-only position checks hung indefinitely. Kill stray python
-processes still holding connections, then restart Gateway.
+**Fix:** consecutive-failure counter in a small state file; text on the 2nd
+consecutive failure (one blip is a sleeping laptop, two at 30-min spacing is a
+dead monitor), silence until recovery, then text the recovery. Distinguish
+"port closed" from "socket accepted but never answered" — they need different
+responses from the human. Surface last-successful-contact in the daily digest.
+
+**Do NOT** auto-restart Gateway from a script: it holds the broker session,
+and a restart loop fighting a hung process leaves orders in an unknown state.
+
+### 0.3: A rebalance can half-execute and nothing says so
+
+`execute_rebalance` runs exits first, then entries (to free
+`max_open_positions` headroom). Entries are DAY limits at `price * 1.005`. If
+price runs away, the exits happened, the entries didn't, and you hold
+unintended cash with **no alert**. That is a worse portfolio than either doing
+nothing or doing everything — and it is exactly the shape of 07-27.
+
+**Fix:** record the intended target state on approval
+(`rebalance_intent.json`), reconcile against actual IBKR positions after the
+close, journal `REBALANCE_INCOMPLETE` and text naming the specific legs that
+missed. The policy for a missed entry (leave in cash / retry next session /
+widen the buffer) is **Koko's call** — do not auto-widen into a market order,
+which trades a visible miss for invisible slippage.
+
+### 0.4: Kronos's top-3 flips on a rank-3/4 tie
+
+Two `--dry-run` calls 30 minutes apart on identical closed-market data gave
+`[AMZN, MSFT, GOOGL]` then `[AMZN, MSFT, DIS]` — ~$50k of trades decided by
+which sampling draw you happened to run. **Measure before patching**: 20 runs
+on frozen data to get the actual sampling SD, then consider rotation
+hysteresis — and treat that as the strategy change it is, with a real
+backtest, per rule 4. Interim rule needing no code: if rank 3 and 4 are within
+~1 point, re-run once and only rotate on names present in both draws.
+
+**Gate:** do not enable unattended autotrade until 0.2 and 0.3 are done. The
+premise of unattended trading is that failures get noticed without a human
+watching.
 
 ---
 
 ## Tier 1: Not due yet — don't run early
 
-### 1.1: `grade_calls.py` — wait for notes to age
+### 1.1: `grade_calls.py` — first real grades ~2026-07-29
 
 ```bash
 cd /Users/kaloyanivanov/TradingBotApp
-python3 grade_calls.py
+.venv/bin/python grade_calls.py --csv
 ```
 
-**Why it's still not urgent:** Re-run 2026-07-25 (14 notes' worth of watchlist,
-38 total, refreshed the same day) — still 0/76 graded, exactly as expected.
-The 5-day horizon is **5 *trading* days**, not calendar days: the oldest
-notes (07-20/21) only reach 5 trading days old around **2026-07-30**, three
-days later than the original ~07-25 estimate, which conflated the two.
+**The project has ZERO real graded calls, and never had any.** Run
+2026-07-28: 0 graded, 76 pending — verified genuine against the underlying
+yfinance data, not just trusted. The 4 grades `graded_calls.csv` carried until
+then came from two **synthetic test notes** (`AAPL_2026-05-15`,
+`MSFT_2026-06-01`, each literally headed "SYNTHETIC TEST NOTE — not a real
+call") deleted in `bdee3c8`. The CSV kept their grades and `daily_digest.py`
+reported "4 graded, 0 pending" every morning — fabricated evidence in the one
+file that gates autonomy. Overwritten now.
 
-**What to do once it IS due (~2026-07-30+):**
+**Measured timing** (`forward_return()` needs `days + 1` bars, so 5d wants
+**6** sessions, not 5; and 2026-07-24 has no bar for any ticker):
+
+| Notes | 5d grades | 21d grades |
+|---|---|---|
+| 07-20 (1) | needs 1 more session | needs 17 more |
+| 07-21 (11) | needs 2 more sessions | needs 18 more |
+| 07-23 (12) | needs 4 more sessions | needs 20 more |
+| 07-25 (14) | needs 5 more sessions | needs 21 more |
+
+**What to do once grades exist (~2026-07-29+):**
 - Copy the calibration report into [[Graded Calls Tracker]]
-- If high-conf > 65%, that's a good sign for the research agent specifically (doesn't gate paper trading, which is already running)
-- If high-conf < 55%, revisit the agent prompt
+- Read it against the pending book's shape: **74% no-edge, confidence
+  clustered at 3-5/10**. A mostly-no-edge, low-confidence book is cheap to be
+  "right" about under the ±2% flat band — the win rate will flatter the skill.
+- Treat any report claiming grades from notes not in `research_log/` as corrupt
 
-**Frequency:** Weekly from ~2026-07-30 onward.
+**Frequency:** Weekly from ~2026-07-29 onward.
 
 ---
 

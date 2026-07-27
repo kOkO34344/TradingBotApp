@@ -1,23 +1,45 @@
 ---
 tags: [autotrade, risk, experimental, execution]
 source: autotrade_runner.py
-status: "ARMED — enabled=true, signal=kronos, as of 2026-07-25"
-last_updated: 2026-07-25
+status: "OFF — enabled=false, signal=kronos. Gated on two fixes before re-arming (2026-07-28)"
+last_updated: 2026-07-28
 ---
 
 # Autotrade (Experimental)
 
-## ⚠️ Current state: ARMED
+## ⚠️ Current state: OFF — and should stay off for now
 
-As of 2026-07-25, `trader_settings.json`'s `autotrade` block reads
-`{"enabled": true, "signal": "kronos"}` — the owner flipped this on. First
-live firing is the next NYSE market open. Two things worth knowing before
-that:
+`trader_settings.json`'s `autotrade` block reads
+`{"enabled": false, "signal": "kronos", "allow_momentum": false}`. It was
+armed on 2026-07-25 and has since been turned off. Three things before
+re-arming:
 
-1. **The traded universe grew the same day** (watchlist is now 14 tickers,
-   see [[Watchlist Context]]) — the momentum/Kronos hourly IC screen below
-   was measured against the original set, not this one.
-2. **The $300 daily-loss circuit breaker won't necessarily catch a bad
+**1. Two failure modes are still silent, and unattended trading assumes they
+aren't.** From `Handoff.md` (repo root), both must be fixed first:
+- `reflect_on_trades.py` calls `connect()` outside any try/except, so a
+  refused connection kills the close monitor with **no Telegram**. It was
+  already dead for most of 07-26 and 07-27 and looked like a quiet market.
+- A rebalance can half-execute — exits run before entries, and an unfilled
+  DAY entry limit leaves you in unintended cash with no alert. That is worse
+  than doing nothing *or* doing everything.
+
+**2. The signal is gated in code now** (2026-07-28, see
+[[Strategy Decisions - Momentum Rotation]]). Kronos is the project's only
+runnable signal; momentum raises `SignalDisabled` unless a caller passes
+`allow_momentum=True`. **If `autotrade.signal` is ever set to a disabled
+signal, the runner REFUSES to fire** — it logs, texts, and places nothing. It
+never substitutes the other signal, because `acted=True` in the log with no
+record of which signal chose the position is worse than not trading.
+
+**3. Kronos's top-3 is not stable.** Two runs 30 minutes apart on identical
+data produced different top-3s (`[AMZN, MSFT, GOOGL]` vs `[AMZN, MSFT, DIS]`)
+— on an hourly cadence that is turnover paid for pure sampling noise, against
+a signal with no measured edge. See [[Kronos Research Agent]].
+
+**4. The traded universe grew** (14 tickers, see [[Watchlist Context]]) — the
+hourly IC screen below was measured against the original set, not this one.
+
+5. **The $300 daily-loss circuit breaker won't necessarily catch a bad
    stop-out** — it only evaluates when an order is about to be placed, not
    continuously. See [[Risk Management System]]'s 2026-07-25 update.
 

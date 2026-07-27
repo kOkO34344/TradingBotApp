@@ -1,6 +1,6 @@
 ---
 tags: [strategy, validated, backtest, momentum]
-status: "live candidate for Phase 3"
+status: "VALIDATED but DISABLED in code — owner decision 2026-07-28"
 decision_date: 2026-07-18
 source: strategy_shootout.py, trader_app.py (menu option 5)
 ---
@@ -9,7 +9,29 @@ source: strategy_shootout.py, trader_app.py (menu option 5)
 
 ## Executive Summary
 
-**Status:** ✅ **VALIDATED** — only strategy family that competed with SPY on out-of-sample data (2019–present). Currently the live candidate for Phase 3 paper trading.
+**Status:** ✅ **VALIDATED** — only strategy family that competed with SPY on out-of-sample data (2019–present). **But it is DISABLED and will not run.**
+
+> [!warning] Disabled by owner instruction, 2026-07-28
+> Momentum does not run again until Koko explicitly asks for it in that
+> session. Kronos is the project's main signal. Enforced in code by
+> `signal_policy.py`, not by convention: `paper_trader.compute_signal()` and
+> `autotrade_signals.compute_live_momentum_hourly()` raise `SignalDisabled`
+> unless a caller passes `allow_momentum=True`, and every
+> `.get("signal", ...)` fallback now resolves to `kronos` so config drift
+> can't resurrect it. Same deliberate opt-in shape as `allow_live=True`.
+>
+> **This runs against the project's own evidence, deliberately and with the
+> owner's knowledge — record it that way, don't rationalize it.** Momentum
+> is still the only family that ever earned Phase 3; Kronos measured
+> Spearman IC 0.036 / 50.0% daily and IC -0.081 / 46.4% hourly, i.e. the
+> *enabled* signal scored worse than the disabled one on the only
+> head-to-head screen. Kronos as the focus is a research direction, not a
+> validated edge.
+>
+> To re-enable: `paper_trader.py --signal momentum --allow-momentum`.
+> Backtest/research scripts (`strategy_shootout.py`,
+> `broad_universe_momentum.py`) are deliberately **not** gated — they place
+> no orders, and gating evidence-generation would defeat rule 4.
 
 **Key metric:** **16.6% CAGR**, max drawdown **-21.6%** (SPY: 17.3% CAGR, -33.7% DD). Beat 10/10 tickers' buy-and-hold on average. Sharpe **0.87** (SPY: 0.92).
 

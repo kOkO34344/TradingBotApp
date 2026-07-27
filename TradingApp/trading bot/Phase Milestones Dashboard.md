@@ -1,7 +1,7 @@
 ---
 tags: [project-management, phases, roadmap]
-status: "Phase 3 BLOCKED — Gateway Order Preset cancels all bracket orders"
-last_updated: 2026-07-27
+status: "Phase 3 ACTIVE — 4 positions, all GTC-stopped; the 10349 'blocker' was our own bug and is fixed"
+last_updated: 2026-07-28
 ---
 
 # Phase Milestones Dashboard
@@ -81,31 +81,49 @@ This is the quick-reference status of each phase. Detailed rationale lives in [[
 
 **Open items (not blockers, just not yet done):**
 1. Momentum rotation hasn't had portfolio-level walk-forward validation — worth doing, doesn't block continued paper trading
-2. Phase 1 grading will start once notes age enough (~2026-07-25+) — informs confidence in the *research* agent, doesn't gate the *trading* loop (which is rules-based, not agent-based)
+2. Phase 1 grading has produced **zero real graded calls so far** — the 4 that `graded_calls.csv` carried until 2026-07-28 came from deleted *synthetic test notes*. First genuine 5d grades land ~2026-07-29. See [[Call Grading System]].
 
-**🔴 BLOCKED as of 2026-07-27 — no order can currently execute.** A Kronos
-rebalance was approved and placed **zero trades**; the account held instead of
-rotating. Two unrelated causes, one fixed and one still open:
+**✅ UNBLOCKED 2026-07-28.** The 07-27 "blocker" was two problems, and the
+scarier-looking one turned out not to exist:
 
-1. ✅ **Fixed same day** — RiskGuard's notional cap applied to *exits* as well
-   as entries, so both AAPL and JNJ (bought under the then-$5,000 cap,
+1. ✅ **Fixed 07-27** — RiskGuard's notional cap applied to *exits* as well as
+   entries, so both AAPL and JNJ (bought under the then-$5,000 cap,
    appreciated past it to ~$5,007/$5,005) were **un-exitable**. A limit that
    blocks a close raises risk. Both the cap and the daily-loss breaker are now
    gated on `opening`. Limits also rescaled to 50000/2000/8. See
    [[Risk Management System]].
-2. 🔴 **STILL OPEN** — IBKR error **10349**, "Order TIF was set to DAY based on
-   order preset": a Gateway Order Preset overrides the explicit GTC on bracket
-   legs, so IBKR **cancels every bracket entry**. Gateway-side config, not
-   code. Fix in Global Configuration → Presets. This breaks autotrade firings
-   too. See [[Next Build Steps]] Tier 0.
+2. ✅ **Fixed 07-28, and it was never a Gateway problem.** IBKR error **10349**
+   was blamed on an Order Preset needing a GUI fix. Direct probe against the
+   paper account disproved that: our own `place_bracket_order` built the
+   parent `LimitOrder` with **no `tif` at all**, the preset filled in the
+   blank with DAY, and *announced* it. The error's `reqId` is always the
+   parent's; the stop leg always carried explicit `tif="GTC"` and IBKR held it
+   as GTC throughout. It is a **warning, not a rejection** — both legs stayed
+   `PreSubmitted`. Setting `tif="DAY"` on the parent removes it entirely.
+   **No Gateway change is or was needed.** See [[IBKR Integration]].
 
-Holdings re-verified directly against IBKR 2026-07-27: **AAPL 15 @ 328.04**
-and **JNJ 19 @ 249.98**, both with live GTC stops (309.10 / 237.61).
+**The account was never what the record said.** The 07-27 rebalance did not
+place zero trades — **AMZN 21 @ 232.73 and DIS 52 @ 95.39 filled**, and only
+MSFT missed. The journal recorded all three as `Cancelled` because
+`place_bracket_order` snapshotted the parent's status one second after
+submission and never looked again. The account ran two positions ahead of
+every record for a full day.
 
-**Next action:** clear the Order Preset (Tier 0 in [[Next Build Steps]]),
-verify one small bracket entry actually reaches `PreSubmitted` with
-`tif="GTC"`, *then* resume monthly rebalances and let evidence accumulate
-toward the 2-3 month exit criteria.
+Holdings verified directly against IBKR 2026-07-28 — **four positions, each
+with a live full-quantity GTC stop**:
+
+| Symbol | Qty | Avg cost | Stop |
+|---|---|---|---|
+| AAPL | 15 | 328.04 | 309.10 |
+| JNJ | 19 | 249.98 | 237.61 |
+| DIS | 52 | 95.39 | 90.83 |
+| AMZN | 21 | 232.73 | 217.74 |
+
+**Next action:** supervised Kronos rebalance at the next open (16:30 local /
+09:30 ET), human-approved, then let evidence accumulate toward the 2-3 month
+exit criteria. Three risks remain open and are planned in `Handoff.md` — a
+silently-dying close monitor, Kronos's unstable top-3, and half-completed
+rebalances. **Unattended autotrade stays off until the first two are done.**
 
 ---
 

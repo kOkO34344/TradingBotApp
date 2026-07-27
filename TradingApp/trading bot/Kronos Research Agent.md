@@ -1,11 +1,43 @@
 ---
 tags: [research, kronos, agent, workflow]
 source: KronosAI/kronos_agent.py
-status: "Integrated, backtested — no measurable edge found"
-last_updated: 2026-07-27
+status: "THE project signal (owner decision 2026-07-28) — still no measured edge"
+last_updated: 2026-07-28
 ---
 
 # Kronos Research Agent
+
+> [!important] Kronos is now the project's main signal (2026-07-28)
+> Owner decision. It is the default everywhere — `paper_trader.py` with no
+> flags, `trader_app.py` menu 7, and `autotrade_runner.py`. Momentum is gated
+> off (see [[Strategy Decisions - Momentum Rotation]]).
+>
+> **Nothing below has changed about the evidence.** Kronos still shows no
+> measurable forecasting skill in the only honest post-cutoff window
+> available, and it scored *worse* than the momentum baseline on the hourly
+> IC screen. Being the focus is a research direction, not a result.
+
+> [!warning] The top-3 is NOT stable — corrected 2026-07-28
+> A previous note here claimed sampling noise leaves top-N rotation
+> unaffected. That was wrong. Two `paper_trader.py --dry-run` runs ~30
+> minutes apart, **identical closed-market data**, same `sample_count`,
+> produced different top-3s: `[AMZN, MSFT, GOOGL]` then `[AMZN, MSFT, DIS]`.
+> GOOGL and DIS sit ~1 point apart and simply swapped ranks 3/4; 6 of 14
+> tickers changed rank.
+>
+> The consequence is not cosmetic: run 1 proposed BUY MSFT + BUY GOOGL
+> (~$50k) and SELL DIS; run 2 proposed BUY MSFT only and HOLD DIS. **Which
+> trades get placed depends on which sampling draw you happened to run.**
+> Top-N is only stable when the rank-N/N+1 gap is wide relative to the
+> sampling spread; near a cluster it is a coin flip.
+>
+> **Interim rule (no code needed):** before approving a Kronos rebalance,
+> check the gap between rank N and N+1. If it's ~1 point or less, re-run once
+> and only rotate on names present in both draws.
+>
+> **Proper fix:** measure the sampling SD across ~20 runs on frozen data
+> first, then consider rotation hysteresis — and treat that as the strategy
+> change it is, with an honest backtest. Plan in `Handoff.md`.
 
 ## What it is
 

@@ -2,7 +2,7 @@
 tags: [risk, execution, infrastructure]
 status: "live in code"
 source: ibkr_service.py
-last_updated: 2026-07-27
+last_updated: 2026-07-28
 ---
 
 # Risk Management System
@@ -198,9 +198,18 @@ timestamp,event,symbol,sec_type,action,quantity,price,stop,target,status,detail
 2026-07-21T15:15:20,BLOCKED,MSFT,STK,BUY,100,380.25,,,,blocked,notional $38025 exceeds limit $5000
 ```
 
-Events: `SUBMIT`, `RESULT`, `BLOCKED`
+Events: `SUBMIT`, `RESULT`, `BLOCKED`, `UNPROTECTED`, `CLOSE_FILLED`,
+`CLOSE_DETECTED`, `CLOSE_RECONSTRUCTED`, `RESULT_CORRECTED`, `NOTE`
 
 This journal is **not reconstructed from IBKR's logs** — it's written by the bot before and after every order attempt, so there's a single source of truth for what the bot tried to do and why.
+
+> [!warning] "Single source of truth" is an aspiration the journal has twice failed
+> It has described a non-existent account twice: phantom `CLOSE_DETECTED`
+> rows on 07-25 for two positions that were open the whole time, and
+> `Cancelled` rows on 07-27 for two orders that actually filled. Both are
+> now annotated in place with `NOTE` / `RESULT_CORRECTED` rows rather than
+> rewritten. **Verify against IBKR before trusting the journal**, and prefer
+> `RESULT_CORRECTED` over any original `RESULT` dated before 2026-07-28.
 
 ## Decision Philosophy
 
@@ -210,6 +219,32 @@ This journal is **not reconstructed from IBKR's logs** — it's written by the b
 - **5 positions:** Matches the original plan's constraint. Prevents accidental over-concentration. Diversifies away idiosyncratic risk.
 - **$300 daily loss:** On a $10k account, 3% of equity per day. Brutal enough to force the bot out before catastrophic blowup, loose enough to avoid whipsawing in/out on noise. Calibrate this once paper trading produces evidence.
 - **Stop required:** Non-negotiable. Any position without a stop is a position bet on "being right" rather than "managing risk." Prevents the classic "but I'm sure AAPL will bounce" trap.
+
+## Layer 3: Post-fill protection verification (added 2026-07-28)
+
+RiskGuard is a **pre-trade** gate: it decides whether an order may be sent. It
+cannot tell you what happened afterwards. Rule 2 ("no order without a stop")
+was therefore enforced only at the moment of *submission* — a bracket whose
+parent filled while its stop leg died left naked exposure that nothing
+detected.
+
+`place_bracket_order` now, on every fill:
+
+1. Waits for a **terminal** parent status via `wait_for_status()` (it used to
+   snapshot the status after a flat `ib.sleep(1)`, which is how two filled
+   orders got journalled as `Cancelled`).
+2. Re-requests open orders from IBKR and confirms a stop covering the **full
+   filled quantity** with `tif == "GTC"`. A DAY stop counts as **no**
+   protection, deliberately — that is the 2026-07-21 overnight-expiry failure.
+3. If protection is missing, journals `UNPROTECTED` and **texts immediately**.
+
+It does **not** auto-place a replacement stop. Silent remediation would hide
+how often this happens; a human decides.
+
+It also captures IBKR's own error text (`OrderErrorCollector`) into the
+`RESULT` row, so a cancellation explains itself instead of being a bare
+`Cancelled` that costs a day of guessing — which is exactly what happened
+with error 10349 on 07-27.
 
 ## Bypass Mechanisms
 
@@ -225,15 +260,20 @@ The guard is **not a substitute** for human judgment or agent reasoning — it's
 
 ## Testing
 
-`ibkr_service.py --selftest` runs 18 offline checks:
+`ibkr_service.py --selftest` runs **31** offline checks (2026-07-28):
 
 - Contract builders (stock, forex, futures, crypto)
 - Data-type routing (MIDPOINT for forex, AGGTRADES for crypto, TRADES for equities)
 - RiskGuard logic (allows sane, blocks oversized, blocks stopless, blocks at max positions)
 - Journal roundtrip (writes, reads, parses correctly)
 - Bracket order validation (stops are on the right side of entries)
+- Stop-protection predicate (full GTC cover passes; no stop, DAY stop, partial
+  cover, cancelled and inactive stops all fail; plus the exact error-10349
+  shape of a cancelled GTC leg alongside a surviving DAY one)
+- IBKR error capture (keeps order errors, drops routine chatter, ignores other
+  orders' reqIds, dedupes, stays a single journal-safe line, unsubscribes)
 
-All pass as delivered. The connected smoke test (`python3 ibkr_service.py` with TWS/Gateway running) verifies the IBKR connection but **places no orders**.
+All pass as of 2026-07-28. The connected smoke test (`python3 ibkr_service.py` with TWS/Gateway running) verifies the IBKR connection but **places no orders**.
 
 ## Related Notes
 

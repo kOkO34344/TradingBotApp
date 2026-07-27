@@ -10,7 +10,36 @@ source: grade_calls.py
 
 The research agent (`research_agent.py`) produces 12 research notes per cycle. The agent's actual track record — not enthusiasm, not plausibility — is measured by grading those notes against what price actually does afterward.
 
-**Grading is not due yet, correctly.** The 12 real notes exist in `research_log/` (written 2026-07-20/21), but the earliest is only ~1 day old as of 2026-07-21 — short of even the 5-day forward-return horizon. `grade_calls.py --csv` hasn't been run against them, and running it now would just show everything "pending." Start running it weekly once notes are ≥5 days old (~2026-07-25+). Until then, there's a qualitative spot-check (reasoning looks grounded, no invented levels) but no calibration evidence yet — that's expected at this stage, not a gap to rush.
+> [!danger] The only 4 "graded calls" this project ever had were FAKE
+> Found 2026-07-28. `graded_calls.csv` carried 4 grades from two notes,
+> `AAPL_2026-05-15` and `MSFT_2026-06-01`. Both were **synthetic test notes**
+> — each file was one line: *"SYNTHETIC TEST NOTE — not a real call. Safe to
+> delete this file."* They were deleted in commit `bdee3c8` when real
+> research runs started, but the CSV kept their grades, and
+> `daily_digest.py` read that file and reported **"4 graded, 0 pending"**
+> every morning for days. Fabricated calibration evidence, presented as a
+> track record, in the one file that gates autonomy under rule 5.
+>
+> Overwritten by a real `--csv` run. **The project has zero real graded
+> calls and never had any.** Don't put synthetic notes in `research_log/`;
+> if you need them for testing, write them to a temp dir. Treat any report
+> claiming grades from notes not present in `research_log/` as corrupt.
+
+**Status 2026-07-28: 38 notes, 0 graded, 76 pending** — verified genuine
+against the underlying yfinance data, not merely trusted. `forward_return()`
+needs `days + 1` bars, so the 5d horizon wants **6** sessions from the note
+date, not 5. (Also note 2026-07-24 has no bar for any ticker — trading-day
+math over this window is off by one if you assume a normal week.)
+
+| Notes | 5d grades | 21d grades |
+|---|---|---|
+| 07-20 (1) | needs 1 more session | needs 17 more |
+| 07-21 (11) | needs 2 more sessions | needs 18 more |
+| 07-23 (12) | needs 4 more sessions | needs 20 more |
+| 07-25 (14) | needs 5 more sessions | needs 21 more |
+
+First real 5d grades land **~2026-07-29**, the bulk early August, nothing at
+21d until late August.
 
 ## How It Works
 

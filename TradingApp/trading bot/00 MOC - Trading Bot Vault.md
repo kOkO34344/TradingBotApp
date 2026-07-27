@@ -1,7 +1,7 @@
 ---
 tags: [moc, index]
 status: "Live"
-last_updated: 2026-07-25
+last_updated: 2026-07-28
 ---
 
 # Trading Bot — Map of Contents
@@ -19,12 +19,12 @@ This is the central index for the Trading Bot project. The codebase lives at `/U
 | **Phase 4** (tiny live)      | ⏸ Later                             | After 2–3 months of paper evidence                                                                                                 |
 
 **Most urgent right now:**
-1. **Nothing is overdue.** Grading isn't meaningful until notes age ≥5 *trading* days (~2026-07-30) — don't run `grade_calls.py` early just to have run it (it was re-run 2026-07-25: still 0/76 graded, as expected).
-2. Periodically check the live paper positions (AAPL/JNJ) are healthy — stops present **and GTC**. This is now partly automated: `reflect_on_trades.py` gained a second detection tier 2026-07-25 (position-snapshot diff) specifically because its execution-based tier silently missed the GOOGL close below — see [[Risk Management System]]. Still worth an eyeball check periodically, not just trusting the automation.
+1. **Run `grade_calls.py --csv` from ~2026-07-29** — the first real grades land then (measured, not estimated). Note the project has **zero real graded calls**: the 4 that existed until 2026-07-28 came from deleted *synthetic test notes* and were being reported daily as a track record. See [[Call Grading System]].
+2. Periodically check the live paper positions (**AAPL 15, JNJ 19, DIS 52, AMZN 21** as of 2026-07-28 — four, not two) are healthy — stops present **and GTC**. `place_bracket_order` now verifies this itself on every fill and texts `UNPROTECTED` if a stop didn't survive. This is now partly automated: `reflect_on_trades.py` gained a second detection tier 2026-07-25 (position-snapshot diff) specifically because its execution-based tier silently missed the GOOGL close below — see [[Risk Management System]]. Still worth an eyeball check periodically, not just trusting the automation.
 3. Next watchlist research re-run due ~2026-08-01 (weekly cadence, now `run_research_agent_watchlist.py`, supports `--group`); next `paper_trader.py` rebalance whenever the owner runs it (monthly, manual, no scheduler yet).
 4. Momentum rotation still hasn't had portfolio-level walk-forward validation — worth doing, not currently blocking anything.
-5. **2026-07-23:** Kronos (foundation-model forecaster) is integrated and now backtested — see [[Kronos Research Agent]]. Result: **no measurable forecasting skill found** (Spearman IC 0.036, 50% hit rate, in the one honest post-cutoff window its own training data allows). Stays wired in as opt-in only (`trader_app.py` menu item 7, `paper_trader.py --signal kronos`); momentum stays the default and the only validated signal.
-6. **2026-07-24:** Unattended "autotrade" toggle built — see [[Autotrade (Experimental)]]. An hourly IC screen showed no edge for EITHER candidate signal (momentum-hourly IC -0.037, Kronos-hourly IC -0.081, both ~coin-flip hit rates) but it was built anyway per explicit owner request, as a deliberate live paper experiment. **Currently ON, signal=kronos** as of 2026-07-25 — the owner armed it; first live firing is the next NYSE market open. RiskGuard is unaffected, but see #7 below for a real limit on what it actually protects against.
+5. **2026-07-23:** Kronos (foundation-model forecaster) is integrated and now backtested — see [[Kronos Research Agent]]. Result: **no measurable forecasting skill found** (Spearman IC 0.036, 50% hit rate, in the one honest post-cutoff window its own training data allows). **As of 2026-07-28 Kronos is the project's MAIN signal (owner decision) and momentum is disabled in code** — see [[Strategy Decisions - Momentum Rotation]] and `signal_policy.py`. The evidence has not changed: Kronos still shows no measurable skill, and scored worse than momentum on the only head-to-head screen. Being the focus is a research direction, not a result.
+6. **2026-07-24:** Unattended "autotrade" toggle built — see [[Autotrade (Experimental)]]. An hourly IC screen showed no edge for EITHER candidate signal (momentum-hourly IC -0.037, Kronos-hourly IC -0.081, both ~coin-flip hit rates) but it was built anyway per explicit owner request, as a deliberate live paper experiment. **Currently OFF** as of 2026-07-28, gated on two silent-failure fixes before re-arming (see [[Autotrade (Experimental)]] and `Handoff.md`). RiskGuard is unaffected, but see #7 below for a real limit on what it actually protects against.
 7. **New 2026-07-25:** Watchlist is now named groups (`trader_app.py` menu 9) with validated symbols, not a raw comma-separated string — see [[Watchlist Context]]. Also: the $300 daily-loss circuit breaker is a **pre-trade gate, not a monitor** — it reads IBKR's live `RealizedPnL` only when an order is about to be placed, so it did nothing for GOOGL's stop firing on its own. Worth knowing before treating autotrade as automatically loss-capped.
 
 ## The Vault by topic
