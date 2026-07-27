@@ -38,6 +38,7 @@ Usage:
 import argparse
 import sys
 from datetime import datetime, timedelta
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 import pandas as pd
@@ -406,6 +407,20 @@ def main():
         print(f"  {t:6s} {ranked[t] * 100:+7.2f}%{marker}")
     if not top:
         print("\nAll candidates ranked negative (dual filter) — target is 100% cash.")
+
+    # A rebalance placed into a closed market doesn't fail cleanly: the bracket
+    # sits unfilled, wait_for_status times out on a non-terminal status, and the
+    # journal records something ambiguous. Warn and make the human confirm —
+    # not a hard block, since queueing deliberately is a legitimate choice.
+    if not args.dry_run and not ibs.market_is_open():
+        now_ny = datetime.now(ZoneInfo("America/New_York"))
+        print(f"\n*** MARKET IS CLOSED — {now_ny:%Y-%m-%d %H:%M %Z (%A)}. "
+              f"NYSE trades 09:30-16:00 ET on weekdays. ***")
+        print("Orders placed now will sit unfilled until the next session, and "
+              "entry limits priced off today's close may be stale by then.")
+        if input("Place orders anyway? [y/N]: ").strip().lower() != "y":
+            print("Aborted — nothing placed.")
+            return 0
 
     port = settings.get("ibkr_port", 4002)
     print(f"\nConnecting to IBKR paper on port {port}"

@@ -155,10 +155,24 @@ after testing it properly.
   cadences two days apart — that is nowhere near enough.** Proper test:
   compute the rank correlation across the ~24 rebalance dates
   `kronos_backtest.py` already covers.
-- **Kronos per-ticker output is noisier than `sample_count=10` suggests.**
-  Three consecutive runs on identical data put GOOGL at +2.69% / -3.72% /
-  +4.38% — an 8-point spread. Top-3 was stable across all three, so top-N
-  rotation is unaffected, but no individual number should be read alone.
+- **Kronos per-ticker output is noisier than `sample_count=10` suggests, and
+  the noise DOES reach top-N membership.** Three consecutive runs on identical
+  data put GOOGL at +2.69% / -3.72% / +4.38% — an 8-point spread.
+  **Correction 2026-07-28: the earlier claim here that "top-3 was stable, so
+  top-N rotation is unaffected" is wrong.** Two `paper_trader.py --dry-run`
+  runs ~30 minutes apart, same closed-market data, same `sample_count`,
+  produced different top-3s:
+  `[AMZN, MSFT, GOOGL]` then `[AMZN, MSFT, DIS]`. GOOGL and DIS are separated
+  by ~1 point of predicted return and simply swapped ranks 3/4 (GOOGL +1.71 →
+  +0.89, DIS +1.59 → +2.26). 6 of 14 tickers changed rank between the two runs.
+  The consequence is not cosmetic: run 1 proposed BUY MSFT + BUY GOOGL (~$50k)
+  and SELL DIS; run 2 proposed BUY MSFT only and HOLD DIS. **Which trades get
+  placed depends on which sampling draw you happened to run.** Top-N is only
+  stable when the N/N+1 boundary gap is wide relative to the sampling spread,
+  and near a cluster it is a coin flip. Before approving a Kronos rebalance,
+  check the gap between rank N and N+1; if it's ~1 point, re-run and see
+  whether the same names come back. Proper fix would be averaging more
+  samples, or requiring a margin before rotating.
 
 ## Current phase status
 

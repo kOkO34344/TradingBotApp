@@ -30,6 +30,7 @@ import csv
 import json
 import sys
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from pathlib import Path
 
 from ib_async import (IB, Stock, Forex, Future, Crypto,
@@ -304,6 +305,27 @@ def daily_realized_pnl(ib: IB):
 
 
 # ---------------------------------------------------------------- execution
+
+def market_is_open(now_ny=None) -> bool:
+    """Weekday + 9:30-16:00 America/New_York.
+
+    Authoritative in NY time via zoneinfo, never host time — this machine runs
+    EEST/EET, ~7h ahead of US Eastern year-round. No market-holiday calendar:
+    a holiday just means a caller harmlessly attempts against stale/empty data
+    and fails gracefully, not a safety issue.
+
+    Lives here, in the broker layer, so both the human-approved path
+    (paper_trader) and the unattended one (autotrade_runner) ask the same
+    question of the same code. autotrade_runner owned this first; paper_trader
+    had no check at all and would place orders into a closed market.
+    """
+    now_ny = now_ny or datetime.now(ZoneInfo("America/New_York"))
+    if now_ny.weekday() >= 5:  # Saturday/Sunday
+        return False
+    open_t = now_ny.replace(hour=9, minute=30, second=0, microsecond=0)
+    close_t = now_ny.replace(hour=16, minute=0, second=0, microsecond=0)
+    return open_t <= now_ny <= close_t
+
 
 def wait_for_status(ib: IB, trade, timeout_s: float = 30.0):
     """Block until the order reaches a terminal state or timeout. Returns the trade."""

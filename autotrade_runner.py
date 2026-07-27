@@ -89,15 +89,10 @@ def _log(line: str) -> None:
     print(line)
 
 
-def market_is_open(now_ny: datetime) -> bool:
-    """Weekday + 9:30-16:00 America/New_York. No market-holiday calendar —
-    a holiday just means this harmlessly attempts against stale/empty data
-    and fails gracefully (logged + Telegram-alerted), not a safety issue."""
-    if now_ny.weekday() >= 5:  # Saturday/Sunday
-        return False
-    open_t = now_ny.replace(hour=9, minute=30, second=0, microsecond=0)
-    close_t = now_ny.replace(hour=16, minute=0, second=0, microsecond=0)
-    return open_t <= now_ny <= close_t
+# Moved to ibkr_service so paper_trader's human-approved path asks the same
+# question of the same code — it previously had no market-hours check at all.
+# Re-exported here because this module's docstring and callers refer to it.
+market_is_open = ibs.market_is_open
 
 
 def main():
