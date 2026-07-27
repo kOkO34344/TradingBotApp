@@ -13,8 +13,15 @@ pip install -r requirements.txt
 ## Run it
 
 ```bash
-python3 trader_app.py
+./trader_app.sh
 ```
+
+Use the launcher, not `python3 trader_app.py`. On this machine `python3` is
+conda base, which has pandas/rich/yfinance/ib_async but **not** torch — so the
+app starts and works normally right up until the Kronos menu, which then
+reports `No module named 'torch'` even though torch is installed (in `.venv`).
+The launcher pins `.venv/bin/python`. If you do launch it the other way, the
+app now says so at startup instead of letting you find out three menus deep.
 
 First launch downloads ~16 years of daily data for 11 tickers (takes ~30 seconds, then it's cached in a `price_data/` folder next to the script).
 

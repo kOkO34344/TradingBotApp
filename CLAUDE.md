@@ -487,6 +487,24 @@ If you add a new recurring/polling script, give it its own conditional
   `launchctl unload ~/Library/LaunchAgents/com.tradingbotapp.vaultsync.plist`.
 - `(base)` conda is always in the prompt; the project venv must ALSO show
   `(.venv)`. If imports fail, that's the first thing to check.
+- **Launch the interactive app with `./trader_app.sh`, never
+  `python3 trader_app.py`.** `python3` resolves to `/opt/anaconda3/bin/python3`
+  (conda base), which is a PARTIAL match for this project's needs: it has
+  pandas, rich, yfinance and ib_async but not torch/einops/safetensors/
+  huggingface_hub. So the app launches, loads data and backtests perfectly,
+  and only the Kronos menu fails — with `Kronos dependencies not installed:
+  No module named 'torch'`, which reads like a missing package but is really
+  the wrong interpreter. Hit 2026-07-28. The old error message made it worse
+  by advising `pip install torch ...`, which either installs a second ~2 GB
+  copy into conda base or, if `.venv` happens to be active, reports
+  "Requirement already satisfied" and looks like it did nothing. Fixed three
+  ways: `trader_app.sh` pins `.venv/bin/python` (matching every other launcher
+  in the project), `trader_app.py` warns at startup when `sys.prefix` isn't
+  the project venv, and the Kronos import error now distinguishes "wrong
+  interpreter" from "genuinely missing" and prints `sys.executable`. Every
+  automated script already pinned `.venv/bin/python`; the interactive app was
+  the only entry point without a launcher, which is why it was the one that
+  broke.
 - **A Gateway Order Preset can cancel bracket orders, intermittently.** IBKR
   error **10349** "Order TIF was set to DAY based on order preset" — the
   preset overrides the explicit `tif="GTC"` on bracket legs and IBKR cancels

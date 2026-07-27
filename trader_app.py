@@ -34,6 +34,31 @@ APP_DIR = Path(__file__).parent
 DATA_DIR = APP_DIR / "price_data"
 DATA_DIR.mkdir(exist_ok=True)
 SETTINGS_FILE = APP_DIR / "trader_settings.json"
+VENV_DIR = APP_DIR / ".venv"
+
+
+def running_in_project_venv() -> bool:
+    """Is this interpreter the project's own .venv?
+
+    Worth checking explicitly because conda base on this machine is a PARTIAL
+    match: it has pandas, rich, yfinance and ib_async but not torch. The app
+    therefore starts and behaves normally right up to the Kronos menu, which
+    then reports missing dependencies that are in fact installed — just in a
+    different interpreter. See trader_app.sh.
+    """
+    try:
+        return Path(sys.prefix).resolve() == VENV_DIR.resolve()
+    except OSError:
+        return False
+
+
+def wrong_interpreter_hint() -> str:
+    """One-line explanation of which Python is running and how to fix it."""
+    return (f"Running under [bold]{sys.executable}[/bold], not the project venv "
+            f"([bold]{VENV_DIR}/bin/python[/bold]).\n"
+            f"Relaunch with [bold]./trader_app.sh[/bold] (or activate .venv first). "
+            f"Installing into conda base is not the fix — the packages are already "
+            f"in .venv.")
 
 DEFAULT_SETTINGS = {
     # The watchlist is stored as "watchlist_groups" (see watchlist.py) with
@@ -504,9 +529,21 @@ def kronos_menu(settings: dict):
         sys.path.insert(0, str(Path(__file__).parent / "KronosAI"))
         import kronos_agent as ka
     except ImportError as e:
-        console.print(f"[red]Kronos dependencies not installed: {e}[/red]")
-        console.print("[dim]pip install torch einops huggingface_hub safetensors matplotlib tqdm "
-                      "(see KronosAI/requirements.txt)[/dim]")
+        # Say WHICH failure this is. The old message always blamed missing
+        # packages and told you to pip install them — but the usual cause is
+        # running under conda base, where the packages aren't missing, they're
+        # just somewhere else. Following that advice installs a second ~2GB
+        # copy of torch into the wrong interpreter and the app still can't
+        # see it if you keep launching it the same way.
+        if not running_in_project_venv():
+            console.print(Panel(
+                f"[red]Kronos can't import its dependencies: {e}[/red]\n\n"
+                + wrong_interpreter_hint(),
+                title="Wrong Python interpreter", border_style="red"))
+        else:
+            console.print(f"[red]Kronos dependencies genuinely missing: {e}[/red]")
+            console.print("[dim].venv/bin/pip install torch einops huggingface_hub "
+                          "safetensors matplotlib tqdm (see KronosAI/requirements.txt)[/dim]")
         return
 
     raw = Prompt.ask("Tickers (comma-separated, blank = full watchlist)", default="")
@@ -1108,6 +1145,17 @@ def main():
         "[dim]This app places no orders itself. Item 8 (Autotrade) toggles a separate\n"
         "unattended background job that does — see that menu before enabling it.[/dim]",
         border_style="cyan"))
+
+    # Catch the wrong-interpreter case at startup rather than letting the user
+    # find it three menus deep. conda base can import everything this banner
+    # needs, so without an explicit check nothing looks wrong until Kronos.
+    if not running_in_project_venv():
+        console.print(Panel(
+            "[yellow]Not running in the project virtualenv.[/yellow]\n\n"
+            + wrong_interpreter_hint()
+            + "\n\n[dim]Backtests and settings will work; the Kronos menu will not.[/dim]",
+            title="[yellow]Environment warning[/yellow]", border_style="yellow"))
+
     settings = load_settings()
     data = load_all_data(settings)
 
