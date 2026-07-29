@@ -400,8 +400,29 @@ def verify_stop_protection(ib: IB, contract, exit_action: str, filled_qty: float
     This exists because a bracket can half-survive: IBKR error 10349 (an Order
     Preset forcing DAY TIF) cancels legs individually, so the parent can fill
     while its stop is rejected, leaving naked exposure that nothing detects.
+
+    Returns (ok, reason). Raises `OpenOrderStateUnknown` if IBKR never answers
+    — see below for why that is not the same as "unprotected".
     """
-    ib.reqAllOpenOrders()
+    # An UNANSWERED open-orders request returns an EMPTY list, which is
+    # indistinguishable from "this position genuinely has no stop" unless we
+    # separate the two. Getting this wrong is how the 2026-07-25 phantom
+    # liquidation happened with ib.positions(); the fix there was to let a
+    # timeout RAISE rather than degrade to []. Same rule here.
+    #
+    # Not hypothetical: on 2026-07-29 a wedged Gateway answered position
+    # requests normally while reqAllOpenOrders timed out at 30s AND 45s. The
+    # old code would have read that as four naked positions and fired four
+    # false UNPROTECTED alerts.
+    try:
+        ib.run(ib.reqAllOpenOrdersAsync(), timeout=OPEN_ORDERS_TIMEOUT)
+    except Exception as e:
+        raise OpenOrderStateUnknown(
+            f"IBKR did not answer reqAllOpenOrders within {OPEN_ORDERS_TIMEOUT}s "
+            f"({type(e).__name__}) — open-order state for {contract.symbol} is "
+            f"UNKNOWN. This is NOT evidence that the stop is missing. Retry, or "
+            f"restart Gateway if it keeps refusing."
+        ) from e
     ib.sleep(settle_s)
     stops = _open_stops_for(ib.openTrades(), contract.symbol, exit_action)
     ok, reason = stop_protection_status(stops, filled_qty)
@@ -439,6 +460,18 @@ def place_market_order(ib: IB, contract, quantity: float, action: str = "BUY",
             trade.orderStatus.avgFillPrice or px, status=trade.orderStatus.status,
             detail=f"filled {trade.orderStatus.filled}/{quantity}")
     return trade
+
+
+OPEN_ORDERS_TIMEOUT = 30.0
+
+
+class OpenOrderStateUnknown(RuntimeError):
+    """IBKR never answered an open-orders request.
+
+    Deliberately NOT a subclass of anything that reads as "no stop found".
+    An unanswered request is missing information, not a negative answer, and
+    conflating the two is what manufactures false alarms.
+    """
 
 
 class OrderErrorCollector:
@@ -594,7 +627,24 @@ def place_bracket_order(ib: IB, contract, quantity: float, action: str,
     # A filled parent whose stop leg didn't survive is a rule-2 violation, and
     # nothing downstream would have caught it.
     if filled > 0:
-        verify_stop_protection(ib, contract, exit_action, filled)
+        try:
+            verify_stop_protection(ib, contract, exit_action, filled)
+        except OpenOrderStateUnknown as e:
+            # We hold a real position and cannot confirm it is protected. That
+            # is not the same as knowing it's naked, and must not be journalled
+            # as UNPROTECTED — but it absolutely still needs a human, because
+            # the one thing we cannot do is assume it's fine.
+            journal("PROTECTION_UNKNOWN", contract, exit_action, filled,
+                    status="unverified", detail=str(e))
+            send_telegram(
+                f"⚠️ Cannot verify stop protection\n"
+                f"{contract.symbol}: {filled:g} shares FILLED\n"
+                f"IBKR did not answer the open-orders request, so we do not know "
+                f"whether the stop is live. It may well be fine.\n"
+                f"Check the position manually and restart Gateway if it keeps "
+                f"refusing."
+            )
+            print(f"PROTECTION UNKNOWN: {contract.symbol} — {e}", file=sys.stderr)
     return trades
 
 
@@ -741,6 +791,36 @@ def _selftest() -> int:
     with OrderErrorCollector(fib, [1]) as quiet:
         pass
     check("silent placement summarises to empty string", quiet.summary() == "")
+
+    # An unanswered open-orders request must NOT read as "no stop found".
+    # This is the distinction that stops a wedged Gateway manufacturing a
+    # false naked-position alarm (observed for real 2026-07-29).
+    class HangingIB:
+        """Answers positions fine, never answers open orders — the real
+        2026-07-29 Gateway behaviour."""
+        def __init__(self):
+            self.errorEvent = FakeEvent()
+        def reqAllOpenOrdersAsync(self):
+            return None
+        def run(self, *a, **k):
+            raise TimeoutError("no response")
+        def sleep(self, *a):
+            pass
+        def openTrades(self):
+            return []
+
+    try:
+        verify_stop_protection(HangingIB(), stock("AAPL"), "SELL", 15)
+        check("unanswered open-orders request raises, not 'unprotected'", False)
+    except OpenOrderStateUnknown as e:
+        check("unanswered open-orders request raises OpenOrderStateUnknown", True)
+        check("the raise says it is NOT evidence of a missing stop",
+              "NOT evidence" in str(e))
+    except Exception:
+        check("unanswered open-orders request raises OpenOrderStateUnknown", False)
+
+    check("OpenOrderStateUnknown is not confusable with a normal failure",
+          issubclass(OpenOrderStateUnknown, RuntimeError))
 
     # UNPROTECTED must be journallable like any other event
     with tempfile.TemporaryDirectory() as td:
