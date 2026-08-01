@@ -39,14 +39,23 @@ export function fmtSigned(
   return `${sign}${prefix}${fmtNumber(Math.abs(value), decimals)}`;
 }
 
+/**
+ * `signed` controls only whether a POSITIVE value gets a leading "+".
+ *
+ * A negative value always keeps its minus sign. An earlier version applied
+ * Math.abs whenever signed was false, which rendered AMZN's -2.3% CAGR as
+ * "2.3%" on the backtests table — turning a loss into a gain on the one
+ * screen whose whole job is reporting negative results honestly.
+ */
 export function fmtPct(
   value: number | null | undefined,
   decimals = 2,
   signed = true
 ): string {
   if (value === null || value === undefined || Number.isNaN(value)) return DASH;
-  const sign = signed ? (value > 0 ? "+" : value < 0 ? "−" : "") : "";
-  return `${sign}${fmtNumber(Math.abs(value), decimals)}%`;
+  const magnitude = fmtNumber(Math.abs(value), decimals);
+  if (value < 0) return `−${magnitude}%`;
+  return `${signed && value > 0 ? "+" : ""}${magnitude}%`;
 }
 
 /** Price precision by asset class — 1.15246 for FX, 307.36 for a stock. */

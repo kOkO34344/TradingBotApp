@@ -43,9 +43,28 @@ human-approved and autotrade paths.
 |---|---|
 | `/charts` | Candles for stocks, ETFs, forex, crypto and futures. 1m–1d, indicators.py overlays and sub-panes, journal trade markers, live GTC stop lines. |
 | `/dashboard` | Net liquidation (USD-converted), unrealised P&L, stop-health verdict, RiskGuard limits, signal policy, journal counts. |
-| `/positions` | Open positions with per-position stop verdict, plus live open orders. |
+| `/positions` | Open positions with per-position stop verdict, live open orders, and the write actions: flatten, re-protect, cancel, new bracket. |
+| `/rebalance` | Runs the signal, shows the proposed diff and full ranking, waits for approve/decline. Replaces the terminal y/N prompt. |
 | `/journal` | trade_journal.csv with corrections and phantom rows marked. |
-| `/kronos`, `/backtests` | Not built yet. |
+| `/kronos` | Forecast ranking across N independent draws, spread per ticker, top-N boundary warning, per-ticker forecast chart, Monte Carlo fan. |
+| `/backtests` | Recorded results, in-sample and out-of-sample kept apart, quoted findings marked as quoted. |
+
+## Write actions
+
+Every write is **preview → execute(token)**. The preview returns the exact
+order plus RiskGuard's verdict; execute carries only the token and the
+backend reads the parameters back from the stored preview. The browser
+therefore cannot display one order and submit another. Previews expire after
+120 seconds rather than silently repricing.
+
+Order placement runs on a dedicated worker thread with its own IB connection
+(clientId 16), because `ibkr_service`'s order functions are synchronous and
+`ib.sleep()` → `IB.run()` → `run_until_complete()` cannot execute inside the
+server's event loop. Rewriting them async would fork the risk-handling code;
+running them unmodified on their own thread does not.
+
+Entries are bracket-only. There is no un-stopped entry path in this UI and
+there will not be one.
 
 ## Design rules this UI follows
 

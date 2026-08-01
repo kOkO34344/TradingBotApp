@@ -42,6 +42,7 @@ import ibkr_service as ib_svc  # noqa: E402
 import signal_policy  # noqa: E402
 import trader_app as ta  # noqa: E402
 
+from . import backtests_api  # noqa: E402
 from . import bars as bars_mod  # noqa: E402
 from . import indicators_api  # noqa: E402
 from . import jobs  # noqa: E402
@@ -938,6 +939,27 @@ async def set_autotrade(payload: AutotradeToggle):
         },
         "changed": was != payload.enabled,
     }
+
+
+@app.get("/api/backtests")
+async def backtests():
+    """Recorded backtest results.
+
+    Computed results and quoted findings are returned as separate keys, and
+    every quoted finding carries its source. Nothing here re-runs anything.
+    """
+    return {
+        "results": backtests_api.load_results(),
+        "findings": backtests_api.RECORDED_FINDINGS,
+    }
+
+
+@app.get("/api/backtests/report")
+async def backtests_report():
+    md = backtests_api.report_markdown()
+    if md is None:
+        raise HTTPException(status_code=404, detail="No backtest_report.md.")
+    return {"markdown": md}
 
 
 @app.get("/api/health")

@@ -281,6 +281,57 @@ export interface Timeframe {
   seconds: number;
 }
 
+export interface BacktestRow {
+  ticker: string;
+  period: string;
+  strategy_cagr_pct: number | null;
+  strategy_max_dd_pct: number | null;
+  strategy_sharpe: number | null;
+  strategy_trades: number | null;
+  strategy_win_rate_pct: number | null;
+  bh_cagr_pct: number | null;
+  spy_bh_cagr_pct: number | null;
+}
+
+export interface BacktestPeriod {
+  key: string;
+  label: string;
+  caveat: string;
+  tickers: number;
+  rows: BacktestRow[];
+  avgStrategyCagr: number | null;
+  avgBuyHoldCagr: number | null;
+  avgSpyCagr: number | null;
+  avgMaxDd: number | null;
+  beatSpy: number;
+  beatBuyHold: number;
+}
+
+/**
+ * `computed: false` means the numbers are quoted from CLAUDE.md rather than
+ * calculated by this API. The UI must show that distinction — mixing the two
+ * is how a written-down result starts looking like a fresh measurement.
+ */
+export interface BacktestFinding {
+  name: string;
+  verdict: "beat" | "lost" | "no-edge";
+  computed: boolean;
+  source: string;
+  metrics: { label: string; value: string }[];
+  note: string;
+  status?: string;
+}
+
+export interface BacktestsResponse {
+  results: {
+    strategy: string;
+    source: string;
+    periods: BacktestPeriod[];
+    error: string | null;
+  };
+  findings: BacktestFinding[];
+}
+
 /* ----------------------------------------------------------------- calls */
 
 export const api = {
@@ -310,6 +361,7 @@ export const api = {
       `/api/journal${suffix}`
     );
   },
+  backtests: () => request<BacktestsResponse>("/api/backtests"),
   bars: (opts: {
     symbol: string;
     timeframe?: string;
