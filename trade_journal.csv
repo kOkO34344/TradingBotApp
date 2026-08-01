@@ -36,3 +36,12 @@ timestamp,event,symbol,sec_type,action,quantity,price,stop,target,status,detail
 2026-07-28T01:49:17,SUBMIT,KO,STK,BUY,1,42.03,37.83,,submitted,bracket order
 2026-07-28T01:49:47,RESULT,KO,STK,BUY,1,42.03,37.83,,PreSubmitted,bracket parent: filled 0/1
 2026-07-28T01:50:12,NOTE,KO,STK,,,,,,probe resolved,"PROBE CONCLUSION 2026-07-28: IBKR error 10349 was OUR BUG, not a Gateway Order Preset needing a GUI fix. place_bracket_order built the parent LimitOrder with no explicit tif; the preset filled in the blank with DAY and announced it. The error's reqId was always the PARENT's, and the stop leg — which always carried explicit tif=GTC — kept GTC at IBKR throughout (verified via reqAllOpenOrders). Setting the parent to tif=DAY explicitly eliminates 10349 entirely: re-probe returned LMT tif=DAY / STP tif=GTC, both PreSubmitted, no error. All three probe orders cancelled, 0 leftovers, account unchanged at 4 positions."
+2026-08-01T22:26:04,CLOSE_DETECTED,AAPL,STK,SELL,15.0,,,,detected,"fully closed between 2026-07-29T15:22:22 and detection. No IBKR execution record — reqExecutions serves only the current session, so exit price and realized P&L are UNKNOWN here. Entry avg cost 328.04. Detection time is not the event time: a close over a weekend or overnight is journaled at the next run."
+2026-08-01T23:34:37,PROPOSAL,JNJ,STK,SELL,19.0,,,,declined,owner declined rebalance
+2026-08-01T23:34:37,PROPOSAL,AMZN,STK,SELL,21.0,,,,declined,owner declined rebalance
+2026-08-01T23:34:37,PROPOSAL,PG,STK,BUY,344,145.27,137.18,,declined,owner declined rebalance
+2026-08-01T23:34:37,PROPOSAL,NVDA,STK,BUY,250,199.97,183.7,,declined,owner declined rebalance
+2026-08-01T23:41:58,PROPOSAL,JNJ,STK,SELL,19.0,,,,declined,owner declined rebalance
+2026-08-01T23:41:58,PROPOSAL,AMZN,STK,SELL,21.0,,,,declined,owner declined rebalance
+2026-08-01T23:41:58,PROPOSAL,PG,STK,BUY,344,145.27,137.18,,declined,owner declined rebalance
+2026-08-01T23:41:58,PROPOSAL,NVDA,STK,BUY,250,199.97,183.7,,declined,owner declined rebalance

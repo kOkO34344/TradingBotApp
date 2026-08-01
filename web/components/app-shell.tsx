@@ -28,6 +28,7 @@ import {
   LayoutDashboard,
   Moon,
   Power,
+  Repeat,
   Sun,
   Wallet,
 } from "lucide-react";
@@ -43,6 +44,7 @@ const NAV = [
   { href: "/charts", label: "Charts", icon: BarChart3 },
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/positions", label: "Positions", icon: Wallet },
+  { href: "/rebalance", label: "Rebalance", icon: Repeat },
   { href: "/journal", label: "Journal", icon: BookOpen },
   { href: "/kronos", label: "Kronos", icon: Brain },
   { href: "/backtests", label: "Backtests", icon: Activity },

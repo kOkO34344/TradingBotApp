@@ -44,6 +44,18 @@ WEB_CLIENT_ID = 15          # see docstring — must not collide with 7/9/11/13
 DELAYED_MARKET_DATA = 3     # reqMarketDataType: this account has no live sub
 RECONNECT_BACKOFF = [2, 5, 10, 20, 30, 60]   # seconds, then holds at 60
 
+# Fallback ids for the read hub, tried in order when the preferred one is
+# refused. IB Gateway holds a clientId for a while after a client dies
+# uncleanly — kill the API mid-request and the next start is met with
+# "Peer closed connection. clientId 15 already in use?" and then timeouts
+# forever, because retrying the SAME id can never succeed until Gateway
+# lets go. Observed on this machine; the port stays open throughout, so it
+# looks like a dead Gateway when it is actually a busy id.
+#
+# 16 is deliberately absent — that belongs to the write worker.
+CLIENT_ID_CANDIDATES = [WEB_CLIENT_ID, 17, 18, 19, 20]
+ROTATE_AFTER_FAILURES = 2
+
 
 @dataclass
 class ConnectionState:
@@ -129,6 +141,9 @@ class IBHub:
         self._lock = asyncio.Lock()          # serialises IBKR requests
         self._reconnect_task: asyncio.Task | None = None
         self._stop = False
+        self._preferred_client_id = client_id
+        self._id_index = 0
+        self._consecutive_failures = 0
 
     # ------------------------------------------------------------- lifecycle
 
@@ -180,6 +195,7 @@ class IBHub:
             self.state.paper = account.startswith("D")
             self.state.since = time.time()
             self.state.error = None
+            self._consecutive_failures = 0
             self._wire_events()
             log.info("Connected to IB Gateway %s:%s as %s (clientId %s)",
                      self.state.host, port, account, self.state.client_id)
@@ -189,8 +205,35 @@ class IBHub:
             self.state.connected = False
             self.state.paper = False
             self.state.account = None
-            self.state.error = f"{type(exc).__name__}: {exc}"
-            log.warning("IB connect failed: %s", self.state.error)
+            self._consecutive_failures += 1
+            detail = f"{type(exc).__name__}: {exc}".rstrip(": ")
+            self.state.error = (
+                f"{detail} (clientId {self.state.client_id})"
+            )
+            log.warning("IB connect failed on clientId %s: %s",
+                        self.state.client_id, detail)
+
+            # Retrying a clientId Gateway still considers taken can never
+            # succeed, so move to the next candidate rather than looping on
+            # the same refusal until someone notices.
+            if self._consecutive_failures >= ROTATE_AFTER_FAILURES:
+                self._consecutive_failures = 0
+                self._id_index = (self._id_index + 1) % len(CLIENT_ID_CANDIDATES)
+                next_id = CLIENT_ID_CANDIDATES[self._id_index]
+                if next_id != self.state.client_id:
+                    log.warning(
+                        "clientId %s is not connecting; trying %s next. "
+                        "(Gateway holds an id for a while after a client dies "
+                        "uncleanly.)", self.state.client_id, next_id)
+                    self.state.client_id = next_id
+                    self.state.error = (
+                        f"{detail}. Retrying on clientId {next_id} — the "
+                        "previous id may still be held by an earlier run."
+                    )
+                    # ib_async keeps per-connection state; a fresh object
+                    # avoids inheriting anything from the failed attempt.
+                    self.ib = IB()
+
             self.bus.publish("connection", self.state.as_dict())
             if self.ib.isConnected():
                 self.ib.disconnect()

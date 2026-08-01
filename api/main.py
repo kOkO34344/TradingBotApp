@@ -47,6 +47,7 @@ from . import indicators_api  # noqa: E402
 from . import jobs  # noqa: E402
 from . import journal_api  # noqa: E402
 from . import kronos_api  # noqa: E402
+from . import rebalance  # noqa: E402
 from . import trading  # noqa: E402
 from .contracts import SymbolError, describe, resolve  # noqa: E402
 from .ib_hub import IBHub, get_hub, set_hub  # noqa: E402
@@ -566,8 +567,18 @@ async def websocket_endpoint(ws: WebSocket):
 
 
 def _require_trading(hub) -> None:
-    """Gate shared by every write route: verified paper account or nothing."""
-    hub.require_paper()
+    """Gate shared by every write route: verified paper account or nothing.
+
+    Translates the refusal into a proper status code. Letting `require_paper`
+    raise bare gave a plain 500 "Internal Server Error" when IB Gateway
+    stopped answering — which tells the user nothing about what to fix, when
+    the actual answer ("Gateway isn't responding, restart it") is right
+    there in the connection state.
+    """
+    try:
+        hub.require_paper()
+    except (ConnectionError, PermissionError) as exc:
+        raise _fail(exc) from exc
 
 
 class FlattenRequest(BaseModel):
@@ -761,6 +772,72 @@ async def kronos_montecarlo(req: MonteCarloRequest):
         params={"ticker": req.ticker.upper(), "paths": req.paths},
     )
     return job.as_dict()
+
+
+# -------------------------------------------------------------- rebalance
+
+
+class RebalanceStart(BaseModel):
+    dryRun: bool = False
+
+
+class RebalanceDecision(BaseModel):
+    jobId: str
+    approved: bool
+
+
+@app.post("/api/rebalance/start")
+async def rebalance_start(req: RebalanceStart):
+    """Run the signal and build a proposal, then wait for a decision.
+
+    One long-lived call that pauses at the approval point, so the proposal
+    shown and the orders placed come from the same `buy_plan` — see
+    api/rebalance.py. A live rebalance blocks the trading worker while it
+    waits, so only one may be in flight.
+    """
+    hub = get_hub()
+    if not req.dryRun:
+        _require_trading(hub)
+
+    if jobs.registry.running("rebalance"):
+        raise HTTPException(
+            status_code=409,
+            detail="A rebalance is already in progress. Approve, decline or "
+                   "let it time out before starting another.")
+
+    worker = get_worker()
+
+    def job_fn(ctx):
+        # The work must happen on the worker thread — execute_rebalance is
+        # synchronous ibkr_service code and needs that thread's event loop
+        # and connection. The job thread just holds the log and blocks here.
+        future = worker.submit_sync(
+            lambda ib: rebalance.run_rebalance(ctx, ib, dry_run=req.dryRun))
+        return future.result(timeout=rebalance.APPROVAL_TIMEOUT + 600)
+
+    job = jobs.registry.submit("rebalance", job_fn,
+                               params={"dryRun": req.dryRun})
+    return job.as_dict()
+
+
+@app.get("/api/rebalance/pending")
+async def rebalance_pending(jobId: str | None = None):
+    """The proposal currently awaiting a decision, if any."""
+    pending = rebalance.get_pending(jobId)
+    running = jobs.registry.running("rebalance")
+    return {
+        "pending": pending.as_dict() if pending else None,
+        "job": running[0].as_dict(include_result=False) if running else None,
+    }
+
+
+@app.post("/api/rebalance/decide")
+async def rebalance_decide(req: RebalanceDecision):
+    try:
+        pending = rebalance.decide(req.jobId, req.approved, who="web UI")
+    except rebalance.RebalanceError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    return {"jobId": req.jobId, "approved": pending.approved}
 
 
 @app.get("/api/jobs/{job_id}")

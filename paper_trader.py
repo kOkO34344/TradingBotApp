@@ -246,7 +246,8 @@ def _verify_fx_direction(base_ccy: str, base_value: float, usd_value: float,
 
 
 def execute_rebalance(ib, settings: dict, top: list, data: dict, top_n: int, signal_label: str,
-                      auto_approve: bool = False, dry_run: bool = False) -> bool:
+                      auto_approve: bool = False, dry_run: bool = False,
+                      approve_fn=None) -> bool:
     """Diff `top` against current IBKR holdings, size buys off fresh ATR,
     then execute exits-then-entries through RiskGuard/bracket orders.
 
@@ -260,6 +261,19 @@ def execute_rebalance(ib, settings: dict, top: list, data: dict, top_n: int, sig
     hourly for autotrade_runner.py's faster cadence (see
     autotrade_signals.py) — the ATR window is however many bars are in
     `data[t]`, whatever that bar size means for the caller.
+
+    `approve_fn` replaces the terminal y/n prompt with a callback, for
+    front-ends that can't read stdin — currently the web UI's approve
+    screen. It is handed the same proposal dict the prompt describes and
+    returns True to proceed. This is the same kind of extension point
+    `auto_approve` already is, and it exists for the same reason: so a
+    second approval surface reuses this function rather than growing its
+    own copy of the sizing and risk logic, which could then drift.
+
+    Note what it deliberately preserves — the proposal shown to the approver
+    and the orders subsequently placed come from ONE `buy_plan`, computed
+    once above. An approval screen that re-priced between showing and
+    sending would not be an approval of what was shown.
 
     Returns True if any orders were attempted (placed or declined),
     False if there was nothing to do."""
@@ -304,7 +318,20 @@ def execute_rebalance(ib, settings: dict, top: list, data: dict, top_n: int, sig
         return False
 
     if not auto_approve:
-        if input("\nApprove this rebalance? [y/N] ").strip().lower() != "y":
+        if approve_fn is not None:
+            proposal = {
+                "sells": [{"symbol": s, "quantity": abs(held[s].position)} for s in sells],
+                "holds": [{"symbol": t, "quantity": held[t].position} for t in holds],
+                "buys": [{"symbol": t, **buy_plan[t]} for t in buys],
+                "top": list(top),
+                "top_n": top_n,
+                "signal": signal_label,
+                "net_liq_usd": net_liq,
+            }
+            approved = bool(approve_fn(proposal))
+        else:
+            approved = input("\nApprove this rebalance? [y/N] ").strip().lower() == "y"
+        if not approved:
             print("Declined — no orders placed.")
             for sym in sells:
                 ibs.journal("PROPOSAL", ibs.stock(sym), "SELL", abs(held[sym].position),

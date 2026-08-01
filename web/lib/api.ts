@@ -498,6 +498,50 @@ export const jobs = {
   cancel: (id: string) => post<{ cancelled: string }>(`/api/jobs/${id}/cancel`, {}),
 };
 
+/* ------------------------------------------------------------ rebalance */
+
+export interface RebalanceBuy {
+  symbol: string;
+  qty: number;
+  entry: number;
+  stop: number;
+  price: number;
+  atr: number;
+}
+
+export interface RebalanceProposal {
+  jobId: string;
+  createdAt: number;
+  expiresInSeconds: number;
+  decided: boolean;
+  approved: boolean;
+  decidedBy: string | null;
+  signal: string;
+  top: string[];
+  top_n: number;
+  net_liq_usd: number;
+  sells: { symbol: string; quantity: number }[];
+  holds: { symbol: string; quantity: number }[];
+  buys: RebalanceBuy[];
+  ranking: { ticker: string; value: number; inTop: boolean }[];
+  rankLabel: string;
+  marketOpen: boolean;
+}
+
+export const rebalance = {
+  start: (dryRun = false) =>
+    post<Job<unknown>>("/api/rebalance/start", { dryRun }),
+  pending: (jobId?: string) =>
+    request<{ pending: RebalanceProposal | null; job: Job<unknown> | null }>(
+      `/api/rebalance/pending${jobId ? `?jobId=${jobId}` : ""}`
+    ),
+  decide: (jobId: string, approved: boolean) =>
+    post<{ jobId: string; approved: boolean }>("/api/rebalance/decide", {
+      jobId,
+      approved,
+    }),
+};
+
 /* ------------------------------------------------------------- websocket */
 
 export type WsMessage =

@@ -146,6 +146,19 @@ class TraderWorker:
 
     # -------------------------------------------------------------- submission
 
+    def submit_sync(self, fn: Callable, *args, **kwargs) -> concurrent.futures.Future:
+        """Queue work and return its Future without awaiting.
+
+        For callers that are themselves on a background thread (the job
+        runner) and need the worker's connection rather than their own. They
+        block on the Future; the actual IBKR work still happens on this one
+        thread, so serialisation is unchanged.
+        """
+        self.start()
+        fut: concurrent.futures.Future = concurrent.futures.Future()
+        self._queue.put(_Job(fn=fn, args=args, kwargs=kwargs, future=fut))
+        return fut
+
     async def call(self, fn: Callable, *args, timeout: float = 90, **kwargs) -> Any:
         """Run `fn(ib, *args, **kwargs)` on the worker thread and await it.
 
