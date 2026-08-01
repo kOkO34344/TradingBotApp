@@ -330,6 +330,88 @@ export const api = {
   },
 };
 
+/* ------------------------------------------------------ write actions */
+
+/**
+ * Every write is preview -> execute(token). The execute call carries only
+ * the token: the backend reads the order parameters from the stored preview,
+ * so the browser cannot show one order and submit a different one.
+ */
+export interface TradePreview {
+  token: string;
+  kind: "flatten" | "reprotect" | "bracket" | "cancel";
+  symbol: string;
+  createdAt: number;
+  expiresInSeconds: number;
+  allowed: boolean;
+  reason: string;
+  steps: string[];
+  warnings?: string[];
+  ordersUnknown?: boolean;
+  // flatten
+  position?: number;
+  action?: string;
+  quantity?: number;
+  estimatedPrice?: number;
+  estimatedProceeds?: number;
+  ordersToCancel?: {
+    orderId: number;
+    type: string;
+    action: string;
+    qty: number;
+    tif: string;
+    status: string;
+    stopPrice: number | null;
+  }[];
+  // reprotect
+  stopPrice?: number;
+  currentPrice?: number;
+  tif?: string;
+  riskIfHit?: number;
+  distancePct?: number;
+  alreadyProtected?: boolean | null;
+  existingCoverage?: string;
+  // bracket
+  autoQuantity?: number;
+  quantitySource?: string;
+  marketPrice?: number;
+  entryLimit?: number;
+  stopSource?: string;
+  atr?: number;
+  notional?: number;
+  riskIfStopped?: number;
+  riskPctOfEquity?: number;
+  netLiquidationUsd?: number;
+  parentTif?: string;
+  stopTif?: string;
+  // cancel
+  orderId?: number;
+  orderType?: string;
+  isStop?: boolean;
+}
+
+function post<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, { method: "POST", body: JSON.stringify(body) });
+}
+
+export const trade = {
+  previewFlatten: (symbol: string) =>
+    post<TradePreview>("/api/trade/flatten/preview", { symbol }),
+  previewReprotect: (symbol: string, stopPrice: number) =>
+    post<TradePreview>("/api/trade/reprotect/preview", { symbol, stopPrice }),
+  previewBracket: (opts: {
+    symbol: string;
+    action?: string;
+    quantity?: number | null;
+    stopPrice?: number | null;
+  }) => post<TradePreview>("/api/trade/bracket/preview", opts),
+  previewCancel: (orderId: number) =>
+    post<TradePreview>("/api/trade/cancel/preview", { orderId }),
+
+  execute: (kind: TradePreview["kind"], token: string) =>
+    post<Record<string, unknown>>(`/api/trade/${kind}/execute`, { token }),
+};
+
 /* ------------------------------------------------------------- websocket */
 
 export type WsMessage =

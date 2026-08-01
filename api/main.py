@@ -45,8 +45,11 @@ import trader_app as ta  # noqa: E402
 from . import bars as bars_mod  # noqa: E402
 from . import indicators_api  # noqa: E402
 from . import journal_api  # noqa: E402
+from . import trading  # noqa: E402
 from .contracts import SymbolError, describe, resolve  # noqa: E402
 from .ib_hub import IBHub, get_hub, set_hub  # noqa: E402
+from .trader_worker import (TraderWorker, WorkerError, get_worker,  # noqa: E402
+                            set_worker)
 
 logging.basicConfig(
     level=logging.INFO,
@@ -77,9 +80,17 @@ async def lifespan(app: FastAPI):
     hub = IBHub(port=port)
     set_hub(hub)
     await hub.start()          # never raises; degraded mode if Gateway is down
+
+    # The write worker connects lazily on its first order, not here: most
+    # sessions never place one, and an idle second connection is a second
+    # thing that can wedge.
+    worker = TraderWorker(port=port)
+    set_worker(worker)
     try:
         yield
     finally:
+        worker.stop()
+        set_worker(None)
         await hub.stop()
         set_hub(None)
 
@@ -106,8 +117,12 @@ def _fail(exc: Exception) -> HTTPException:
     if isinstance(exc, PermissionError):
         return HTTPException(status_code=403, detail=str(exc))
     if isinstance(exc, (SymbolError, indicators_api.IndicatorError,
-                        bars_mod.BarFetchError)):
+                        bars_mod.BarFetchError, trading.TradingError)):
         return HTTPException(status_code=400, detail=str(exc))
+    if isinstance(exc, WorkerError):
+        # The outcome may be genuinely unknown (see TraderWorker.call), so
+        # this is 504 "no answer", never 500 "it failed".
+        return HTTPException(status_code=504, detail=str(exc))
     log.exception("Unhandled error")
     return HTTPException(status_code=500, detail=f"{type(exc).__name__}: {exc}")
 
@@ -533,6 +548,156 @@ async def websocket_endpoint(ws: WebSocket):
         log.debug("WebSocket closed", exc_info=True)
     finally:
         hub.bus.unsubscribe(queue)
+
+
+# ------------------------------------------------------------ write actions
+#
+# Every one of these is two calls: preview, then execute with the token the
+# preview returned. The execute step reads its parameters from the stored
+# preview, never from the request body, so what was shown is necessarily what
+# gets sent. See api/trading.py for the full reasoning.
+#
+# All of them run on the trader worker thread, which owns a separate IB
+# connection — ibkr_service's order functions are synchronous and cannot run
+# inside this event loop.
+
+
+def _require_trading(hub) -> None:
+    """Gate shared by every write route: verified paper account or nothing."""
+    hub.require_paper()
+
+
+class FlattenRequest(BaseModel):
+    symbol: str
+
+
+class ReprotectRequest(BaseModel):
+    symbol: str
+    stopPrice: float
+
+
+class BracketRequest(BaseModel):
+    symbol: str
+    action: str = "BUY"
+    quantity: float | None = None
+    stopPrice: float | None = None
+
+
+class CancelRequest(BaseModel):
+    orderId: int
+
+
+class ExecuteRequest(BaseModel):
+    token: str
+
+
+def _preview_route(kind: str):
+    """Shared error handling for the four preview endpoints."""
+    async def wrapper(build, symbol: str, *args):
+        hub = get_hub()
+        _require_trading(hub)
+        worker = get_worker()
+        try:
+            payload = await worker.call(build, *args)
+        except trading.TradingError as exc:
+            raise HTTPException(status_code=400, detail=str(exc))
+        except WorkerError as exc:
+            raise HTTPException(status_code=504, detail=str(exc))
+        except Exception as exc:                        # noqa: BLE001
+            raise _fail(exc)
+        return trading.make_preview(kind, symbol, payload).as_dict()
+    return wrapper
+
+
+@app.post("/api/trade/flatten/preview")
+async def preview_flatten(req: FlattenRequest):
+    return await _preview_route("flatten")(
+        trading.build_flatten_preview, req.symbol.upper(), req.symbol)
+
+
+@app.post("/api/trade/flatten/execute")
+async def execute_flatten(req: ExecuteRequest):
+    hub = get_hub()
+    _require_trading(hub)
+    preview = trading.take_preview(req.token, "flatten")
+    worker = get_worker()
+    result = await worker.call(
+        trading.do_flatten, preview.symbol,
+        preview.payload["quantity"], preview.payload["action"],
+        timeout=120,
+    )
+    hub.bus.publish("tradeExecuted", result)
+    return result
+
+
+@app.post("/api/trade/reprotect/preview")
+async def preview_reprotect(req: ReprotectRequest):
+    return await _preview_route("reprotect")(
+        trading.build_reprotect_preview, req.symbol.upper(),
+        req.symbol, req.stopPrice)
+
+
+@app.post("/api/trade/reprotect/execute")
+async def execute_reprotect(req: ExecuteRequest):
+    hub = get_hub()
+    _require_trading(hub)
+    preview = trading.take_preview(req.token, "reprotect")
+    worker = get_worker()
+    result = await worker.call(
+        trading.do_reprotect, preview.symbol,
+        preview.payload["quantity"], preview.payload["action"],
+        preview.payload["stopPrice"], timeout=90,
+    )
+    hub.bus.publish("tradeExecuted", result)
+    return result
+
+
+@app.post("/api/trade/bracket/preview")
+async def preview_bracket(req: BracketRequest):
+    return await _preview_route("bracket")(
+        trading.build_bracket_preview, req.symbol.upper(),
+        req.symbol, req.action, req.quantity, req.stopPrice)
+
+
+@app.post("/api/trade/bracket/execute")
+async def execute_bracket(req: ExecuteRequest):
+    hub = get_hub()
+    _require_trading(hub)
+    preview = trading.take_preview(req.token, "bracket")
+    p = preview.payload
+    worker = get_worker()
+    result = await worker.call(
+        trading.do_bracket, preview.symbol, p["action"], p["quantity"],
+        p["entryLimit"], p["stopPrice"], timeout=180,
+    )
+    hub.bus.publish("tradeExecuted", result)
+    return result
+
+
+@app.post("/api/trade/cancel/preview")
+async def preview_cancel(req: CancelRequest):
+    hub = get_hub()
+    _require_trading(hub)
+    worker = get_worker()
+    try:
+        payload = await worker.call(trading.build_cancel_preview, req.orderId)
+    except trading.TradingError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:                            # noqa: BLE001
+        raise _fail(exc)
+    return trading.make_preview("cancel", payload["symbol"], payload).as_dict()
+
+
+@app.post("/api/trade/cancel/execute")
+async def execute_cancel(req: ExecuteRequest):
+    hub = get_hub()
+    _require_trading(hub)
+    preview = trading.take_preview(req.token, "cancel")
+    worker = get_worker()
+    result = await worker.call(
+        trading.do_cancel, preview.payload["orderId"], timeout=90)
+    hub.bus.publish("tradeExecuted", result)
+    return result
 
 
 class AutotradeToggle(BaseModel):

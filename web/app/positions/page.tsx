@@ -16,11 +16,15 @@
  * answer is "IBKR didn't tell us".
  */
 
-import { AlertTriangle, ExternalLink, RefreshCw } from "lucide-react";
+import { useState } from "react";
+import { AlertTriangle, ExternalLink, Plus, RefreshCw, Shield, X } from "lucide-react";
 import Link from "next/link";
 
-import { api } from "@/lib/api";
+import { api, trade, type TradePreview } from "@/lib/api";
 import { useFetch, useLive } from "@/lib/use-live";
+import { useShell } from "@/components/app-shell";
+import { TradeActionDialog } from "@/components/trade-action";
+import { NewTradeDialog } from "@/components/new-trade-dialog";
 import {
   DASH,
   fmtPct,
@@ -38,11 +42,30 @@ import { StopBadge } from "@/components/stop-badge";
 
 export default function PositionsPage() {
   const live = useLive();
+  const { tradingAllowed, gateReason } = useShell();
   const positions = useFetch(() => api.positions(), [live.revisions.positions]);
   const orders = useFetch(
     () => api.orders().catch(() => null),
     [live.revisions.orders]
   );
+
+  // One dialog instance, re-pointed at whichever action was clicked. The
+  // loader closure is what decides which preview gets built.
+  const [action, setAction] = useState<(() => Promise<TradePreview>) | null>(
+    null
+  );
+  const [dialogOpen, setDialogOpen] = useState(false);
+  const [newTradeOpen, setNewTradeOpen] = useState(false);
+
+  const startAction = (loader: () => Promise<TradePreview>) => {
+    setAction(() => loader);
+    setDialogOpen(true);
+  };
+
+  const refreshAll = () => {
+    positions.reload();
+    orders.reload();
+  };
 
   const rows = positions.data?.positions ?? [];
   // Summary tiles show a dash until IBKR has answered — a zero would read as
@@ -62,17 +85,29 @@ export default function PositionsPage() {
             Live from IBKR — not from the journal.
           </p>
         </div>
-        <Button
-          variant="outline"
-          size="sm"
-          onClick={positions.reload}
-          className="gap-1.5"
-        >
-          <RefreshCw
-            className={cn("size-4", positions.loading && "animate-spin")}
-          />
-          Refresh
-        </Button>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={refreshAll}
+            className="gap-1.5"
+          >
+            <RefreshCw
+              className={cn("size-4", positions.loading && "animate-spin")}
+            />
+            Refresh
+          </Button>
+          <Button
+            size="sm"
+            className="gap-1.5"
+            disabled={!tradingAllowed}
+            title={tradingAllowed ? "Open a new bracket position" : gateReason}
+            onClick={() => setNewTradeOpen(true)}
+          >
+            <Plus className="size-4" />
+            New trade
+          </Button>
+        </div>
       </div>
 
       {positions.error && (
@@ -255,14 +290,61 @@ export default function PositionsPage() {
                       ))}
                     </div>
                   </td>
-                  <td className="px-4 py-3 text-right">
-                    <Link
-                      href="/charts"
-                      className="inline-flex items-center gap-1 text-xs text-muted-foreground hover:text-foreground"
-                      title="Open in charts"
-                    >
-                      Chart <ExternalLink className="size-3" />
-                    </Link>
+                  <td className="px-4 py-3">
+                    <div className="flex items-center justify-end gap-1">
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 gap-1 px-2 text-xs"
+                        disabled={!tradingAllowed}
+                        title={
+                          tradingAllowed
+                            ? "Place a fresh full-size GTC stop"
+                            : gateReason
+                        }
+                        onClick={() => {
+                          // Default to the project's own stop distance:
+                          // 2xATR below entry is what paper_trader sizes to.
+                          // Falls back to 5% if no market price is known.
+                          const ref = p.marketPrice ?? p.avgCost;
+                          const suggested = Number(
+                            (p.position > 0 ? ref * 0.95 : ref * 1.05).toFixed(2)
+                          );
+                          const entered = window.prompt(
+                            `GTC stop price for ${p.symbol} (${p.position > 0 ? "long" : "short"} ${Math.abs(p.position)} @ ${fmtPrice(p.avgCost)}, last ${fmtPrice(ref)})`,
+                            String(suggested)
+                          );
+                          if (!entered) return;
+                          const stop = Number(entered);
+                          if (!Number.isFinite(stop) || stop <= 0) return;
+                          startAction(() =>
+                            trade.previewReprotect(p.symbol, stop)
+                          );
+                        }}
+                      >
+                        <Shield className="size-3" />
+                        Stop
+                      </Button>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 gap-1 px-2 text-xs text-loss hover:text-loss"
+                        disabled={!tradingAllowed}
+                        title={tradingAllowed ? "Close this position" : gateReason}
+                        onClick={() =>
+                          startAction(() => trade.previewFlatten(p.symbol))
+                        }
+                      >
+                        Flatten
+                      </Button>
+                      <Link
+                        href="/charts"
+                        className="inline-flex items-center gap-1 px-1 text-xs text-muted-foreground hover:text-foreground"
+                        title="Open in charts"
+                      >
+                        <ExternalLink className="size-3" />
+                      </Link>
+                    </div>
                   </td>
                 </tr>
               ))}
@@ -304,6 +386,7 @@ export default function PositionsPage() {
                     <th className="px-4 py-2.5 text-left font-medium">
                       Status
                     </th>
+                    <th className="px-4 py-2.5 text-right font-medium" />
                   </tr>
                 </thead>
                 <tbody>
@@ -351,6 +434,21 @@ export default function PositionsPage() {
                       <td className="px-4 py-2.5 text-muted-foreground">
                         {o.status}
                       </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          className="h-7 gap-1 px-2 text-xs"
+                          disabled={!tradingAllowed}
+                          title={tradingAllowed ? "Cancel this order" : gateReason}
+                          onClick={() =>
+                            startAction(() => trade.previewCancel(o.orderId))
+                          }
+                        >
+                          <X className="size-3" />
+                          Cancel
+                        </Button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -359,6 +457,18 @@ export default function PositionsPage() {
           </Card>
         )}
       </div>
+
+      <TradeActionDialog
+        open={dialogOpen}
+        onOpenChange={setDialogOpen}
+        loadPreview={action}
+        onDone={refreshAll}
+      />
+      <NewTradeDialog
+        open={newTradeOpen}
+        onOpenChange={setNewTradeOpen}
+        onDone={refreshAll}
+      />
     </div>
   );
 }
