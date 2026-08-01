@@ -412,6 +412,92 @@ export const trade = {
     post<Record<string, unknown>>(`/api/trade/${kind}/execute`, { token }),
 };
 
+/* ----------------------------------------------------------------- jobs */
+
+export interface Job<T = unknown> {
+  id: string;
+  kind: string;
+  status: "queued" | "running" | "done" | "failed" | "cancelled";
+  createdAt: number;
+  startedAt: number | null;
+  finishedAt: number | null;
+  elapsedSeconds: number;
+  progress: number;
+  message: string;
+  params: Record<string, unknown>;
+  error: string | null;
+  log?: string[];
+  /** Null unless status === "done". A running job has no result. */
+  result: T | null;
+}
+
+export interface KronosStat {
+  ticker: string;
+  rank: number;
+  meanReturnPct: number;
+  minReturnPct: number;
+  maxReturnPct: number;
+  spreadPct: number;
+  stdevPct: number;
+  draws: number[];
+}
+
+export interface KronosChartData {
+  history: Bar[];
+  forecast: Bar[];
+  lastClose: number;
+  predictedClose: number;
+}
+
+export interface KronosResult {
+  generatedAt: number;
+  tickers: string[];
+  requested: string[];
+  skipped: string[];
+  draws: number;
+  sampleCount: number;
+  predLen: number;
+  topN: number;
+  stats: KronosStat[];
+  perDraw: Record<string, number>[];
+  rankChangesPerDraw: number;
+  boundaryGap: number | null;
+  gapWarning: string | null;
+  charts: Record<string, KronosChartData>;
+}
+
+export interface MonteCarloResult {
+  ticker: string;
+  generatedAt: number;
+  paths: number;
+  predLen: number;
+  lastClose: number;
+  history: Bar[];
+  series: IndicatorPoint[][];
+  finalReturnsPct: number[];
+  medianReturnPct: number;
+  meanReturnPct: number;
+  p10ReturnPct: number;
+  p90ReturnPct: number;
+  shareUp: number;
+}
+
+export const kronos = {
+  run: (opts: { tickers?: string[]; draws?: number; sampleCount?: number }) =>
+    post<Job<KronosResult>>("/api/kronos/run", opts),
+  monteCarlo: (ticker: string, paths: number) =>
+    post<Job<MonteCarloResult>>("/api/kronos/montecarlo", { ticker, paths }),
+  latest: (kind = "kronos") =>
+    request<{ job: Job<KronosResult> | null; running: Job | null }>(
+      `/api/kronos/latest?kind=${encodeURIComponent(kind)}`
+    ),
+};
+
+export const jobs = {
+  get: <T>(id: string) => request<Job<T>>(`/api/jobs/${id}`),
+  cancel: (id: string) => post<{ cancelled: string }>(`/api/jobs/${id}/cancel`, {}),
+};
+
 /* ------------------------------------------------------------- websocket */
 
 export type WsMessage =

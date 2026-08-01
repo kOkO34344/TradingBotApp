@@ -44,7 +44,9 @@ import trader_app as ta  # noqa: E402
 
 from . import bars as bars_mod  # noqa: E402
 from . import indicators_api  # noqa: E402
+from . import jobs  # noqa: E402
 from . import journal_api  # noqa: E402
+from . import kronos_api  # noqa: E402
 from . import trading  # noqa: E402
 from .contracts import SymbolError, describe, resolve  # noqa: E402
 from .ib_hub import IBHub, get_hub, set_hub  # noqa: E402
@@ -89,6 +91,7 @@ async def lifespan(app: FastAPI):
     try:
         yield
     finally:
+        jobs.registry.shutdown()
         worker.stop()
         set_worker(None)
         await hub.stop()
@@ -698,6 +701,103 @@ async def execute_cancel(req: ExecuteRequest):
         trading.do_cancel, preview.payload["orderId"], timeout=90)
     hub.bus.publish("tradeExecuted", result)
     return result
+
+
+# ----------------------------------------------------------------- kronos
+
+
+class KronosRunRequest(BaseModel):
+    tickers: list[str] | None = None
+    draws: int = kronos_api.DEFAULT_DRAWS
+    sampleCount: int = kronos_api.DEFAULT_SAMPLE_COUNT
+
+
+class MonteCarloRequest(BaseModel):
+    ticker: str
+    paths: int = 12
+
+
+@app.post("/api/kronos/run")
+async def kronos_run(req: KronosRunRequest):
+    """Start a forecast job. Returns immediately with a job id.
+
+    Refuses to start a second run while one is in flight: two concurrent
+    batch inferences on this machine would slow each other down and produce
+    two results that look comparable but were computed under different load.
+    """
+    existing = jobs.registry.running("kronos")
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A Kronos run is already in progress (job {existing[0].id}). "
+                   "Wait for it to finish or cancel it.")
+
+    settings = _settings()
+    tickers = [t.upper() for t in (req.tickers or settings.get("tickers", []))]
+    if not tickers:
+        raise HTTPException(status_code=400, detail="No tickers to forecast.")
+
+    job = jobs.registry.submit(
+        "kronos",
+        lambda ctx: kronos_api.run_forecast(
+            ctx, tickers, draws=req.draws, sample_count=req.sampleCount),
+        params={"tickers": tickers, "draws": req.draws,
+                "sampleCount": req.sampleCount},
+    )
+    return job.as_dict()
+
+
+@app.post("/api/kronos/montecarlo")
+async def kronos_montecarlo(req: MonteCarloRequest):
+    existing = jobs.registry.running("kronos-mc")
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"A Monte Carlo run is already in progress "
+                   f"(job {existing[0].id}).")
+    job = jobs.registry.submit(
+        "kronos-mc",
+        lambda ctx: kronos_api.monte_carlo(ctx, req.ticker, paths=req.paths),
+        params={"ticker": req.ticker.upper(), "paths": req.paths},
+    )
+    return job.as_dict()
+
+
+@app.get("/api/jobs/{job_id}")
+async def job_status(job_id: str, log: bool = True):
+    job = jobs.registry.get(job_id)
+    if job is None:
+        raise HTTPException(
+            status_code=404,
+            detail=f"No job {job_id}. Finished jobs are kept for an hour.")
+    return job.as_dict(include_log=log)
+
+
+@app.post("/api/jobs/{job_id}/cancel")
+async def job_cancel(job_id: str):
+    if not jobs.registry.cancel(job_id):
+        raise HTTPException(
+            status_code=400, detail="That job is not running.")
+    return {"cancelled": job_id}
+
+
+@app.get("/api/jobs")
+async def job_list(kind: str | None = None, limit: int = 20):
+    return {
+        "jobs": [j.as_dict(include_log=False, include_result=False)
+                 for j in jobs.registry.list(kind, limit)]
+    }
+
+
+@app.get("/api/kronos/latest")
+async def kronos_latest(kind: str = "kronos"):
+    """The most recent completed run, so reopening the page is free."""
+    job = jobs.registry.latest(kind)
+    running = jobs.registry.running(kind)
+    return {
+        "job": job.as_dict() if job else None,
+        "running": running[0].as_dict(include_result=False) if running else None,
+    }
 
 
 class AutotradeToggle(BaseModel):
