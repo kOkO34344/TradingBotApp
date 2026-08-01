@@ -371,11 +371,21 @@ that was never recorded, which is the original bug.
 4. **Paper trading — operational, not a build task.** `paper_trader.py` holds
    real open positions. **GOOGL closed 2026-07-23** (gapped through its GTC
    stop, ~-$422, found + backfilled 2026-07-25 — see Phase 3 status above);
-   current holdings are **AAPL (15 @ 328.04), JNJ (19 @ 249.98), DIS (52 @
-   95.39) and AMZN (21 @ 232.73)** — four positions, each with a live
-   full-quantity GTC stop (309.10 / 237.61 / 90.83 / 217.74), verified directly
-   against IBKR 2026-07-28. DIS and AMZN came from the 2026-07-27 rebalance
-   that the journal wrongly recorded as `Cancelled` (see Phase 3 status above).
+   **AAPL closed between 2026-07-29T15:22 and 2026-08-01T22:26** — detected
+   by `reflect_on_trades.py`'s position-diff tier and journalled
+   `CLOSE_DETECTED`, so this one did NOT repeat the GOOGL silent-close
+   failure. No execution record, therefore no exit price, realized P&L or
+   reflection — the known tier-2 gap. AAPL's last close before detection was
+   307.36 against a 309.10 stop, consistent with the stop firing, but that is
+   inference and not a record.
+   Current holdings are therefore **JNJ (19 @ 249.98), DIS (52 @ 95.39) and
+   AMZN (21 @ 232.73)** — three positions, verified directly against IBKR
+   2026-08-01. Their stop state could NOT be verified that evening: Gateway's
+   `reqAllOpenOrders` was timing out while positions and market data answered
+   normally (the 2026-07-29 symptom), so protection reads UNKNOWN, which is
+   not the same as unprotected. **Re-verify the three GTC stops when Gateway
+   is answering again.** DIS and AMZN came from the 2026-07-27 rebalance that
+   the journal wrongly recorded as `Cancelled` (see Phase 3 status above).
    **The "Gateway Order Preset blocker" is CLOSED** — it was a missing `tif`
    on our own parent order, fixed in code 2026-07-28 and verified by probe
    (no 10349, LMT `tif=DAY` / STP `tif=GTC`). No Gateway change is or was
@@ -395,14 +405,36 @@ that was never recorded, which is the original bug.
      `trade_journal.csv` matches what's actually on IBKR — the snapshot tier
      journals a close but not a reflection (no realized P&L to build the
      prompt from), so a research-feedback gap remains for unattended closes.
-5. **Web UI (`TraderAppFullStack.txt`) — now legitimately unblocked.** Items
-   1-2 are done AND real fills now exist in `trade_journal.csv`, so the
-   original "a dashboard before fills exist would display zeros" objection
-   no longer applies. Still backend-first: FastAPI wrapper around
-   ibkr_service + journal reader, then a Vite frontend (NOT create-react-app
-   — deprecated). Reasonable to start when the owner wants it, but weigh it
-   against #3/#4 above — more research/trading cycles is more of the
-   evidence this project is actually gated on; a dashboard is not.
+5. **Web UI — BUILT 2026-08-01.** `api/` (FastAPI) + `web/` (Next.js 16,
+   shadcn/Base UI, lightweight-charts). Start with `./run_web.sh`, open
+   http://localhost:3000. **Local only — never deploy it and never bind
+   0.0.0.0:** it holds a live Gateway connection and can place orders, so
+   there is no auth layer because there is no network exposure. Full
+   rationale in `web/README.md`; UI-specific rules in `web/CLAUDE.md`.
+   Screens: charts (all five asset classes, indicators.py overlays, journal
+   markers, stop lines), dashboard, positions + write actions, rebalance
+   approve, journal, Kronos, backtests.
+   - **The backend is a thin wrapper on purpose.** Order placement, sizing,
+     RiskGuard, journalling and indicator math stay in `ibkr_service.py` /
+     `paper_trader.py` / `indicators.py`. The browser path and the terminal
+     path cannot diverge in risk handling — same reasoning as sharing
+     `execute_rebalance` between the human and autotrade paths.
+   - **`execute_rebalance` gained an optional `approve_fn`** so the browser
+     replaces the y/N prompt and *only* that: one call pauses mid-flight, so
+     the proposal approved and the orders placed come from one `buy_plan`.
+     Default behaviour is unchanged.
+   - **Order placement runs on its own thread** (`api/trader_worker.py`,
+     clientId 16) because ibkr_service's order functions are synchronous and
+     `ib.sleep()` → `IB.run()` → `run_until_complete()` cannot run inside the
+     server's event loop. The read hub is clientId 15 (rotating 17-20 if
+     Gateway still holds one — see the gotcha below).
+   - Every write is preview → execute(token); the execute reads its
+     parameters from the stored preview, so the UI cannot show one order and
+     send another. Entries are bracket-only.
+   - Offline selftests: `api/contracts.py`, `api/indicators_api.py`,
+     `api/journal_api.py`, `api/backtests_api.py`.
+   - Still true, and still worth weighing: more research/trading cycles is
+     the evidence this project is gated on; a dashboard is not.
 
 ## Autotrade (experimental, unattended) — `autotrade_runner.py`
 
@@ -589,6 +621,17 @@ If you add a new recurring/polling script, give it its own conditional
   up (the port stays open). Seen 2026-07-27 after a run of connects with
   distinct client_ids — subsequent read-only checks hung indefinitely. Kill
   stray python processes holding connections and restart Gateway.
+  **Refined 2026-08-01: "Gateway is dead" and "that clientId is still held"
+  look identical and are not the same thing.** After the web API was killed
+  mid-request, every reconnect on clientId 15 failed with a bare
+  `TimeoutError` for minutes — while `reflect_on_trades.py` connected fine on
+  clientId 11 the whole time. A direct probe gave the real message:
+  *"Peer closed connection. clientId 15 already in use?"*, and clientIds 16
+  and 25 connected instantly. Gateway holds an id for a while after a client
+  dies uncleanly, and **retrying the same id can never succeed** until it
+  lets go. Before concluding Gateway needs a restart, try a different
+  clientId — it costs one command and is usually the whole problem. The web
+  API's hub now rotates 15 → 17-20 automatically after repeated failures.
 - **GitHub: `gh` is installed manually at `~/.local/bin/gh`** — there is no
   Homebrew on this machine, so upgrades mean re-downloading the release zip
   and `install -m 755` over it. Auth token is in the macOS keyring, config in
