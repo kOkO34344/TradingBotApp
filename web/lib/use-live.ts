@@ -177,14 +177,21 @@ export function useFetch<T>(
   const [error, setError] = useState<ApiError | null>(null);
   const [loading, setLoading] = useState(true);
   const [nonce, setNonce] = useState(0);
-  const fnRef = useRef(fn);
-  fnRef.current = fn;
+
+  // `fn` is a fresh closure on every render, so it is deliberately NOT a
+  // dependency — `deps` is what decides when to refetch. It used to be held
+  // in a ref assigned during render, which is a documented React hazard
+  // (and now a lint error): a render that never commits would leave the ref
+  // pointing at a fetcher from an abandoned render.
+  const fnForEffect = fn;
 
   useEffect(() => {
     let cancelled = false;
+    // Marking the request in flight is the point of this effect, not a
+    // cascade: it runs once per dependency change and settles immediately.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setLoading(true);
-    fnRef
-      .current()
+    fnForEffect()
       .then((result) => {
         if (cancelled) return;
         setData(result);

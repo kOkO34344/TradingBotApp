@@ -25,7 +25,6 @@ import { AlertTriangle, BookOpen, Minus, TrendingDown, TrendingUp } from "lucide
 import {
   api,
   type BacktestFinding as Finding,
-  type BacktestPeriod as Period,
   type BacktestsResponse,
 } from "@/lib/api";
 import { useFetch } from "@/lib/use-live";

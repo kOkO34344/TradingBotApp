@@ -74,6 +74,10 @@ export function TradeActionDialog({
 
   useEffect(() => {
     if (!open || !loadPreview) return;
+    // Opening the dialog is what triggers the preview request, so clearing
+    // the previous one and marking this in flight is the effect's purpose,
+    // not an accidental cascade — it runs once per open.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     reset();
     setLoading(true);
     loadPreview()

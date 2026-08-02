@@ -52,18 +52,19 @@ export default function RebalancePage() {
     try {
       const { pending, job: running } = await rebalance.pending();
       setProposal(pending);
+      // Only adopt a server-reported running job. A finished run is left in
+      // place so its log stays on screen — the last thing you want after
+      // approving is the record of what happened disappearing.
       if (running) setJob(running);
-      else if (pending === null) {
-        setJob((prev) =>
-          prev && prev.status === "running" ? prev : prev
-        );
-      }
     } catch {
-      /* transient */
+      /* transient — the interval will try again */
     }
   }, []);
 
   useEffect(() => {
+    // Polling: the proposal appears asynchronously minutes after the run
+    // starts, and there is no push channel for it.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     refresh();
     timer.current = setInterval(refresh, 2000);
     return () => {

@@ -180,6 +180,19 @@ export interface IndicatorCatalogEntry {
   guides: number[];
 }
 
+export interface SymbolSuggestion {
+  /** The exact string to send to /api/bars if this row is chosen. */
+  query: string;
+  symbol: string;
+  label: string;
+  name?: string;
+  description: string;
+  secType: string;
+  exchange: string;
+  currency: string;
+  source: "watchlist" | "ibkr";
+}
+
 export interface ResolvedSymbol {
   key: string;
   kind: string;
@@ -345,6 +358,13 @@ export const api = {
     request<{ indicators: IndicatorCatalogEntry[] }>("/api/indicators/catalog"),
   resolve: (q: string) =>
     request<ResolvedSymbol>(`/api/symbols/resolve?q=${encodeURIComponent(q)}`),
+  searchSymbols: (q: string, limit = 12) =>
+    request<{
+      query: string;
+      results: SymbolSuggestion[];
+      brokerSearch: boolean;
+      note: string | null;
+    }>(`/api/symbols/search?q=${encodeURIComponent(q)}&limit=${limit}`),
   watchlist: () =>
     request<{
       groups: { name: string; tickers: string[] }[];

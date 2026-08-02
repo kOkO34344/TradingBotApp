@@ -53,7 +53,9 @@ export default function JournalPage() {
   const [eventFilter, setEventFilter] = useState<string | null>(null);
   const [hideNotes, setHideNotes] = useState(false);
 
-  const rows = journal.data?.rows ?? [];
+  // Memoised so the filter useMemo below doesn't see a new array
+  // identity on every render.
+  const rows = useMemo(() => journal.data?.rows ?? [], [journal.data]);
   const summary = journal.data?.summary;
 
   const eventCounts = summary?.byEvent ?? {};

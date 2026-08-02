@@ -235,6 +235,149 @@ async def resolve_symbol(q: str = Query(..., description="Typed symbol")):
         raise _fail(exc)
 
 
+@app.get("/api/symbols/search")
+async def search_symbols(
+    q: str = Query(..., min_length=1),
+    limit: int = Query(12, ge=1, le=30),
+):
+    """Typeahead for the chart's symbol box.
+
+    Two tiers, in this order:
+
+      1. The watchlist, matched locally. Instant, needs no round trip, and
+         these are the symbols actually being traded — they should never be
+         buried under a broker search result.
+      2. IBKR's own `reqMatchingSymbols`. Deliberately the source rather than
+         a static ticker list: it returns what this account can actually
+         trade, with the exchange and currency IBKR will use. A local list
+         would happily suggest symbols the order path would then reject.
+
+    Tier 2 failing is not an error. If IBKR doesn't answer, the watchlist
+    matches still come back with `brokerSearch: false` so the UI can say the
+    list is incomplete rather than implying nothing else exists.
+    """
+    query = q.strip().upper()
+    settings = _settings()
+    watchlist = [t.upper() for t in settings.get("tickers", [])]
+    results: list[dict] = []
+    seen: set[str] = set()
+
+    # Tier 1: the watchlist. Prefix matches rank above substring ones so
+    # typing "NV" puts NVDA first rather than something that merely contains
+    # those letters.
+    for ticker in sorted(
+        (t for t in watchlist if query in t),
+        key=lambda t: (not t.startswith(query), t),
+    ):
+        seen.add(f"STK:{ticker}:USD")
+        results.append({
+            "query": ticker,            # what goes in the box if picked
+            "symbol": ticker,
+            "label": ticker,
+            "description": "On your watchlist",
+            "secType": "STK",
+            "exchange": "SMART",
+            "currency": "USD",
+            "source": "watchlist",
+        })
+
+    broker_ok = False
+    broker_error = None
+    hub = get_hub()
+    if hub.state.connected:
+        try:
+            matches = await asyncio.wait_for(
+                hub.run(hub.ib.reqMatchingSymbolsAsync, query), timeout=6)
+            broker_ok = True
+            for desc in matches or []:
+                c = desc.contract
+                symbol = (c.symbol or "").upper()
+                sec_type = c.secType or ""
+                currency = (c.currency or "").upper()
+                if not symbol:
+                    continue
+
+                # Every row carries the EXACT query string the chart will
+                # receive, so what the row promises is what gets charted.
+                # Anything this box cannot express unambiguously is dropped
+                # rather than guessed at: futures need an expiry, and an
+                # index (MNQ/MES arrive as IND) is not the tradeable
+                # contract, so both would resolve to something else or fail.
+                if sec_type == "STK":
+                    # `STK:SYM:CCY` keeps a foreign listing distinct from the
+                    # US one — a bare "NVDA" is the ISLAND/USD line, and
+                    # offering the Mexican listing under the same string
+                    # would chart the wrong instrument.
+                    chart_query = symbol if currency == "USD" else f"STK:{symbol}:{currency}"
+                elif sec_type == "CASH":
+                    # reqMatchingSymbols returns the base currency only, with
+                    # no quote. USD is assumed and SAID so on the row; other
+                    # pairs are typed directly (EUR.GBP).
+                    if symbol == "USD":
+                        continue
+                    currency = "USD"
+                    chart_query = f"FX:{symbol}USD"
+                elif sec_type == "CRYPTO":
+                    currency = currency or "USD"
+                    chart_query = f"CRYPTO:{symbol}:{currency}"
+                else:
+                    continue
+
+                key = f"{sec_type}:{symbol}:{currency}"
+                if key in seen:
+                    continue
+                seen.add(key)
+
+                name = (getattr(c, "description", "") or "").strip()
+                venue = c.primaryExchange or c.exchange or ""
+                detail = " · ".join(p for p in (venue, currency) if p)
+                results.append({
+                    "query": chart_query,
+                    "symbol": symbol,
+                    "label": f"{symbol}/USD" if sec_type == "CASH" else symbol,
+                    "name": name,
+                    "description": f"{name} — {detail}" if name else detail,
+                    "secType": sec_type,
+                    "exchange": venue or "SMART",
+                    "currency": currency,
+                    "source": "ibkr",
+                })
+            # Rank what this account can actually trade first: USD listings,
+            # then symbols starting with what was typed. IBKR's own order
+            # puts a Frankfurt line for NVDA above the US one, which is never
+            # what's wanted here.
+            #
+            # Beyond those two rules the ORIGINAL order is kept, because it is
+            # IBKR's relevance ranking and it is better than anything derivable
+            # locally: for "MICRO" it knows MSFT is the answer and a symbol-
+            # length tiebreak does not.
+            head = [r for r in results if r["source"] == "watchlist"]
+            tail = [(i, r) for i, r in enumerate(results)
+                    if r["source"] != "watchlist"]
+            tail.sort(key=lambda pair: (
+                pair[1]["currency"] != "USD",
+                not pair[1]["symbol"].startswith(query),
+                pair[0],
+            ))
+            results = head + [r for _, r in tail]
+        except asyncio.TimeoutError:
+            broker_error = ("IBKR symbol search timed out — watchlist matches "
+                            "only, so this list is incomplete.")
+        except Exception as exc:                        # noqa: BLE001
+            broker_error = (f"IBKR symbol search unavailable "
+                            f"({type(exc).__name__}) — watchlist matches only.")
+    else:
+        broker_error = ("Not connected to IB Gateway — watchlist matches only, "
+                        "so this list is incomplete.")
+
+    return {
+        "query": query,
+        "results": results[:limit],
+        "brokerSearch": broker_ok,
+        "note": broker_error,
+    }
+
+
 @app.get("/api/symbols/watchlist")
 async def watchlist():
     """Watchlist groups + the derived ticker union.
