@@ -583,6 +583,16 @@ sections close to verbatim, so keep those reasonably current.
   `DropdownMenuGroup`. Both shipped in the web UI and were only found by
   opening the menu. After touching any shadcn component, click it in the
   browser — `tsc` clean means very little here. Full list in `web/CLAUDE.md`.
+- **cTrader `CH_CLIENT_AUTH_FAILURE: OA client is not in active state` is not a
+  credential typo.** It means the Open API application itself is still in
+  `Submitted` state at openapi.ctrader.com/apps and has not been approved to
+  `Active` yet. The Client ID/Secret are shown before activation, so they look
+  usable and are not. Diagnosed 2026-08-02 on the first app-auth attempt.
+  Everything below that error is already proven when you see it: the TLS
+  handshake to `demo.ctraderapi.com:5035` succeeded, the protobuf request
+  encoded and sent, and a real `ProtoOAErrorRes` came back — so do NOT go
+  hunting for network, TLS or SDK problems. Wait for activation, then re-run
+  `python3 ftmo_service.py --probe`.
 - **GitHub: `gh` is installed manually at `~/.local/bin/gh`** — there is no
   Homebrew on this machine, so upgrades mean re-downloading the release zip
   and `install -m 755` over it. Auth token is in the macOS keyring, config in
