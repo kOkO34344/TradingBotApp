@@ -29,3 +29,16 @@ lxml
 # and the independent FX cross-check in paper_trader.get_net_liquidation_usd
 # that stops a wrong-direction ExchangeRate misstating equity by ~29%.
 ctrader-open-api
+
+# Twisted needs service_identity for proper TLS hostname verification — without
+# it you get "rudimentary" verification on the socket that carries your broker
+# credentials. The two constraints below are NOT cosmetic and were both learned
+# by breaking the venv on 2026-08-02:
+#   - pyOpenSSL 24.1.0 (pinned by ctrader-open-api) requires cryptography<43.
+#     A bare `pip install service_identity` pulls cryptography 50.x, which
+#     breaks pyOpenSSL at import with "module 'lib' has no attribute
+#     GEN_EMAIL" and takes the whole cTrader client down with it.
+#   - service_identity >= 25 requires cryptography>=47, so it cannot coexist
+#     with that ceiling. 24.2.0 is the newest that works.
+cryptography>=41.0.5,<43
+service_identity<25
