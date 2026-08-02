@@ -41,7 +41,7 @@ human-approved and autotrade paths.
 
 | Route | What it does |
 |---|---|
-| `/charts` | Candles for stocks, ETFs, forex, crypto and futures. 1m–1d, indicators.py overlays and sub-panes, journal trade markers, live GTC stop lines. |
+| `/charts` | Candles for stocks, ETFs, forex, crypto and futures. 1m–1d, indicators.py overlays and sub-panes, journal trade markers, live GTC stop lines. Symbol box has typeahead (watchlist + IBKR `reqMatchingSymbols`, searchable by company name). |
 | `/dashboard` | Net liquidation (USD-converted), unrealised P&L, stop-health verdict, RiskGuard limits, signal policy, journal counts. |
 | `/positions` | Open positions with per-position stop verdict, live open orders, and the write actions: flatten, re-protect, cancel, new bracket. |
 | `/rebalance` | Runs the signal, shows the proposed diff and full ranking, waits for approve/decline. Replaces the terminal y/N prompt. |
@@ -105,6 +105,14 @@ Superseded and disputed rows stay visible, struck through and labelled.
 Deleting them would destroy the audit trail; the contradiction is the
 information.
 
+**7. Symbol suggestions come from IBKR, not a local list.**
+`/api/symbols/search` merges watchlist matches with `reqMatchingSymbols`, so
+it only ever offers instruments this account can actually trade. Each row
+carries the exact query string the chart will receive and shows it when it
+differs from the plain symbol — `NVDA` and `STK:NVDA:MXN` are different
+instruments that look identical in a bare list. Futures and index rows are
+dropped rather than guessed at, because the box cannot express an expiry.
+
 ## Development
 
 ```bash
@@ -119,9 +127,15 @@ Backend self-tests, all offline — no IBKR connection needed:
 .venv/bin/python api/contracts.py        # symbol parsing across asset classes
 .venv/bin/python api/indicators_api.py   # parity with indicators.py
 .venv/bin/python api/journal_api.py      # correction/phantom detection
+.venv/bin/python api/backtests_api.py    # in/out-of-sample parsing
 ```
 
 Next.js 16 ships its own docs at `node_modules/next/dist/docs/` and warns
 they differ from what a model may have memorised — read those before
-changing framework-level code. Note shadcn now generates **Base UI**
-components, which compose with a `render` prop, not Radix's `asChild`.
+changing framework-level code.
+
+shadcn now generates **Base UI** components. Three differences bite, and only
+the first fails typechecking: compose with `render` not `asChild`; menu items
+fire `onClick` not `onSelect` (an `onSelect` type-checks and silently never
+runs); and `DropdownMenuLabel` throws unless wrapped in `DropdownMenuGroup`.
+Click any shadcn component you touch — `tsc` clean proves little here.

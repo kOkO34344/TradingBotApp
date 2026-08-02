@@ -411,9 +411,11 @@ that was never recorded, which is the original bug.
    0.0.0.0:** it holds a live Gateway connection and can place orders, so
    there is no auth layer because there is no network exposure. Full
    rationale in `web/README.md`; UI-specific rules in `web/CLAUDE.md`.
-   Screens: charts (all five asset classes, indicators.py overlays, journal
-   markers, stop lines), dashboard, positions + write actions, rebalance
-   approve, journal, Kronos, backtests.
+   Screens: charts (all five asset classes, symbol typeahead backed by
+   IBKR's own `reqMatchingSymbols` so it only suggests what this account
+   can trade, indicators.py overlays, journal markers, stop lines),
+   dashboard, positions + write actions, rebalance approve, journal,
+   Kronos, backtests.
    - **The backend is a thin wrapper on purpose.** Order placement, sizing,
      RiskGuard, journalling and indicator math stay in `ibkr_service.py` /
      `paper_trader.py` / `indicators.py`. The browser path and the terminal
@@ -632,6 +634,13 @@ If you add a new recurring/polling script, give it its own conditional
   lets go. Before concluding Gateway needs a restart, try a different
   clientId — it costs one command and is usually the whole problem. The web
   API's hub now rotates 15 → 17-20 automatically after repeated failures.
+- **shadcn now generates Base UI components, not Radix, and two of its
+  differences do NOT fail typechecking.** Menu items fire `onClick`, not
+  `onSelect` (an `onSelect` type-checks as a DOM handler and silently never
+  runs), and `DropdownMenuLabel` throws at runtime unless wrapped in
+  `DropdownMenuGroup`. Both shipped in the web UI and were only found by
+  opening the menu. After touching any shadcn component, click it in the
+  browser — `tsc` clean means very little here. Full list in `web/CLAUDE.md`.
 - **GitHub: `gh` is installed manually at `~/.local/bin/gh`** — there is no
   Homebrew on this machine, so upgrades mean re-downloading the release zip
   and `install -m 755` over it. Auth token is in the macOS keyring, config in

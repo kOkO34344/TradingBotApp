@@ -11,9 +11,19 @@ changing anything structural.
 
 - **Next.js 16** ships its own docs at `node_modules/next/dist/docs/`. Read
   the relevant guide before writing framework-level code.
-- **shadcn now generates Base UI components**, not Radix. They compose with
-  a `render` prop (`<DropdownMenuTrigger render={<Button />}>`), not
-  `asChild`. Using `asChild` is a type error, not a silent no-op.
+- **shadcn now generates Base UI components**, not Radix. Three traps, and
+  only the first is caught by `tsc` — the other two shipped broken and were
+  found by clicking:
+  - Compose with a `render` prop (`<DropdownMenuTrigger render={<Button />}>`),
+    not `asChild`. Using `asChild` IS a type error.
+  - **Menu items fire `onClick`, not `onSelect`.** `onSelect` type-checks
+    (it's a real DOM handler on a div) and silently does nothing — the menu
+    closes and no handler runs.
+  - **`DropdownMenuLabel` must be inside `DropdownMenuGroup`.** Base UI's
+    `GroupLabel` reads `MenuGroupContext` and throws a runtime error without
+    one; Radix allowed a bare label.
+  Lesson: after touching any shadcn component, OPEN it in the browser and
+  click it. Typechecking a Base UI migration proves very little.
 - **lightweight-charts v5** uses `chart.addSeries(CandlestickSeries, opts,
   paneIndex)` and `createSeriesMarkers(series, markers)` — the v4
   `addCandlestickSeries()` / `series.setMarkers()` methods are gone.
@@ -41,3 +51,15 @@ changing anything structural.
    firing hundreds of requests a minute. See the comment in `lib/use-live.ts`.
 5. **Local-only.** Never bind to `0.0.0.0`, never deploy. The backend can
    place orders and has no auth.
+6. **A number that can be negative must be able to render negative.**
+   `fmtPct(v, d, signed=false)` means "no + on positives", NOT `Math.abs`.
+   An earlier version applied abs and showed a −2.3% backtest CAGR as
+   "2.3%" — losses as gains, on the screen meant to report losses honestly.
+7. **Don't read `localStorage` during the first client render.** The server
+   couldn't have, so React reports a hydration mismatch and discards the
+   subtree. Restore preferences in an effect after mount.
+8. **On a failed fetch, don't keep showing the previous subject's data
+   under the new subject's heading.** `useFetch` retains last-good data
+   deliberately; screens must null it out on error (see `chartData` in
+   `app/charts/page.tsx`) or they attribute AAPL's price to whatever you
+   just failed to load.
