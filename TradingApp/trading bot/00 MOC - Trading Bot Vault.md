@@ -1,7 +1,7 @@
 ---
 tags: [moc, index]
-status: "Live"
-last_updated: 2026-07-28
+status: "Live — venue changed to FTMO 2026-08-02"
+last_updated: 2026-08-02
 ---
 
 # Trading Bot — Map of Contents
@@ -15,17 +15,53 @@ This is the central index for the Trading Bot project. The codebase lives at `/U
 | **Phase 0** (setup)          | ✅ Done                              | Python 3.13, Claude Code, IBKR account live                                                                                        |
 | **Phase 1** (research agent) | 🟡 Real output, grading not due yet | `research_agent.py` → 14 notes in `research_log/` (re-run 2026-07-25), oldest from 2026-07-20/21 — 5-*trading*-day grading horizon lands ~2026-07-30, not yet |
 | **Phase 2** (backtesting)    | ✅ Done, action taken                | SMA rejected (beats 1/10), momentum rotation identified (16.6% CAGR)                                                               |
-| **Phase 3** (paper trading)  | ✅ Built and LIVE                    | `paper_trader.py` live since 2026-07-21. **GOOGL closed 2026-07-23** (gapped through its stop, ~-$422, found + backfilled 2026-07-25). Current: AAPL(15)/JNJ(19), both GTC-protected. |
-| **Phase 4** (tiny live)      | ⏸ Later                             | After 2–3 months of paper evidence                                                                                                 |
+| **Phase 3** (paper trading)  | ✅ Built, now RETIRED IN PLACE       | `paper_trader.py`. IBKR places no new orders as of 2026-08-02. Three positions still open and monitored: **JNJ(19) / DIS(52) / AMZN(21)**, all verified GTC-stopped 2026-08-02. |
+| **FTMO venue**               | 🟡 In progress                       | Five modules built, 259 offline selftests. Blocked on cTrader app activation. See [[FTMO Venue]] |
+| **Phase 4** (tiny live)      | ⏸ Locked                            | Unchanged — real capital still gated on paper evidence that does not exist yet |
 
 **Most urgent right now:**
-1. **Run `grade_calls.py --csv` from ~2026-07-29** — the first real grades land then (measured, not estimated). Note the project has **zero real graded calls**: the 4 that existed until 2026-07-28 came from deleted *synthetic test notes* and were being reported daily as a track record. See [[Call Grading System]].
-2. Periodically check the live paper positions (**AAPL 15, JNJ 19, DIS 52, AMZN 21** as of 2026-07-28 — four, not two) are healthy — stops present **and GTC**. `place_bracket_order` now verifies this itself on every fill and texts `UNPROTECTED` if a stop didn't survive. This is now partly automated: `reflect_on_trades.py` gained a second detection tier 2026-07-25 (position-snapshot diff) specifically because its execution-based tier silently missed the GOOGL close below — see [[Risk Management System]]. Still worth an eyeball check periodically, not just trusting the automation.
-3. Next watchlist research re-run due ~2026-08-01 (weekly cadence, now `run_research_agent_watchlist.py`, supports `--group`); next `paper_trader.py` rebalance whenever the owner runs it (monthly, manual, no scheduler yet).
-4. Momentum rotation still hasn't had portfolio-level walk-forward validation — worth doing, not currently blocking anything.
-5. **2026-07-23:** Kronos (foundation-model forecaster) is integrated and now backtested — see [[Kronos Research Agent]]. Result: **no measurable forecasting skill found** (Spearman IC 0.036, 50% hit rate, in the one honest post-cutoff window its own training data allows). **As of 2026-07-28 Kronos is the project's MAIN signal (owner decision) and momentum is disabled in code** — see [[Strategy Decisions - Momentum Rotation]] and `signal_policy.py`. The evidence has not changed: Kronos still shows no measurable skill, and scored worse than momentum on the only head-to-head screen. Being the focus is a research direction, not a result.
-6. **2026-07-24:** Unattended "autotrade" toggle built — see [[Autotrade (Experimental)]]. An hourly IC screen showed no edge for EITHER candidate signal (momentum-hourly IC -0.037, Kronos-hourly IC -0.081, both ~coin-flip hit rates) but it was built anyway per explicit owner request, as a deliberate live paper experiment. **Currently OFF** as of 2026-07-28, gated on two silent-failure fixes before re-arming (see [[Autotrade (Experimental)]] and `Handoff.md`). RiskGuard is unaffected, but see #7 below for a real limit on what it actually protects against.
-7. **New 2026-07-25:** Watchlist is now named groups (`trader_app.py` menu 9) with validated symbols, not a raw comma-separated string — see [[Watchlist Context]]. Also: the $300 daily-loss circuit breaker is a **pre-trade gate, not a monitor** — it reads IBKR's live `RealizedPnL` only when an order is about to be placed, so it did nothing for GOOGL's stop firing on its own. Worth knowing before treating autotrade as automatically loss-capped.
+1. **The cTrader Open API app needs to reach `Active`** at
+   `openapi.ctrader.com/apps` — everything else on the FTMO side is built and
+   waiting on it. See [[FTMO Venue]].
+2. **`grade_calls.py --csv` has still never been re-run.** As of 2026-08-02 the
+   file is still **0 graded / 76 pending** and still the 2026-07-28 run. The
+   grades exist in the price data; they are not in the file. This is the one
+   artefact rule 5 gates autonomy on, and it has been overdue since ~07-29.
+   See [[Call Grading System]].
+3. **Watchlist research re-run is overdue** — every note in `research_log/` is
+   dated 2026-07-25 against a weekly cadence.
+4. The three open IBKR positions stay monitored until they close naturally.
+   `reflect_on_trades.py` and its launchd job keep running. **Verify stops are
+   GTC, not merely present**, whenever checking.
+5. Momentum rotation still has no portfolio-level walk-forward validation, and
+   the broad-universe test written on 2026-07-23 has still never been run.
+
+
+**Standing context (durable, not a to-do list):**
+
+- **The project has ZERO real graded calls and never has had any.** The four
+  that existed until 2026-07-28 came from *synthetic test notes* that had been
+  deleted, and were reported daily as a track record. See
+  [[Call Grading System]].
+- **Kronos is the main signal and momentum is disabled in code** (owner
+  decision 2026-07-28, `signal_policy.py`). The evidence has not changed:
+  Kronos shows no measurable skill (Spearman IC 0.036, 50% hit rate) and scored
+  *worse* than momentum on the only head-to-head screen. Being the focus is a
+  research direction, not a result. See [[Kronos Research Agent]].
+- **Two deliberate exceptions to the earn-autonomy-with-evidence rule now
+  exist**, and both were made with the evidence stated first:
+  [[Autotrade (Experimental)]] (built 2026-07-24 despite an hourly IC screen
+  showing no edge for either candidate signal; currently OFF) and the
+  fully-unattended [[FTMO Venue]] (2026-08-02). Neither is precedent.
+- **RiskGuard's daily-loss breaker is a pre-trade gate, not a monitor.** It is
+  consulted only when an order is being placed, so it did nothing when GOOGL's
+  stop fired on its own. As of 2026-08-02 the *visibility* half is fixed —
+  `reflect_on_trades.py` now evaluates the breach condition every 30 minutes
+  and alerts — but enforcement is unchanged. This is exactly why the FTMO
+  venue uses a continuous equity monitor instead. See
+  [[Risk Management System]].
+- The watchlist is named groups with validated symbols, edited via
+  `trader_app.py` menu 9 — not a raw string. See [[Watchlist Context]].
 
 ## The Vault by topic
 
@@ -37,7 +73,8 @@ This is the central index for the Trading Bot project. The codebase lives at `/U
 
 ### 🔧 **Risk & Execution**
 - [[Risk Management System]] — RiskGuard code enforcement ($5k notional limit, 5 positions, $300 daily loss circuit breaker, stop required)
-- [[IBKR Integration]] — paper account live (port 4002, DUQ903866), bracket orders, audit trail
+- [[FTMO Venue]] — **the trading venue as of 2026-08-02**; cTrader Open API, Challenge rule engine, continuous equity monitor, unattended
+- [[IBKR Integration]] — paper account (port 4002, DUQ903866); RETIRED IN PLACE 2026-08-02, still monitoring three open positions
 - [[Trade Journal Structure]] — what goes in `trade_journal.csv` every order attempt/fill/block
 - [[Autotrade (Experimental)]] — unattended hourly rebalancing toggle, built 2026-07-24 despite no measurable edge at that cadence; OFF by default, the one documented exception to human-approval-gated execution
 

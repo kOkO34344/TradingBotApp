@@ -1,10 +1,29 @@
 ---
 tags: [roadmap, next-steps, project-management]
 status: "Live — prioritized action queue"
-last_updated: 2026-07-28
+last_updated: 2026-08-02
 ---
 
 # Next Build Steps — Prioritized Action Queue
+
+> [!important] Reordered 2026-08-02 — the venue changed
+> The work queue below predates the move to FTMO. Current priorities:
+>
+> 1. **cTrader Open API app must reach `Active`** — everything on the FTMO side
+>    is built and blocked on it. See [[FTMO Venue]].
+> 2. **`grade_calls.py --csv`** — still 0 graded / 76 pending, still the
+>    2026-07-28 run, overdue since ~07-29. This is the artefact the
+>    earn-autonomy rule depends on.
+> 3. **Weekly watchlist research re-run** — all notes still dated 2026-07-25.
+> 4. **IC-screen each FTMO asset class before enabling it.** Only stock CFDs
+>    inherit any evidence, and that evidence is IC ~0. Indices, FX and
+>    commodities have none at all.
+> 5. Once FTMO connects: bind real symbol specs, add the `venue` column to the
+>    trade journal, build the signal→order path, then an **integration pass** —
+>    the only real bug found so far surfaced that way, not from unit tests.
+>
+> Items below about building `paper_trader.py` and IBKR rebalances are DONE or
+> retired; keep them for the reasoning, not as instructions.
 
 This is the **exact sequence of work** that makes sense given where the project stands right now. Updated 2026-07-21: **Phase 3 is built and live** — `paper_trader.py` exists and already executed a real rebalance on the paper account. This file previously assumed Phase 3 hadn't started; that's no longer true. Tiers below are reordered to match.
 
