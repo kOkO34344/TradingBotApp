@@ -42,6 +42,7 @@ BASE_DIR = Path(__file__).parent
 REFLECT_DIR = BASE_DIR / "trade_reflections"
 STATE_FILE = REFLECT_DIR / ".reflected_execids.json"
 SNAPSHOT_FILE = REFLECT_DIR / ".position_snapshot.json"
+BREAKER_STATE_FILE = REFLECT_DIR / ".breaker_alerted.json"
 RESEARCH_LOG_DIR = BASE_DIR / "research_log"
 JOURNAL_FILE = BASE_DIR / "trade_journal.csv"
 
@@ -101,6 +102,62 @@ def save_snapshot(positions: dict) -> None:
     SNAPSHOT_FILE.write_text(json.dumps(
         {"taken_at": datetime.now().isoformat(timespec="seconds"), "positions": positions},
         indent=2, sort_keys=True))
+
+
+def load_breaker_alert_date() -> str:
+    """Date (YYYY-MM-DD) the breaker alert last fired, or "" if never."""
+    if BREAKER_STATE_FILE.exists():
+        try:
+            return json.loads(BREAKER_STATE_FILE.read_text()).get("alerted_on", "")
+        except Exception:
+            return ""
+    return ""
+
+
+def save_breaker_alert_date(day: str) -> None:
+    REFLECT_DIR.mkdir(exist_ok=True)
+    BREAKER_STATE_FILE.write_text(json.dumps({"alerted_on": day}, indent=2))
+
+
+def check_daily_loss_breaker(ib, dry_run: bool = False) -> bool:
+    """Alert once per day if the daily-loss limit is already breached.
+
+    RiskGuard's breaker is a PRE-TRADE gate — `check_order()` only consults it
+    while an order is being placed, so a loss that arrives on its own (a GTC
+    stop firing overnight, over a weekend, or while nothing is running) never
+    trips it. On 2026-07-23 that was a -$422 GOOGL stop-out against a $300
+    limit that went unnoticed for two days.
+
+    This closes the VISIBILITY half of that gap, not the enforcement half:
+    enforcement is unchanged and still lives in RiskGuard.check(), which will
+    refuse the next opening order regardless of whether this ever ran. What it
+    buys is finding out within one 30-minute cycle instead of at the next
+    order attempt. It flattens nothing and disables nothing.
+
+    Deduped to one alert per calendar day so a breached day doesn't text every
+    30 minutes; the journal row is written on the same schedule for the same
+    reason. Returns True if the breaker is tripped.
+    """
+    guard = ibs.RiskGuard()
+    limit = guard.limits["max_daily_loss_usd"]
+    tripped, reason = ibs.daily_loss_breaker_status(ibs.daily_realized_pnl(ib), limit)
+    if not tripped:
+        print(f"Daily-loss breaker OK — {reason}")
+        return False
+
+    print(f"DAILY LOSS BREAKER TRIPPED — {reason}", file=sys.stderr)
+    today = datetime.now().strftime("%Y-%m-%d")
+    if dry_run:
+        print("  (--dry-run: no journal row, no alert)")
+        return True
+    if load_breaker_alert_date() == today:
+        print("  already alerted today — journal row and text suppressed")
+        return True
+    ibs.journal(event="BREAKER_TRIPPED", status="TRIPPED",
+                detail=f"{reason}. Detected by the scheduled monitor in "
+                       f"reflect_on_trades.py, not by an order attempt.")
+    save_breaker_alert_date(today)
+    return True
 
 
 def fetch_positions_confirmed(ib) -> dict:
@@ -312,6 +369,23 @@ def selftest() -> int:
     check("genuinely flat account returns {} without raising",
           fetch_positions_confirmed(_Flat()) == {})
 
+    print("daily_loss_breaker_status:")
+    trip, _ = ibs.daily_loss_breaker_status(-500.0, 300)
+    check("loss past the limit trips", trip)
+    trip, _ = ibs.daily_loss_breaker_status(-300.0, 300)
+    check("loss exactly at the limit trips", trip)
+    trip, _ = ibs.daily_loss_breaker_status(-299.99, 300)
+    check("loss inside the limit does not trip", not trip)
+    trip, _ = ibs.daily_loss_breaker_status(1200.0, 300)
+    check("a winning day does not trip", not trip)
+    # A negative limit in risk_limits.json must mean the same thing as a
+    # positive one — check() has always used abs(), so this must too.
+    trip, _ = ibs.daily_loss_breaker_status(-500.0, -300)
+    check("limit sign is ignored", trip)
+    trip, reason = ibs.daily_loss_breaker_status(None, 300)
+    check("missing RealizedPnL reports UNKNOWN, not safe",
+          not trip and "UNKNOWN" in reason)
+
     print("FAILED" if failures else "\nAll tier-2 selftests passed.")
     return 1 if failures else 0
 
@@ -341,6 +415,11 @@ def main():
     ib = ibs.connect(port=settings_port, client_id=CLIENT_ID, readonly=True)
     try:
         ibs.verify_paper_account(ib)
+
+        # Runs before close detection and independently of it: the breaker can
+        # be breached by a loss this script has already journaled on an earlier
+        # cycle, so it must not be conditional on finding a NEW close.
+        check_daily_loss_breaker(ib, dry_run=args.dry_run)
 
         filt = ExecutionFilter()
         filt.time = (datetime.now() - timedelta(days=LOOKBACK_DAYS)).strftime("%Y%m%d-%H:%M:%S")

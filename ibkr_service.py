@@ -229,6 +229,17 @@ def journal(event: str, contract=None, action: str = "", quantity: float = "",
             f"Place a GTC stop manually, and check Gateway's Order Presets "
             f"(error 10349 forces DAY TIF and cancels the stop leg)."
         )
+    elif event == "BREAKER_TRIPPED":
+        # The daily-loss limit is already breached. No order was involved —
+        # this is a loss that arrived on its own (a stop firing), which
+        # check_order() structurally cannot see. See daily_loss_breaker_status.
+        send_telegram(
+            f"\U0001f6d1 DAILY LOSS BREAKER TRIPPED\n"
+            f"{detail}\n"
+            f"RiskGuard will refuse new OPENING orders from here (exits still "
+            f"allowed, deliberately). Nothing was closed automatically — review "
+            f"open positions and decide."
+        )
 
 
 # ---------------------------------------------------------------- risk guard
@@ -285,11 +296,48 @@ class RiskGuard:
         if opening and len(ib.positions()) >= L["max_open_positions"]:
             return False, f"already at max_open_positions={L['max_open_positions']}"
         if opening:
-            pnl = daily_realized_pnl(ib)
-            if pnl is not None and pnl <= -abs(L["max_daily_loss_usd"]):
-                return False, (f"daily loss circuit breaker: realized {pnl:,.0f} <= "
-                               f"-{L['max_daily_loss_usd']:,.0f}. Done for the day.")
+            # Same predicate the scheduled monitor uses, so the gate and the
+            # alert can never disagree about what "tripped" means.
+            tripped, reason = daily_loss_breaker_status(
+                daily_realized_pnl(ib), L["max_daily_loss_usd"])
+            if tripped:
+                return False, f"daily loss circuit breaker: {reason}. Done for the day."
         return True, "ok"
+
+
+def daily_loss_breaker_status(pnl, limit_usd: float) -> tuple[bool, str]:
+    """Is the daily-loss circuit breaker already breached? Pure function.
+
+    `check()` above asks this question only when an order is being placed,
+    which makes it a pre-trade GATE and nothing more: it can refuse the NEXT
+    order after a bad day, but it cannot see a loss that arrives on its own.
+
+    That is not a hypothetical limitation. On 2026-07-23 GOOGL's GTC stop
+    gapped through for roughly -$422 against a then-$300 limit and the breaker
+    never evaluated at all, because nothing tried to place an order that day.
+    The loss was invisible for two days. Journalling closes did not fix it
+    either — `daily_realized_pnl()` reads IBKR's own RealizedPnL account
+    value, not the journal.
+
+    So this is factored out as a pure predicate that a MONITOR can also call
+    on a schedule (see reflect_on_trades.py), turning "you find out at the
+    next order attempt" into "you get a text within 30 minutes". Enforcement
+    is unchanged and still lives in `check()` — this only makes the breach
+    visible. It deliberately does not flatten positions or disable autotrade:
+    auto-remediation is a separate decision, and the same reasoning applies
+    here as in verify_stop_protection() (silently fixing it would hide how
+    often it happens).
+
+    Returns (tripped, reason). A None pnl means IBKR didn't serve the tag —
+    reported as not-tripped with an explicit "unknown", never as safe.
+    """
+    if pnl is None:
+        return False, "RealizedPnL unavailable from IBKR — breaker state UNKNOWN, not verified safe"
+    limit = abs(limit_usd)
+    if pnl <= -limit:
+        return True, (f"realized P&L today ${pnl:,.2f} <= -${limit:,.0f} "
+                      f"(max_daily_loss_usd)")
+    return False, f"realized P&L today ${pnl:,.2f}, limit -${limit:,.0f}"
 
 
 def daily_realized_pnl(ib: IB):

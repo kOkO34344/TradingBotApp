@@ -57,3 +57,10 @@ KronosAI/kronos_backtest_checkpoint.json
 # Autotrade automation: runtime logs, not content
 autotrade_runner.log
 autotrade_launchd.log
+
+# Claude Code session state. The skills under .claude/skills/ ARE tracked
+# (they carry project guidance); these two are not:
+#   settings.local.json — this machine's permission allowlist, not content
+#   worktrees/          — live git worktrees, already tracked via their own refs
+.claude/settings.local.json
+.claude/worktrees/

@@ -233,6 +233,7 @@ def run_rebalance(ctx, ib, dry_run: bool = False) -> dict:
             ib, settings, top, data, top_n, label,
             auto_approve=False, dry_run=dry_run,
             approve_fn=None if dry_run else approve_fn,
+            ranked=ranked,
         )
     finally:
         pending = _pending.get(job_id)

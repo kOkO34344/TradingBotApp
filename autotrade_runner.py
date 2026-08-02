@@ -160,7 +160,8 @@ def main():
             ibs.verify_paper_account(ib)
             ib.reqMarketDataType(3)  # delayed data — this paper account has no live-data subscription
             did_anything = execute_rebalance(ib, settings, top, data, top_n, signal_label=signal_label,
-                                             auto_approve=True, dry_run=args.dry_run)
+                                             auto_approve=True, dry_run=args.dry_run,
+                                             ranked=ranked)
             _log(f"done — acted={did_anything}")
         finally:
             ib.disconnect()

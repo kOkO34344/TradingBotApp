@@ -38,8 +38,8 @@ Brokers (paper account first, always).
    can run (momentum-hourly, Kronos-hourly) showing no measurable edge at
    that cadence (see Empirical findings). It removes the human approval
    prompt — RiskGuard stays fully enforced regardless. Off by default
-   (`trader_settings.json`'s `autotrade.enabled`). See the Autotrade section
-   below before touching this.
+   (`trader_settings.json`'s `autotrade.enabled`). Read the `autotrade` skill
+   before touching this.
 8. **Kronos is the project's main signal; momentum is DISABLED.** Owner
    instruction, 2026-07-28: momentum does not run again until Koko explicitly
    asks for it in that session. Enforced in code by `signal_policy.py`, not by
@@ -99,11 +99,10 @@ File purposes are documented in each script's own module docstring
   (`EUR.USD`), crypto (`BTC-USD`) and futures (`ES=F`) are dropped and
   reported, never silently discarded. Has a `--selftest`-style
   `python3 watchlist.py` offline check.
-  `--group <name>` / `--list-groups` work on `run_research_agent_watchlist.py`
-  — that flag is written and working, but lives in a file that is still
-  UNTRACKED (like `run_notify.sh` / `daily_digest.py`, it came from another
-  session and depends on the untracked `TelegramBot/`), so it is not in any
-  commit yet. Committing it means committing that whole external set.
+  `--group <name>` / `--list-groups` work on `run_research_agent_watchlist.py`,
+  which is tracked (as are `run_notify.sh`, `daily_digest.py` and
+  `TelegramBot/` — the old "untracked external set" note was stale and is
+  resolved).
   **Removing a ticker you hold a position in is guarded**, and this is the
   reason why: `paper_trader.py` filters holdings with `if sym in tickers`, so
   a removed symbol's position goes invisible to it — the GTC stop survives but
@@ -173,6 +172,21 @@ after testing it properly.
   check the gap between rank N and N+1; if it's ~1 point, re-run and see
   whether the same names come back. Proper fix would be averaging more
   samples, or requiring a margin before rotating.
+  **Mitigated 2026-08-02 by the margin route** (`paper_trader.py`):
+  `apply_rotation_margin()` gives an incumbent holding hysteresis — it keeps
+  its slot unless a challenger beats it by more than `rotation_margin_pct`
+  (default **1.0** point, calibrated to the observed spread above, not to
+  theory; 0 restores strict ranking). Applied inside `execute_rebalance` —
+  the only place that knows what is held — so the human, autotrade and
+  browser paths cannot diverge. `rank_boundary_gap()` now prints the rank
+  N/N+1 gap with every proposal, so "check the gap before approving" is
+  on screen rather than a thing to remember. Both are pure functions with
+  offline coverage in `paper_trader.py --selftest`, which replays the actual
+  2026-07-28 pair of runs and asserts they collapse to the same decision.
+  **This suppresses churn; it does not create edge.** The IC is still ~0 —
+  the margin only stops us paying spread to act on noise, and a genuinely
+  beaten incumbent is still dropped. First live check 2026-08-02: gap was
+  1.62 pt (wider than the margin), so the proposal was unchanged.
 
 ## Current phase status
 
@@ -221,6 +235,17 @@ after testing it properly.
   not a monitor: it cannot stop a loss that arrives from a stop firing on its
   own, only refuse the NEXT order after one. Worth knowing before trusting it
   as a safety net under unattended autotrade.
+  **Half-fixed 2026-08-02, and be precise about which half.** ENFORCEMENT is
+  unchanged — it is still a pre-trade gate and still cannot stop a loss that
+  arrives on its own. What changed is VISIBILITY: the trip condition was
+  extracted into `ibkr_service.daily_loss_breaker_status()` (pure, selftested)
+  and `reflect_on_trades.py` now evaluates it on every 30-min cycle,
+  journalling `BREAKER_TRIPPED` and texting once per day when the limit is
+  already breached. So a GOOGL-style overnight stop-out surfaces within half
+  an hour instead of at the next order attempt. It flattens nothing and
+  disables nothing — auto-remediation is deliberately a separate decision,
+  same reasoning as `verify_stop_protection()` not placing a replacement stop.
+  A `None` RealizedPnL reports UNKNOWN, never "safe".
   Remaining open positions verified 2026-07-25: AAPL 15 @ 328.04 and JNJ 19 @
   249.98, both with live **GTC** stops covering the full quantity (309.10 /
   237.61), and no orphaned GOOGL stop left behind. **Re-verified directly
@@ -234,24 +259,17 @@ after testing it properly.
      closes as well as opens. True, and fixed the same day (see rule 3).
   2. **AMZN 21 @ 232.73 and DIS 52 @ 95.39 FILLED**, each with a live
      full-quantity **GTC** stop (217.74 / 90.83, `PreSubmitted`). Only **MSFT**
-     did not fill. IBKR error 10349 "Order TIF was set to DAY based on order
-     preset" was reported at the time and blamed for the cancellations — that
-     diagnosis was **wrong** and was corrected 2026-07-28 by direct probe:
-     10349 is a warning about the PARENT order's unset TIF, it never touched
-     the GTC stop legs, and it does not cancel anything. See the 10349 entry
-     under Known environment gotchas. Whatever stopped MSFT specifically, it
-     was not the preset.
+     did not fill. IBKR error 10349 was blamed at the time for the
+     cancellations; that diagnosis was **wrong** — see the 10349 entry under
+     Known environment gotchas. Whatever stopped MSFT specifically, it was
+     not the preset.
   Net effect: the account went from 2 positions to **4** — AAPL 15, JNJ 19,
   DIS 52, AMZN 21 — while every record here and in `trade_journal.csv` said it
-  was unchanged, for a full day. Root cause of the false record:
-  `place_bracket_order` journalled the PARENT's status after a fixed
-  `ib.sleep(1)` and never looked again, so a bracket that filled seconds later
-  was recorded `Cancelled` permanently, and the stop leg was never checked at
-  all. Fixed 2026-07-28 — it now waits for a terminal status and verifies a
-  covering GTC stop actually survived. Corrections appended to
-  `trade_journal.csv` as `RESULT_CORRECTED` / `NOTE` rows (originals left in
-  place, annotated). **Lesson: a `Cancelled` RESULT row written one second
-  after placement is not evidence the order died.**
+  was unchanged, for a full day. Root cause of the false record was
+  `place_bracket_order` journalling a one-second status snapshot — see the
+  `Cancelled`-RESULT-row entry under Known environment gotchas. Fixed
+  2026-07-28; corrections appended to `trade_journal.csv` as
+  `RESULT_CORRECTED` / `NOTE` rows (originals left in place, annotated).
 - Phase 4 (tiny real capital): locked until months of Phase 3 evidence.
 
 ## Close detection is two-tier (`reflect_on_trades.py`)
@@ -347,22 +365,18 @@ that was never recorded, which is the original bug.
    Note also **2026-07-24 (Friday) has no bar in yfinance for any ticker**
    (verified across SPY/MSFT/AAPL) — trading-day math over this window is off
    by one if you assume a normal week.
-   Actual arrival of the first real grades (measured 2026-07-28, sessions
-   available 07-20,21,22,23,27):
-   | Notes | 5d grades | 21d grades |
-   |---|---|---|
-   | 07-20 (1)  | needs 1 more session  | needs 17 more |
-   | 07-21 (11) | needs 2 more sessions | needs 18 more |
-   | 07-23 (12) | needs 4 more sessions | needs 20 more |
-   | 07-25 (14) | needs 5 more sessions | needs 21 more |
-   So the first handful of 5d grades land ~2026-07-29, the bulk ~early
-   August, and nothing at 21d until late August. Next actions:
-   - Re-run `python3 run_research_agent_watchlist.py` weekly (next due
-     ~2026-08-01). `--group <name>` / `--list-groups` also work if only
-     part of the watchlist needs a refresh — see the Watchlist section below.
-   - Re-run `python3 grade_calls.py --csv` from ~2026-07-29 and actually read
-     the calibration report — don't just run it, look at it. Treat any
-     report claiming grades from notes not in `research_log/` as corrupt.
+   State as of 2026-08-02: `graded_calls.csv` is still **0 graded / 76 pending**
+   (38 at 5d, 38 at 21d) and is still the 2026-07-28 run — the projected
+   ~07-29 arrival of the first 5d grades came and went without a re-run, so
+   the grades exist in the price data but not in the file. Both cycles below
+   are overdue; neither has been run since 07-25/07-28. Next actions:
+   - Re-run `python3 run_research_agent_watchlist.py` weekly. Every note in
+     `research_log/` is dated 2026-07-25, so this is overdue.
+     `--group <name>` / `--list-groups` also work if only part of the
+     watchlist needs a refresh — see the Watchlist section below.
+   - Re-run `python3 grade_calls.py --csv` and actually read the calibration
+     report — don't just run it, look at it. Treat any report claiming grades
+     from notes not in `research_log/` as corrupt.
    - Pending-call shape as of 2026-07-28 (worth knowing before grading):
      **74% no-edge** (28/38), 16% long, 11% short, and confidence is clustered
      low (18 calls at 3/10, none above 6/10). A mostly-no-edge, low-confidence
@@ -379,13 +393,15 @@ that was never recorded, which is the original bug.
    307.36 against a 309.10 stop, consistent with the stop firing, but that is
    inference and not a record.
    Current holdings are therefore **JNJ (19 @ 249.98), DIS (52 @ 95.39) and
-   AMZN (21 @ 232.73)** — three positions, verified directly against IBKR
-   2026-08-01. Their stop state could NOT be verified that evening: Gateway's
-   `reqAllOpenOrders` was timing out while positions and market data answered
-   normally (the 2026-07-29 symptom), so protection reads UNKNOWN, which is
-   not the same as unprotected. **Re-verify the three GTC stops when Gateway
-   is answering again.** DIS and AMZN came from the 2026-07-27 rebalance that
-   the journal wrongly recorded as `Cancelled` (see Phase 3 status above).
+   AMZN (21 @ 232.73)** — three positions. Stop protection was UNKNOWN on
+   2026-08-01 (Gateway's `reqAllOpenOrders` was timing out while positions and
+   market data answered normally — the 2026-07-29 symptom) and was
+   **re-verified read-only on 2026-08-02: all three protected, full quantity,
+   `tif=GTC`, `PreSubmitted`** — AMZN 21 @ stop 217.74, DIS 52 @ 90.83, JNJ
+   19 @ 237.61. `reqAllOpenOrders` answered normally on that attempt, so the
+   07-29/08-01 wedge was transient. DIS and AMZN came from the 2026-07-27
+   rebalance that the journal wrongly recorded as `Cancelled` (see Phase 3
+   status above).
    **The "Gateway Order Preset blocker" is CLOSED** — it was a missing `tif`
    on our own parent order, fixed in code 2026-07-28 and verified by probe
    (no 10349, LMT `tif=DAY` / STP `tif=GTC`). No Gateway change is or was
@@ -410,21 +426,13 @@ that was never recorded, which is the original bug.
    http://localhost:3000. **Local only — never deploy it and never bind
    0.0.0.0:** it holds a live Gateway connection and can place orders, so
    there is no auth layer because there is no network exposure. Full
-   rationale in `web/README.md`; UI-specific rules in `web/CLAUDE.md`.
-   Screens: charts (all five asset classes, symbol typeahead backed by
-   IBKR's own `reqMatchingSymbols` so it only suggests what this account
-   can trade, indicators.py overlays, journal markers, stop lines),
-   dashboard, positions + write actions, rebalance approve, journal,
-   Kronos, backtests.
+   rationale in `web/README.md` (architecture, screen list, write-action
+   mechanics); UI-specific rules in `web/CLAUDE.md`.
    - **The backend is a thin wrapper on purpose.** Order placement, sizing,
      RiskGuard, journalling and indicator math stay in `ibkr_service.py` /
      `paper_trader.py` / `indicators.py`. The browser path and the terminal
      path cannot diverge in risk handling — same reasoning as sharing
      `execute_rebalance` between the human and autotrade paths.
-   - **`execute_rebalance` gained an optional `approve_fn`** so the browser
-     replaces the y/N prompt and *only* that: one call pauses mid-flight, so
-     the proposal approved and the orders placed come from one `buy_plan`.
-     Default behaviour is unchanged.
    - **Order placement runs on its own thread** (`api/trader_worker.py`,
      clientId 16) because ibkr_service's order functions are synchronous and
      `ib.sleep()` → `IB.run()` → `run_until_complete()` cannot run inside the
@@ -433,109 +441,29 @@ that was never recorded, which is the original bug.
    - Every write is preview → execute(token); the execute reads its
      parameters from the stored preview, so the UI cannot show one order and
      send another. Entries are bracket-only.
-   - Offline selftests: `api/contracts.py`, `api/indicators_api.py`,
-     `api/journal_api.py`, `api/backtests_api.py`.
    - Still true, and still worth weighing: more research/trading cycles is
      the evidence this project is gated on; a dashboard is not.
 
 ## Autotrade (experimental, unattended) — `autotrade_runner.py`
 
-Built 2026-07-24. Unattended hourly rebalancing: no y/n prompt, RiskGuard
-fully enforced regardless. **Built despite both eligible signals showing no
-measurable edge at this cadence** (see Empirical findings) — a deliberate
-live paper experiment at the owner's explicit, twice-confirmed request, not
-because either signal is validated. See rule 7.
-
-- **Toggle:** `trader_settings.json`'s `"autotrade": {"enabled": bool,
-  "signal": "kronos", "allow_momentum": false}`. Set via `trader_app.py` menu
-  item 8, or edit the JSON directly. Defaults to `enabled: false`. Per rule 8
-  the only signal that will actually fire is `kronos`; setting `momentum` here
-  makes the runner **refuse to fire and text you**, placing nothing — it never
-  silently swaps in the other signal. `trader_app.py` menu 8 says so at the
-  moment you pick it, rather than letting a setting look applied and quietly
-  do nothing.
-- **Schedule:** `com.tradingbotapp.autotrade.plist`, hourly 16:00-23:00 local
-  (this machine runs EEST/EET) — a superset of NYSE 9:30-16:00 ET year-round
-  (the two DST regimes keep a constant ~7h gap). `autotrade_runner.py` does
-  its own authoritative America/New_York market-hours check on every firing
-  (`zoneinfo`, not host time) — the launchd schedule only needs to cover the
-  window, not match it exactly.
-- **Signal:** `autotrade_signals.py` — hourly bars (yfinance, ~2-3yr history,
-  separate cache `KronosAI/price_data_hourly_live/` from the backtest's
-  `price_data_hourly/`), same LOOKBACK=400/PRED_LEN=20 bar counts the IC
-  screen used. `ind.atr()` on hourly bars gives a 14-HOUR stop distance, not
-  14-day — deliberately tighter, appropriate for the shorter intended hold.
-- **Execution:** `paper_trader.execute_rebalance(..., auto_approve=True)` —
-  the exact same sizing/RiskGuard/bracket-order function the human-approved
-  path uses (extracted 2026-07-24 specifically so both paths can never
-  diverge in risk handling). `client_id=13` (distinct from trader_app's 7,
-  paper_trader's 9, reflect_on_trades' 11 — lets all run concurrently).
-- **Notifications:** texts on any executed trade or error; silent on no-op
-  cycles (same convention as `reflect_on_trades.py`). Every cycle — no-op or
-  not — gets one line in `autotrade_runner.log` regardless; that log is what
-  to check to confirm it's actually alive, since Telegram silence on a quiet
-  market day is expected, not a sign of failure.
-- **Known real risk, not just theoretical:** RiskGuard's per-order/position/
-  daily-loss limits don't guard against slow bleed from turnover costs on a
-  no-edge signal trading far more often than the validated monthly cadence.
-  `trade_journal.csv` is the audit trail for catching that — check it
-  periodically, don't just assume silence means it's fine.
-- **To disable:** turn the toggle off (safest, keeps the job installed for
-  later), or `launchctl unload ~/Library/LaunchAgents/com.tradingbotapp.autotrade.plist`
-  to stop it firing entirely.
+Unattended hourly rebalancing, off by default. Rule 7 above governs it.
+Operational detail (toggle, schedule, signal, execution, notifications,
+how to disable) lives in the **`autotrade` skill** — read it before touching
+`autotrade_runner.py` or `autotrade_signals.py`.
 
 ## Phone notifications (TelegramBot/) — use this for anything long-running
 
-One Telegram bot, `TelegramBot/notify.py` (`send_telegram(text)`), reused
-across the project. Owner gets a phone text; credentials live in
-`TelegramBot/.env` (gitignored, see `TelegramBot/README.md` for setup).
+Default to running backtests and other long one-shot scripts through
+`./run_notify.sh <script> [args]` rather than calling them directly.
+Scripts that already notify from inside themselves must **NOT** be wrapped
+(`reflect_on_trades.py`, `run_research_agent_watchlist.sh`, `daily_digest.py`,
+`paper_trader.py`, `autotrade_runner.py`, `ibkr_service.py`'s `journal()`) —
+wrapping them double-notifies or spams a no-op poller. Full detail, including
+what each of those texts on and how to wire up a new one, is in the
+**`notify-on-long-runs` skill**.
 
-**Any future session (Claude Code or otherwise) starting a backtest or
-other one-shot script should default to running it through the generic
-wrapper, not calling the script directly** — this is how "notify me from
-any session" actually holds:
-
-```bash
-./run_notify.sh sma_crossover_backtest.py
-./run_notify.sh KronosAI/kronos_backtest.py --sample-count 5
-./run_notify.sh research_agent.py AAPL
-nohup ./run_notify.sh <script> [args] > /dev/null 2>&1 & disown   # detached
-```
-
-It texts on start, on a 20-min output stall (possible hang), and on
-done/failed with a tail of the output. Full logs land in `run_logs/`.
-
-Other notification points already wired in (do NOT wrap these in
-`run_notify.sh` too — they'd double-notify or spam a no-op poller):
-- `run_research_agent_watchlist.sh` — loops the whole watchlist, sends
-  ONE consolidated direction+confidence digest instead of one per ticker.
-- `reflect_on_trades.py` — texts on every newly-closed position it finds
-  (win/loss + reflection status). Runs every 30 min via launchd and is a
-  no-op most runs, so this notification lives INSIDE the script,
-  conditional on an actual close — never wrap the whole script.
-- `ibkr_service.py`'s `journal()` — texts whenever RiskGuard actually
-  BLOCKS an order (real journal writes only, not the `--selftest` path).
-- `paper_trader.py` — one consolidated text after a real (approved)
-  rebalance executes, listing what was bought/sold.
-- `autotrade_runner.py` — same convention as `paper_trader.py` above (one
-  consolidated text per executed rebalance, tagged `-hourly`), plus an
-  alert on any error. Silent on no-op cycles — see the Autotrade section.
-- `daily_digest.py` — two modes, one script:
-  - `--mode morning` (default) via `com.tradingbotapp.dailydigest.plist`,
-    07:30 local — "plan the day": due-today/freshness flags + Work Queue
-    + Empirical Findings, quoted close to verbatim from this file.
-  - `--mode evening` via `com.tradingbotapp.dailydigestevening.plist`,
-    20:00 local (before the 22:00 vault sync) — "recap the day": today's
-    actual activity (trade_journal.csv entries since midnight, new
-    research notes logged today, new trade_reflections/ files today),
-    plus the same freshness flags as a heads-up for tomorrow.
-  No LLM call either way, just file reads — keep CLAUDE.md's Work Queue
-  and Empirical Findings sections reasonably current since both digests
-  quote them directly. Manual run: `./daily_digest.sh [morning|evening]`.
-
-If you add a new recurring/polling script, give it its own conditional
-`send_telegram()` call at the actual event, the same way
-`reflect_on_trades.py` does — don't put a blanket wrapper around a poller.
+Note both digests quote `CLAUDE.md`'s Work Queue and Empirical Findings
+sections close to verbatim, so keep those reasonably current.
 
 ## Known environment gotchas
 
@@ -650,7 +578,6 @@ If you add a new recurring/polling script, give it its own conditional
 
 ## Practical
 
-- Python env: `.venv` in this folder; `pip install -r requirements.txt`.
 - Owner's shell shows `(base)` conda AND `(.venv)` — make sure `.venv` is active.
 - IBKR: TWS paper port 7497, Gateway 4002. Live ports are refused in code.
 - Commit style: plain descriptive messages, commit after each working increment.
