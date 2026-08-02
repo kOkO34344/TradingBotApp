@@ -27,6 +27,7 @@
   "risk_engine": false,
   "risk_pct_per_trade": 2.0,
   "momentum_top_n": 3,
+  "rotation_margin_pct": 1.0,
   "momentum_lookback_m": 12,
   "ibkr_port": 4002,
   "ibkr_client_id": 9,

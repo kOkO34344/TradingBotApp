@@ -112,6 +112,81 @@ def get_current_holdings(ib, tickers) -> dict:
     return held
 
 
+DEFAULT_ROTATION_MARGIN_PCT = 1.0
+
+
+def rank_boundary_gap(ranked, top_n: int) -> float | None:
+    """Percentage points between rank N and rank N+1. None if there is no N+1.
+
+    This is the number that decides whether a Kronos top-N is a decision or a
+    coin flip, so it gets printed with every proposal — CLAUDE.md's guidance
+    was "check the gap before approving", which only works if the gap is on
+    screen.
+    """
+    if len(ranked) <= top_n or top_n <= 0:
+        return None
+    return float(ranked.iloc[top_n - 1] - ranked.iloc[top_n]) * 100.0
+
+
+def apply_rotation_margin(ranked, top_n: int, held_symbols, margin_pct: float) -> list:
+    """Top-N with hysteresis: an incumbent keeps its slot unless a challenger
+    beats it by more than `margin_pct` percentage points. Pure function.
+
+    Kronos is a SAMPLING forecaster, so its per-ticker output moves between
+    runs on identical data. Measured 2026-07-28: GOOGL came out +2.69% /
+    -3.72% / +4.38% across three consecutive runs, and two `--dry-run`s thirty
+    minutes apart produced different top-3s — [AMZN, MSFT, GOOGL] then
+    [AMZN, MSFT, DIS], because GOOGL and DIS sat ~1 point apart and simply
+    swapped ranks 3/4. That is not cosmetic: run 1 proposed BUY MSFT + BUY
+    GOOGL (~$50k) and SELL DIS; run 2 proposed BUY MSFT only and HOLD DIS.
+    Which orders got placed depended on which sampling draw you happened to
+    run.
+
+    A raw top-N sort has no way to express "these two are tied", so it
+    manufactures a decision out of noise and pays real spread and commission
+    to act on it. The margin makes ties resolve to DO NOTHING, which is both
+    the cheaper error and the honest one — we have no evidence Kronos can
+    distinguish two names one point apart (IC 0.036, hit rate 50.0%).
+
+    The default margin is calibrated to the observed spread above, not to
+    theory: ~1 point is the scale on which this ranking is known to be noise.
+    Set `rotation_margin_pct` in trader_settings.json to change it; 0 restores
+    the old strict-rank behaviour.
+
+    Note this only ever SUPPRESSES churn — it can keep an incumbent that a
+    strict sort would drop, but it can never introduce a name the strict sort
+    didn't already rank above an incumbent. It also cannot keep more than
+    `top_n` names: incumbents defend slots, they don't add them.
+    """
+    strict = list(ranked.index[:top_n])
+    if margin_pct <= 0 or len(ranked) <= top_n:
+        return strict
+
+    held = {s for s in held_symbols if s in ranked.index}
+    if not held:
+        return strict
+
+    margin = margin_pct / 100.0
+    keep, challengers = [], []
+    for sym in strict:
+        (keep if sym in held else challengers).append(sym)
+
+    # Incumbents ranked below the cut defend their slot against the weakest
+    # challenger that displaced them, cheapest-to-defend first.
+    defenders = [s for s in ranked.index[top_n:] if s in held]
+    for defender in defenders:
+        if not challengers:
+            break
+        weakest = challengers[-1]
+        if (ranked[weakest] - ranked[defender]) <= margin:
+            challengers.pop()
+            keep.append(defender)
+
+    # Preserve the ranking's own order in the returned list.
+    out = [s for s in ranked.index if s in set(keep) | set(challengers)]
+    return out[:top_n]
+
+
 def cancel_open_orders_for(ib, symbol: str, timeout_s: float = 10.0) -> list:
     """Cancel any working orders (e.g. the stop leg of a bracket) tied to
     this symbol and wait for confirmation before the caller flattens it —
@@ -247,7 +322,7 @@ def _verify_fx_direction(base_ccy: str, base_value: float, usd_value: float,
 
 def execute_rebalance(ib, settings: dict, top: list, data: dict, top_n: int, signal_label: str,
                       auto_approve: bool = False, dry_run: bool = False,
-                      approve_fn=None) -> bool:
+                      approve_fn=None, ranked=None) -> bool:
     """Diff `top` against current IBKR holdings, size buys off fresh ATR,
     then execute exits-then-entries through RiskGuard/bracket orders.
 
@@ -283,6 +358,25 @@ def execute_rebalance(ib, settings: dict, top: list, data: dict, top_n: int, sig
     print(f"NetLiquidation: ${net_liq:,.2f} (USD-equivalent)")
 
     held = get_current_holdings(ib, tickers)
+
+    # Rotation margin: ties at the N/N+1 boundary resolve to holding, not to
+    # a coin-flip trade. Applied HERE rather than in the signal functions
+    # because this is the only place that knows what is currently held — and
+    # applied inside the shared function so the human, autotrade and browser
+    # paths cannot end up with different churn behaviour.
+    margin_pct = float(settings.get("rotation_margin_pct", DEFAULT_ROTATION_MARGIN_PCT))
+    gap = None
+    if ranked is not None:
+        gap = rank_boundary_gap(ranked, top_n)
+        adjusted = apply_rotation_margin(ranked, top_n, held.keys(), margin_pct)
+        if adjusted != list(top):
+            kept = [s for s in adjusted if s not in top]
+            dropped = [s for s in top if s not in adjusted]
+            print(f"\nRotation margin ({margin_pct:g} pt): holding {', '.join(kept)} "
+                  f"instead of rotating into {', '.join(dropped)} — the gap is "
+                  f"inside the sampling noise, so this is not a signal.")
+            top = adjusted
+
     sells = [sym for sym in held if sym not in top]
     holds = [t for t in top if t in held]
     buys = [t for t in top if t not in held]
@@ -297,6 +391,10 @@ def execute_rebalance(ib, settings: dict, top: list, data: dict, top_n: int, sig
         buy_plan[t] = {"price": price, "atr": atr_val, "qty": qty, "entry": entry, "stop": stop}
 
     print("\n=== Proposed rebalance ===")
+    if gap is not None:
+        verdict = ("WIDE — the boundary is a real separation" if gap > margin_pct
+                   else "NARROW — rank N/N+1 is within sampling noise")
+        print(f"  rank {top_n}/{top_n + 1} gap: {gap:.2f} pt  [{verdict}]")
     if not sells and not buys:
         print("No changes — current holdings already match the target.")
     for sym in sells:
@@ -386,9 +484,70 @@ def execute_rebalance(ib, settings: dict, top: list, data: dict, top_n: int, sig
     return True
 
 
+def selftest() -> int:
+    """Offline checks for the rotation-margin logic. No IBKR, no network.
+
+    Reproduces the 2026-07-28 instability directly: the two real top-3s that
+    came out of identical data thirty minutes apart must collapse to the same
+    decision once the margin is applied.
+    """
+    failures = []
+
+    def check(name, cond):
+        print(f"  {'ok  ' if cond else 'FAIL'}  {name}")
+        if not cond:
+            failures.append(name)
+
+    def series(pairs):
+        return pd.Series(dict(pairs)).sort_values(ascending=False)
+
+    print("rank_boundary_gap:")
+    r = series([("A", 0.05), ("B", 0.04), ("C", 0.03), ("D", 0.01)])
+    check("gap is rank N minus rank N+1, in points",
+          abs(rank_boundary_gap(r, 3) - 2.0) < 1e-9)
+    check("no N+1 -> None", rank_boundary_gap(series([("A", 0.05)]), 3) is None)
+
+    print("apply_rotation_margin — the real 2026-07-28 runs:")
+    # Run 1 ranked GOOGL 3rd (+1.71) and DIS 4th (+1.59); run 2 swapped them
+    # (GOOGL +0.89, DIS +2.26). Holding DIS, a strict sort sells it on run 1
+    # and holds it on run 2 — the same account, the same data, opposite trades.
+    run1 = series([("AMZN", 0.040), ("MSFT", 0.030), ("GOOGL", 0.0171), ("DIS", 0.0159)])
+    run2 = series([("AMZN", 0.040), ("MSFT", 0.030), ("DIS", 0.0226), ("GOOGL", 0.0089)])
+    held = {"DIS"}
+    check("strict top-3 disagrees between the two runs",
+          list(run1.index[:3]) != list(run2.index[:3]))
+    m1 = apply_rotation_margin(run1, 3, held, 1.0)
+    m2 = apply_rotation_margin(run2, 3, held, 1.0)
+    check("margin makes both runs agree", m1 == m2)
+    check("margin holds the incumbent rather than coin-flipping", "DIS" in m1)
+    check("margin never grows the book past top_n", len(m1) == 3)
+
+    print("apply_rotation_margin — it must not freeze the portfolio:")
+    clear = series([("AMZN", 0.09), ("MSFT", 0.08), ("NVDA", 0.07), ("DIS", 0.001)])
+    out = apply_rotation_margin(clear, 3, {"DIS"}, 1.0)
+    check("a genuinely beaten incumbent is still dropped", "DIS" not in out)
+    check("the challenger takes the slot", "NVDA" in out)
+
+    print("apply_rotation_margin — degenerate inputs:")
+    check("margin 0 restores strict ranking",
+          apply_rotation_margin(run1, 3, held, 0.0) == list(run1.index[:3]))
+    check("holding nothing is just the strict ranking",
+          apply_rotation_margin(run1, 3, set(), 1.0) == list(run1.index[:3]))
+    check("holding a name outside the ranking is ignored",
+          apply_rotation_margin(run1, 3, {"TSLA"}, 1.0) == list(run1.index[:3]))
+    check("no N+1 to defend against is just the strict ranking",
+          apply_rotation_margin(series([("A", 0.05), ("B", 0.04)]), 3, {"B"}, 1.0)
+          == ["A", "B"])
+
+    print("FAILED" if failures else "\nAll rotation-margin selftests passed.")
+    return 1 if failures else 0
+
+
 def main():
     ap = argparse.ArgumentParser(
         description="Phase 3 paper-trading loop: rule-based rebalance with mandatory human approval.")
+    ap.add_argument("--selftest", action="store_true",
+                    help="Run offline rotation-margin checks and exit (no IBKR connection).")
     ap.add_argument("--dry-run", action="store_true",
                     help="Connect read-only, compute and print the proposal, place no orders, ask nothing.")
     ap.add_argument("--signal", choices=list(sp.KNOWN_SIGNALS), default=None,
@@ -399,6 +558,9 @@ def main():
                     help="Owner opt-in to run the disabled momentum signal in THIS invocation. "
                          "Do not pass this unless the owner asked for momentum in this session.")
     args = ap.parse_args()
+
+    if args.selftest:
+        return selftest()
 
     settings = ta.load_settings()
     tickers = settings["tickers"]
@@ -461,7 +623,7 @@ def main():
         print(f"Connected. Paper account: {acct}")
         ib.reqMarketDataType(3)  # delayed data — this paper account has no live-data subscription
         execute_rebalance(ib, settings, top, data, top_n, signal_label=signal,
-                          auto_approve=False, dry_run=args.dry_run)
+                          auto_approve=False, dry_run=args.dry_run, ranked=ranked)
     finally:
         ib.disconnect()
 
