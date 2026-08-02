@@ -102,6 +102,20 @@ File purposes are documented in each script's own module docstring
   every position); and **`heartbeat()` is the only thing that notices
   SILENCE**, since every other entry point is driven by an arriving message.
   It places nothing — it emits events and the executor acts.
+- `ftmo_audit.py` records WHY a decision was allowed; `trade_journal.csv`
+  records what was DONE. Append-only JSONL, one file per FTMO day
+  (`ftmo_audit/YYYY-MM-DD.jsonl`, gitignored), aligned to the 00:00 CE(S)T
+  boundary so "the day we breached" is one file. Logs transitions and
+  decisions, NOT every evaluation — at tick rate that would be millions of
+  lines a day and would bury the four that matter — plus a rate-limited
+  snapshot so a quiet day still proves the monitor was alive.
+  **A write failure is swallowed and counted (`write_failures`), never
+  raised.** That deliberately inverts rule 6 for this file only: an exception
+  out of a logging call could prevent a FLATTEN from executing, and losing an
+  audit line is strictly less bad than failing to close a breaching position.
+  `--report [YYYY-MM-DD]` replays a day. A torn final line from a killed
+  process is flagged `UNPARSEABLE`, not fatal — partial recovery matters most
+  exactly when the file is needed.
 - `indicators.py` is the SINGLE SOURCE OF TRUTH for technical math, shared by
   trader_app charts and research_agent prompts (human and AI see identical
   numbers). It has `--selftest`. Never reimplement indicators elsewhere —
@@ -596,6 +610,16 @@ sections close to verbatim, so keep those reasonably current.
   `DropdownMenuGroup`. Both shipped in the web UI and were only found by
   opening the menu. After touching any shadcn component, click it in the
   browser — `tsc` clean means very little here. Full list in `web/CLAUDE.md`.
+- **Adding the `venue` column to `trade_journal.csv` needs a deliberate
+  migration — do NOT just extend `JOURNAL_COLUMNS`.** `journal()` writes the
+  header only when the file does not exist, so the live journal keeps its
+  11-column header while new rows would carry 12 values. Every reader uses
+  `csv.DictReader` (`api/journal_api.py`, `daily_digest.py`), which would put
+  the 12th value under the `None` restkey and never surface `venue` at all —
+  silently, with no error. The migration is lossless (every existing row is an
+  IBKR row) but it rewrites an append-only audit file, so it wants a backup and
+  a verified read-back, not a drive-by edit. Not needed until the first FTMO
+  order is journalled. Identified 2026-08-02 while building `ftmo_audit.py`.
 - **cTrader `CH_CLIENT_AUTH_FAILURE: OA client is not in active state` is not a
   credential typo.** It means the Open API application itself is still in
   `Submitted` state at openapi.ctrader.com/apps and has not been approved to

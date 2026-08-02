@@ -64,3 +64,8 @@ autotrade_launchd.log
 #   worktrees/          — live git worktrees, already tracked via their own refs
 .claude/settings.local.json
 .claude/worktrees/
+
+# FTMO rule-decision audit trail: runtime forensic data, one JSONL file per
+# FTMO day. Not version-controlled content — the findings that matter get
+# written into CLAUDE.md, same convention as autotrade_runner.log.
+ftmo_audit/
