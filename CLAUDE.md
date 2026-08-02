@@ -89,6 +89,19 @@ File purposes are documented in each script's own module docstring
   The 1-Step trailing floor moves ONLY in `roll_day()`, at the 00:00 CE(S)T
   boundary, off the day's CLOSING balance; ratcheting it on intraday equity
   would tighten the limit using profit that was never kept.
+- `ftmo_monitor.py` is what makes `ftmo_rules.py` protection rather than a
+  calculator: a pure state machine (`--selftest`, 56 checks against synthetic
+  tick streams) that keeps equity current and emits actions on posture CHANGE
+  — OK / BLOCKED / UNKNOWN / FLATTEN / BREACHED. Four properties not to
+  regress: it is **edge-triggered** (level-triggering would emit one flatten
+  per tick); **stale quotes are UNKNOWN, never safe** (`floating_pnl()`
+  returns None, deliberately not 0.0 — blocking at 10s, flattening at 60s,
+  because a 2s blip is not a reason to liquidate and 60s blind on a leveraged
+  book is); **floating P&L marks at the exit side of the spread** (long at
+  bid, short at ask — marking at the mid flatters equity by half a spread on
+  every position); and **`heartbeat()` is the only thing that notices
+  SILENCE**, since every other entry point is driven by an arriving message.
+  It places nothing — it emits events and the executor acts.
 - `indicators.py` is the SINGLE SOURCE OF TRUTH for technical math, shared by
   trader_app charts and research_agent prompts (human and AI see identical
   numbers). It has `--selftest`. Never reimplement indicators elsewhere —
