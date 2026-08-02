@@ -75,6 +75,20 @@ File purposes are documented in each script's own module docstring
   selftest. To change the project's focus signal, change `DEFAULT_SIGNAL` /
   `DISABLED_SIGNALS` there — not in five `.get()` fallbacks.
 
+- `ftmo_rules.py` is the SINGLE SOURCE OF TRUTH for FTMO Challenge limits —
+  pure logic, no network, `--selftest` (70 checks) and `--show` for the derived
+  numbers. Answers three questions that must never be conflated: may I OPEN,
+  must I FLATTEN, and could this phase PASS. The third is not a trading
+  permission — too few trading days or a failed Best Day Rule means keep
+  trading, not stop. Every FTMO limit is measured on **equity including
+  floating P&L**, so a limit can be breached with no order placed; that is why
+  the FTMO path gets a continuous monitor and not a pre-trade gate like
+  `RiskGuard`. Each published limit becomes three thresholds — soft (stop
+  opening), flatten (close everything), breach (already failed) — because
+  stopping exactly at FTMO's number leaves nothing for slippage or a gap.
+  The 1-Step trailing floor moves ONLY in `roll_day()`, at the 00:00 CE(S)T
+  boundary, off the day's CLOSING balance; ratcheting it on intraday equity
+  would tighten the limit using profit that was never kept.
 - `indicators.py` is the SINGLE SOURCE OF TRUTH for technical math, shared by
   trader_app charts and research_agent prompts (human and AI see identical
   numbers). It has `--selftest`. Never reimplement indicators elsewhere —
