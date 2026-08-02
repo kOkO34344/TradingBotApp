@@ -7,6 +7,12 @@ last_synced: 2026-07-21
 
 # Trading Bot Project — Overview
 
+> [!note] 2026-08-02 — FTMO is now the trading venue
+> Five new modules (`ftmo_rules`, `ftmo_monitor`, `ftmo_sizing`, `ftmo_audit`,
+> `ftmo_service`) sit alongside the existing app, with 259 offline selftests.
+> IBKR is retired in place. The terminal app and web UI remain IBKR-only.
+> See [[FTMO Venue]].
+
 This is the index note for the trading-bot project. The actual code lives **outside the vault**, at `/Users/kaloyanivanov/TradingBotApp` on this Mac — these notes are a synced summary of what's there, kept accurate as the project moves forward.
 
 ## Where things stand right now

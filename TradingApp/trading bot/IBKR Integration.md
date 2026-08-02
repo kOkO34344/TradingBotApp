@@ -1,11 +1,23 @@
 ---
 tags: [infrastructure, broker, execution]
-status: "live and trading"
+status: "retired in place 2026-08-02 — monitoring only, 3 positions open"
 connection_verified: 2026-07-21
-last_updated: 2026-07-28
+last_updated: 2026-08-02
 ---
 
 # IBKR Integration: Connection & Execution
+
+> [!important] RETIRED IN PLACE — 2026-08-02
+> FTMO is the trading venue now (see [[FTMO Venue]]). IBKR places **no new
+> orders**, but this is not dead code and must not be deleted: three positions
+> are still open and something has to keep managing them.
+>
+> **Open, verified read-only 2026-08-02, all full-quantity `tif=GTC`
+> `PreSubmitted`:** JNJ 19 @ 249.98 (stop 237.61), DIS 52 @ 95.39 (stop 90.83),
+> AMZN 21 @ 232.73 (stop 217.74). `reflect_on_trades.py` and its launchd job
+> keep running until these close naturally.
+>
+> Everything below remains accurate for those positions.
 
 ## Status
 

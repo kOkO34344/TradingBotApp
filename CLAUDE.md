@@ -62,6 +62,25 @@ Brokers (paper account first, always).
    and research scripts (`strategy_shootout.py`, `broad_universe_momentum.py`)
    are NOT gated — they place no orders, and gating evidence-generation would
    defeat rule 4.
+9. **FTMO is the trading venue; IBKR is retired in place.** Owner decision,
+   2026-08-02. IBKR places no new orders but keeps monitoring — the three open
+   positions (JNJ, DIS, AMZN) stay managed by `reflect_on_trades.py` and their
+   GTC stops until they close naturally. Do NOT delete the IBKR code or unload
+   its launchd jobs while a position is open: this project has documented what
+   happens when code stops managing a position that still exists — the stop
+   survives, but nothing will ever exit or record it.
+   **The FTMO path runs FULLY UNATTENDED, and that is a second deliberate
+   exception to rule 5 — flag it as such, exactly like rule 7, and do not treat
+   it as precedent.** Requested explicitly on 2026-08-02 with the evidence
+   position stated first: 0 graded calls, Kronos IC ~0 on the only screens run,
+   and no IC screen at all yet for indices, FX or commodities. The rule engine,
+   monitor and sizer are enforced regardless of autonomy — autonomy removes the
+   human approval step, never a limit. Kronos may only trade an asset class
+   that has passed its own IC screen (owner's own condition); do not enable a
+   class because it is configured, only because it screened.
+   **The Challenge account is simulated, so this does not breach rule 1** — the
+   real exposure is the entry fee, not trading capital. Phase 4 (real capital,
+   IBKR) stays locked.
 
 ## Architecture
 
@@ -75,47 +94,16 @@ File purposes are documented in each script's own module docstring
   selftest. To change the project's focus signal, change `DEFAULT_SIGNAL` /
   `DISABLED_SIGNALS` there — not in five `.get()` fallbacks.
 
-- `ftmo_rules.py` is the SINGLE SOURCE OF TRUTH for FTMO Challenge limits —
-  pure logic, no network, `--selftest` (70 checks) and `--show` for the derived
-  numbers. Answers three questions that must never be conflated: may I OPEN,
-  must I FLATTEN, and could this phase PASS. The third is not a trading
-  permission — too few trading days or a failed Best Day Rule means keep
-  trading, not stop. Every FTMO limit is measured on **equity including
-  floating P&L**, so a limit can be breached with no order placed; that is why
-  the FTMO path gets a continuous monitor and not a pre-trade gate like
-  `RiskGuard`. Each published limit becomes three thresholds — soft (stop
-  opening), flatten (close everything), breach (already failed) — because
-  stopping exactly at FTMO's number leaves nothing for slippage or a gap.
-  The 1-Step trailing floor moves ONLY in `roll_day()`, at the 00:00 CE(S)T
-  boundary, off the day's CLOSING balance; ratcheting it on intraday equity
-  would tighten the limit using profit that was never kept.
-- `ftmo_monitor.py` is what makes `ftmo_rules.py` protection rather than a
-  calculator: a pure state machine (`--selftest`, 56 checks against synthetic
-  tick streams) that keeps equity current and emits actions on posture CHANGE
-  — OK / BLOCKED / UNKNOWN / FLATTEN / BREACHED. Four properties not to
-  regress: it is **edge-triggered** (level-triggering would emit one flatten
-  per tick); **stale quotes are UNKNOWN, never safe** (`floating_pnl()`
-  returns None, deliberately not 0.0 — blocking at 10s, flattening at 60s,
-  because a 2s blip is not a reason to liquidate and 60s blind on a leveraged
-  book is); **floating P&L marks at the exit side of the spread** (long at
-  bid, short at ask — marking at the mid flatters equity by half a spread on
-  every position); and **`heartbeat()` is the only thing that notices
-  SILENCE**, since every other entry point is driven by an arriving message.
-  It places nothing — it emits events and the executor acts.
-- `ftmo_audit.py` records WHY a decision was allowed; `trade_journal.csv`
-  records what was DONE. Append-only JSONL, one file per FTMO day
-  (`ftmo_audit/YYYY-MM-DD.jsonl`, gitignored), aligned to the 00:00 CE(S)T
-  boundary so "the day we breached" is one file. Logs transitions and
-  decisions, NOT every evaluation — at tick rate that would be millions of
-  lines a day and would bury the four that matter — plus a rate-limited
-  snapshot so a quiet day still proves the monitor was alive.
-  **A write failure is swallowed and counted (`write_failures`), never
-  raised.** That deliberately inverts rule 6 for this file only: an exception
-  out of a logging call could prevent a FLATTEN from executing, and losing an
-  audit line is strictly less bad than failing to close a breaching position.
-  `--report [YYYY-MM-DD]` replays a day. A torn final line from a killed
-  process is flagged `UNPARSEABLE`, not fatal — partial recovery matters most
-  exactly when the file is needed.
+- **FTMO venue — five modules, all with offline `--selftest` (259 checks).**
+  `ftmo_rules.py` decides (limits, three thresholds, both products),
+  `ftmo_monitor.py` watches equity continuously, `ftmo_sizing.py` sizes,
+  `ftmo_audit.py` records why, `ftmo_service.py` talks to cTrader.
+  **Read the `ftmo` skill before touching any of them** — it carries the agreed
+  configuration, the derived dollar limits, and the invariants that are easy to
+  break. The one to know without opening anything: every FTMO limit is measured
+  on **equity including floating P&L**, so the account can fail with no order
+  placed. That is why this venue gets a continuous monitor and not a pre-trade
+  gate like `RiskGuard`, which structurally cannot see it.
 - `indicators.py` is the SINGLE SOURCE OF TRUTH for technical math, shared by
   trader_app charts and research_agent prompts (human and AI see identical
   numbers). It has `--selftest`. Never reimplement indicators elsewhere —
@@ -257,17 +245,11 @@ after testing it properly.
   minutes after placement to mean it stays protected hours or days later.**
   **GOOGL closed 2026-07-23 and NOTHING recorded it — found 2026-07-25.**
   Its GTC stop (326.06) gapped through: 07-23 opened 321.13, so the fill was
-  at the open, not the stop. Est. -$422 on 14 shares, ~$69 of that pure gap
-  slippage. No journal row, no reflection, no Telegram alert. Root cause:
-  `reflect_on_trades.py` detected closes only via `reqExecutions`, and IBKR
-  serves executions for the CURRENT SESSION ONLY — verified returning 0 rows
-  for a 30-day filter. Any close happening while the script isn't polling
-  that session (overnight, weekend, machine asleep) was invisible to it
-  permanently, and `LOOKBACK_DAYS` couldn't help because the data isn't there
-  to ask for. Fixed (see the close-detection note below); the GOOGL row was
-  backfilled as `CLOSE_RECONSTRUCTED` with its inference method in `detail`.
-  This also exposed that nothing journaled autonomous stop fills at all
-  (`paper_trader.py` only journals exits it places itself).
+  at the open, not the stop. Est. -$422 on 14 shares, ~$69 of it pure gap
+  slippage. No journal row, no reflection, no alert. Root cause and fix are in
+  the close-detection section below; the row was backfilled as
+  `CLOSE_RECONSTRUCTED`. It also exposed that nothing journaled autonomous
+  stop fills at all — `paper_trader.py` only journals exits it places itself.
   **The `max_daily_loss_usd: 300` breaker did not fire on this $422 loss, and
   journaling closes does NOT fix that** — `daily_realized_pnl()` reads IBKR's
   own `RealizedPnL` account value, not the journal, and `check_order()` only
@@ -291,101 +273,51 @@ after testing it properly.
   249.98, both with live **GTC** stops covering the full quantity (309.10 /
   237.61), and no orphaned GOOGL stop left behind. **Re-verified directly
   against IBKR 2026-07-27** — still open, still `tif=GTC`, `PreSubmitted`.
-  **The 2026-07-27 Kronos rebalance HALF-EXECUTED, and the journal recorded it
-  as a total failure.** Approved (AMZN/MSFT/DIS in, AAPL/JNJ out). What the
-  journal said at the time: both exits blocked, all three entries `Cancelled`,
-  zero trades, account unchanged. What had actually happened, verified
-  read-only against IBKR on 2026-07-28:
-  1. Both **exits were BLOCKED by RiskGuard's notional cap**, which applied to
-     closes as well as opens. True, and fixed the same day (see rule 3).
-  2. **AMZN 21 @ 232.73 and DIS 52 @ 95.39 FILLED**, each with a live
-     full-quantity **GTC** stop (217.74 / 90.83, `PreSubmitted`). Only **MSFT**
-     did not fill. IBKR error 10349 was blamed at the time for the
-     cancellations; that diagnosis was **wrong** — see the 10349 entry under
-     Known environment gotchas. Whatever stopped MSFT specifically, it was
-     not the preset.
-  Net effect: the account went from 2 positions to **4** — AAPL 15, JNJ 19,
-  DIS 52, AMZN 21 — while every record here and in `trade_journal.csv` said it
-  was unchanged, for a full day. Root cause of the false record was
-  `place_bracket_order` journalling a one-second status snapshot — see the
-  `Cancelled`-RESULT-row entry under Known environment gotchas. Fixed
-  2026-07-28; corrections appended to `trade_journal.csv` as
-  `RESULT_CORRECTED` / `NOTE` rows (originals left in place, annotated).
+  **The 2026-07-27 Kronos rebalance HALF-EXECUTED and the journal recorded it
+  as a total failure**, for a full day. Approved AMZN/MSFT/DIS in, AAPL/JNJ
+  out. The journal said: exits blocked, all entries `Cancelled`, account
+  unchanged. Verified read-only against IBKR on 2026-07-28, what actually
+  happened: both exits WERE blocked by the notional cap applying to closes
+  (true, fixed same day — rule 3), but **AMZN 21 @ 232.73 and DIS 52 @ 95.39
+  FILLED** with full-quantity GTC stops (217.74 / 90.83). Only MSFT did not.
+  The account went from 2 positions to **4** while every record said it was
+  unchanged. Both root causes — the wrong 10349 diagnosis and the one-second
+  status snapshot — have their own entries under Known environment gotchas.
+  Corrections appended as `RESULT_CORRECTED` / `NOTE` rows, originals left in
+  place and annotated.
 - Phase 4 (tiny real capital): locked until months of Phase 3 evidence.
 
 ## Close detection is two-tier (`reflect_on_trades.py`)
 
-Do not "simplify" this back to one tier — the second exists because the first
-provably loses events (see the GOOGL incident above).
+**Do not "simplify" this back to one tier, and do not replace tier 2's
+`fetch_positions_confirmed()` with a bare `ib.positions()`.** Both
+prohibitions exist because the simpler version provably lost events in
+production — a silent GOOGL close that went unrecorded for two days, and a
+phantom full liquidation journalled on a Saturday against two positions that
+were open the whole time. The mechanism, both incidents and the reasoning are
+in the **`ibkr` skill**; the module docstring in `reflect_on_trades.py` carries
+the implementation detail.
 
-1. **`reqExecutions`** — exact fill price, realized P&L, commission. Only ever
-   sees the current session.
-2. **Position-snapshot diff** — compares live positions against
-   `trade_reflections/.position_snapshot.json` from the previous run. Catches
-   any close the execution tier missed, including partial reductions, at the
-   cost of not knowing exit price or P&L. Seeds silently on first run
-   (no snapshot ⇒ record baseline, report nothing), dedupes against tier 1 so
-   a close caught by both journals once.
-
-**Tier 2 must fetch positions via `fetch_positions_confirmed()`, never a bare
-`ib.positions()`** — and the reason is a bug that already fired in production.
-`ib.positions()` reads a cache filled by a best-effort startup request inside
-`IB.connect()`: `connectAsync` gathers those under `asyncio.wait_for(...,
-timeout=4)` with `return_exceptions=True` and, unless `raiseSyncErrors=True`,
-**swallows a timeout** — logging "positions request timed out" and returning a
-connected, healthy-looking `IB` whose position cache is empty. An empty
-`ib.positions()` is therefore ambiguous: genuinely flat, or the fetch failed.
-Tier 2 read it as flat, i.e. "everything closed."
-
-Result on 2026-07-25T20:29:38: phantom `CLOSE_DETECTED` rows for AAPL 15→0 and
-JNJ 19→0 while both were open on IBKR with live GTC stops — on a **Saturday**,
-with no session between that run and the 16:27:14 snapshot that still showed
-them. It also advanced the snapshot to `{}`, discarding the real baseline.
-Reproduced deterministically 2026-07-27 and fixed by re-requesting positions
-explicitly and letting a timeout **raise** (run aborts, nothing journaled,
-snapshot untouched) instead of degrading to `[]`. An *answered* request that
-returns nothing is a real flat account — `positionEnd` resolves the future —
-so the two cases are no longer the same value.
-
-Note this is the same swallow mechanism behind the "benign" connect warnings
-in work-queue item 1 ("open orders request timed out"). Benign there, a
-fabricated liquidation here — don't generalize "that warning is harmless."
-
-Both tiers now write to `trade_journal.csv` (`CLOSE_FILLED` / `CLOSE_DETECTED`),
-independently of whether the reflection agent call succeeds. **Detection time
-is not event time** for tier 2 — a weekend close is journaled Monday, and the
-row says so.
-
-**Tier 2 journals and texts but writes NO reflection**, because `build_prompt`
-needs a realized P&L it doesn't have. So a weekend/overnight stop-out leaves
-no `trade_reflections/*.md`, and nothing for `research_agent.py`'s
-`load_reflections()` to feed on — the feedback loop has a hole exactly where
-the unattended closes are. Fixing it means reconstructing the exit from bars
-(as the GOOGL backfill did by hand) rather than trusting IBKR for it.
-The snapshot is advanced only after every detected close is journaled, and
-never on `--dry-run` — advancing first would move the baseline past a close
-that was never recorded, which is the original bug.
+**Detection time is not event time** for tier 2 — a weekend close is journalled
+Monday and the row says so. Tier 2 journals and texts but writes NO reflection
+(no realized P&L to build the prompt from), so the research feedback loop has a
+hole exactly where the unattended closes are.
 
 ## Work queue for Claude Code (in order — finish the job)
 
-1. ~~TWS smoke test~~ — DONE 2026-07-21. Connected to IB Gateway paper (port
-   4002), account DUQ903866 verified, pulled real 15-min bars. Note: two
-   benign `ib_async` warnings on connect ("open orders request timed out",
-   "completed orders request timed out") — harmless on a fresh account with
-   no order history, not a code bug.
-2. ~~Phase 3 paper-trading loop~~ (`paper_trader.py`) — DONE 2026-07-21 and
-   run for real once. Signal: **Kronos forecast ranking, top-N of watchlist**
-   (default since 2026-07-28, rule 8; it was momentum until then, which is why
-   older journal rows and reflections are labelled `momentum`). Sizing: `qty = floor((NetLiq_usd * risk_pct_per_trade%) /
-   (2*ATR))`, clamped to `risk_limits.json`'s max order notional using the
-   *buffered* entry price (not raw market price — a real bug hit and fixed
-   during the first run). Exits cancel the open stop leg and confirm the
-   cancel before flattening; exits run before entries so RiskGuard's
-   max_open_positions headroom is freed first. `place_market_order` gained
-   an `opening: bool` param so closes don't get checked as new exposure.
-   `--dry-run` connects read-only and prints the proposal without asking.
-   No scheduler yet — owner runs it manually. Next: a few more manual
-   monthly cycles before even considering cron/launchd.
+1. ~~TWS smoke test~~ — DONE 2026-07-21 (Gateway paper port 4002, account
+   DUQ903866). The two `ib_async` connect warnings ("open orders/completed
+   orders request timed out") are benign on a fresh account — but see the
+   close-detection section before generalising "that warning is harmless".
+2. ~~Phase 3 paper-trading loop~~ (`paper_trader.py`) — DONE 2026-07-21, run
+   for real, now retired-in-place per rule 9. Signal is Kronos top-N of the
+   watchlist (rule 8; older journal rows and reflections say `momentum`
+   because it was, until 2026-07-28). Sizing, exit ordering and the
+   `opening:` flag are documented in the module docstring — read that rather
+   than a copy here. The design points that are NOT in the code: exits run
+   before entries so `max_open_positions` headroom is freed first, and sizing
+   clamps to the notional cap using the **buffered** entry price, not the raw
+   market price (a real bug, hit and fixed during the first live run).
 3. **Research agent — ongoing, in progress.** Re-run 2026-07-25 on the full
    14-ticker watchlist (grown from the original 12 via `AVGO`/`ASML`) — fresh
    notes for all 14 in `research_log/`. Re-run `grade_calls.py --csv`
@@ -423,45 +355,16 @@ that was never recorded, which is the original bug.
      low (18 calls at 3/10, none above 6/10). A mostly-no-edge, low-confidence
      book is cheap to be "right" about under the ±2% flat band — read the
      eventual win rate with that in mind rather than as skill.
-4. **Paper trading — operational, not a build task.** `paper_trader.py` holds
-   real open positions. **GOOGL closed 2026-07-23** (gapped through its GTC
-   stop, ~-$422, found + backfilled 2026-07-25 — see Phase 3 status above);
-   **AAPL closed between 2026-07-29T15:22 and 2026-08-01T22:26** — detected
-   by `reflect_on_trades.py`'s position-diff tier and journalled
-   `CLOSE_DETECTED`, so this one did NOT repeat the GOOGL silent-close
-   failure. No execution record, therefore no exit price, realized P&L or
-   reflection — the known tier-2 gap. AAPL's last close before detection was
-   307.36 against a 309.10 stop, consistent with the stop firing, but that is
-   inference and not a record.
-   Current holdings are therefore **JNJ (19 @ 249.98), DIS (52 @ 95.39) and
-   AMZN (21 @ 232.73)** — three positions. Stop protection was UNKNOWN on
-   2026-08-01 (Gateway's `reqAllOpenOrders` was timing out while positions and
-   market data answered normally — the 2026-07-29 symptom) and was
-   **re-verified read-only on 2026-08-02: all three protected, full quantity,
-   `tif=GTC`, `PreSubmitted`** — AMZN 21 @ stop 217.74, DIS 52 @ 90.83, JNJ
-   19 @ 237.61. `reqAllOpenOrders` answered normally on that attempt, so the
-   07-29/08-01 wedge was transient. DIS and AMZN came from the 2026-07-27
-   rebalance that the journal wrongly recorded as `Cancelled` (see Phase 3
-   status above).
-   **The "Gateway Order Preset blocker" is CLOSED** — it was a missing `tif`
-   on our own parent order, fixed in code 2026-07-28 and verified by probe
-   (no 10349, LMT `tif=DAY` / STP `tif=GTC`). No Gateway change is or was
-   needed. Going forward:
-   - Re-run monthly (or on-demand) for the next rebalance; check `--dry-run`
-     first if unsure what it'll propose. `--dry-run` now connects genuinely
-     `readonly=True` (TWS-enforced) and no longer needs a live market-data
-     line to size — see the FX-conversion note above.
-   - **Every position check must verify stops are GTC, not just "present."**
-     Query `ib.trades()` (not just `ib.openTrades()` right after placing) and
-     check `order.tif == "GTC"` — a DAY stop will look fine for hours and
-     then silently vanish at end of session.
-   - `reflect_on_trades.py` now catches closes two ways (executions +
-     position-snapshot diff, see the Close detection section above), so a
-     GOOGL-style silent close should surface within one 30-min cycle instead
-     of needing a manual audit to find. Still worth periodically checking
-     `trade_journal.csv` matches what's actually on IBKR — the snapshot tier
-     journals a close but not a reflection (no realized P&L to build the
-     prompt from), so a research-feedback gap remains for unattended closes.
+4. **IBKR paper trading — RETIRED IN PLACE 2026-08-02 (rule 9), monitoring
+   only.** No new orders on this venue. Three positions remain open and are
+   still managed: **JNJ 19 @ 249.98, DIS 52 @ 95.39, AMZN 21 @ 232.73**, all
+   verified read-only on 2026-08-02 as protected by full-quantity `tif=GTC`
+   stops in `PreSubmitted` (217.74 / 90.83 / 237.61). `reflect_on_trades.py`
+   and its launchd job keep running until these close naturally.
+   **Every position check must verify stops are GTC, not merely present** — a
+   DAY stop looks fine for hours and then silently vanishes at the session
+   close. History (the GOOGL and AAPL closes, the half-executed rebalance, the
+   Gateway wedges) and the operational runbook are in the **`ibkr` skill**.
 5. **Web UI — BUILT 2026-08-01.** `api/` (FastAPI) + `web/` (Next.js 16,
    shadcn/Base UI, lightweight-charts). Start with `./run_web.sh`, open
    http://localhost:3000. **Local only — never deploy it and never bind
@@ -484,6 +387,34 @@ that was never recorded, which is the original bug.
      send another. Entries are bracket-only.
    - Still true, and still worth weighing: more research/trading cycles is
      the evidence this project is gated on; a dashboard is not.
+   - The UI is IBKR-only and stays that way for now — FTMO has no browser
+     surface yet. Deciding whether it gets one is a later call, not an
+     assumed requirement.
+6. **FTMO venue — IN PROGRESS, 2026-08-02.** New trading venue per rule 9.
+   Five modules built and selftested offline (259 checks, no credentials
+   needed): `ftmo_rules.py`, `ftmo_monitor.py`, `ftmo_sizing.py`,
+   `ftmo_audit.py`, `ftmo_service.py`. **Read the `ftmo` skill** for the agreed
+   configuration, derived limits and invariants.
+   **BLOCKED on one external thing:** the cTrader Open API app at
+   `openapi.ctrader.com/apps` is still `Submitted`, not `Active`, so
+   application auth returns `CH_CLIENT_AUTH_FAILURE` (see Known environment
+   gotchas — that error already proves TLS, protobuf and error mapping all
+   work). Nothing past that layer can be built or verified: the order path
+   needs real `SymbolSpec` data from `ProtoOASymbolsListReq` and confirmation
+   that server-side stops attach as assumed.
+   Next actions, in order, once the app activates:
+   - `python3 ftmo_service.py --authorize` then `--probe`. If no accounts are
+     visible, the likeliest cause is the trial account being created AFTER the
+     app was authorised — re-run `--authorize` to re-consent.
+   - Bind real `SymbolSpec` values from the venue and replace the plausible
+     but invented specs used in `ftmo_sizing.py`'s tests.
+   - Migrate `trade_journal.csv` to add the `venue` column — see the gotcha
+     about the header/row misalignment before doing it.
+   - IC-screen each asset class before enabling it (rule 9). Only stock CFDs
+     inherit any existing evidence, and that evidence is IC ~0.
+   - Build the signal→order path, then an integration pass driving all five
+     modules together. **The one real bug found so far surfaced that way, not
+     from unit tests** — see the `ftmo` skill.
 
 ## Autotrade (experimental, unattended) — `autotrade_runner.py`
 

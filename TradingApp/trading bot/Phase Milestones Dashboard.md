@@ -1,10 +1,19 @@
 ---
 tags: [project-management, phases, roadmap]
-status: "Phase 3 ACTIVE — 4 positions, all GTC-stopped; the 10349 'blocker' was our own bug and is fixed"
-last_updated: 2026-07-28
+status: "VENUE CHANGED 2026-08-02 — FTMO is the trading venue, IBKR retired in place with 3 positions still monitored"
+last_updated: 2026-08-02
 ---
 
 # Phase Milestones Dashboard
+
+> [!important] 2026-08-02 — the venue changed
+> FTMO replaced IBKR as the trading venue (owner decision). IBKR is **retired
+> in place**: no new orders, but it keeps monitoring its three open positions
+> until they close naturally. The phase model below still describes the IBKR
+> track, which remains accurate for those positions. The FTMO track is new and
+> lives in [[FTMO Venue]] — it is deliberately NOT a phase, because it did not
+> earn its way through this ladder; it was an owner decision made with the
+> evidence position stated.
 
 This is the quick-reference status of each phase. Detailed rationale lives in [[Plan]]; this is the "where's the bot right now" snapshot.
 

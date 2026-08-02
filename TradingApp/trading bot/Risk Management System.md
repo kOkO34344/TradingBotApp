@@ -1,11 +1,22 @@
 ---
 tags: [risk, execution, infrastructure]
 status: "live in code"
-source: ibkr_service.py
-last_updated: 2026-07-28
+source: ibkr_service.py, ftmo_rules.py, ftmo_monitor.py
+last_updated: 2026-08-02
 ---
 
 # Risk Management System
+
+> [!warning] There are now THREE risk layers, not two
+> A third was added 2026-08-02 for the FTMO venue, and it works on a different
+> principle: **continuous equity monitoring** rather than a pre-trade gate.
+> The reason is that every FTMO limit is measured on equity *including
+> floating P&L*, so an account can fail with no order placed at all — which
+> RiskGuard, described below, structurally cannot detect. See [[FTMO Venue]].
+>
+> Also note the limits below are **stale**: they were raised on 2026-07-27 to
+> 50,000 notional / 2,000 daily loss / 8 positions after the old caps blocked
+> the exits for two open positions and trapped them.
 
 The trading bot has **two distinct risk-management layers**: one in the backtester (optional "risk engine" for signal strategies), and one in the live execution layer (mandatory for all orders).
 
@@ -286,3 +297,34 @@ All pass as of 2026-07-28. The connected smoke test (`python3 ibkr_service.py` w
 - `ibkr_service.py` — contains RiskGuard class and all enforcement
 - `risk_limits.json` — the limits (auto-created with defaults if missing)
 - `trade_journal.csv` — the audit trail (created on first write)
+
+
+---
+
+## Layer 3: FTMO continuous equity monitor (added 2026-08-02)
+
+Full detail in [[FTMO Venue]]. The short version of why it exists:
+
+**RiskGuard's daily-loss breaker is a pre-trade gate.** `check_order()`
+consults it only while an order is being placed, and it reads IBKR's *realised*
+`RealizedPnL`. So it cannot see a loss that arrives on its own. On 2026-07-23
+GOOGL's stop gapped through for roughly −$422 against a then-$300 limit and the
+breaker was never evaluated, because nothing tried to place an order that day.
+The loss was invisible for two days.
+
+**Half-fixed 2026-08-02, and it matters which half.** Enforcement is unchanged
+— still a pre-trade gate, still cannot stop a loss arriving on its own. What
+changed is *visibility*: the trip condition moved into a pure, selftested
+`daily_loss_breaker_status()` that both RiskGuard and a new monitor in
+`reflect_on_trades.py` call, so the gate and the alert cannot disagree. The
+monitor runs every 30 minutes and texts once per day when the limit is already
+breached. A GOOGL-style overnight stop-out now surfaces within half an hour
+instead of at the next order attempt. Nothing is flattened or disabled
+automatically.
+
+**The FTMO venue could not use that design at all**, because FTMO measures
+equity including floating P&L and a 30-minute cycle is far too slow — a $25,000
+account can move $1,000 in under a minute. So `ftmo_monitor.py` is
+event-driven, recomputes equity on every tick, and acts on posture *changes*:
+block new entries at 80% of a limit, close everything at 90%, and treat stale
+quotes as UNKNOWN rather than safe.
