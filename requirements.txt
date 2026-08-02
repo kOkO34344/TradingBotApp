@@ -12,3 +12,20 @@ ib_async
 # Research agent (research_agent.py)
 claude-agent-sdk
 lxml
+
+# FTMO execution venue, via cTrader Open API.
+#
+# This package hard-pins protobuf==3.20.1, Twisted==24.3.0, pyOpenSSL==24.1.0,
+# requests==2.32.3 and cryptography<43. Installing it DOWNGRADES protobuf from
+# 7.x — verified safe on 2026-08-02 and worth re-checking if either package
+# moves: yfinance is the only other protobuf dependent in this project and its
+# own floor is protobuf>=3.19.0, so 3.20.1 satisfies it. Confirmed functionally,
+# not just by resolver: daily bars, hourly bars, FX crosses and Ticker.history
+# all return real data on 3.20.1, and torch/huggingface_hub/safetensors do not
+# depend on protobuf at all.
+#
+# Do NOT "fix" the downgrade by dropping yfinance. It is the data source behind
+# grade_calls.py (the only route to graded evidence, rule 5), every backtest,
+# and the independent FX cross-check in paper_trader.get_net_liquidation_usd
+# that stops a wrong-direction ExchangeRate misstating equity by ~29%.
+ctrader-open-api
