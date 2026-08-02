@@ -112,6 +112,11 @@ class OpenPosition:
             * self.quote_to_account_rate
 
 
+def _age_s(age: float) -> str:
+    """Format a staleness age, without rendering infinity as 'infs'."""
+    return "never quoted" if age == float("inf") else f"{age:.0f}s"
+
+
 @dataclass(frozen=True)
 class Quote:
     bid: float
@@ -162,6 +167,10 @@ class EquityMonitor:
 
         self.positions: dict[int, OpenPosition] = {}
         self.quotes: dict[int, Quote] = {}
+        # When each position was registered, so a position whose symbol has not
+        # been quoted YET ages from its open rather than reading as infinitely
+        # stale. See stalest_age_s().
+        self._opened_at: dict[int, datetime] = {}
         self.posture = OK
         self._breach_emitted = False
 
@@ -190,15 +199,33 @@ class EquityMonitor:
         return sum(p.risk_at_stop() for p in self.positions.values())
 
     def stalest_age_s(self, now: datetime) -> float:
-        """Age of the oldest quote among symbols we actually hold. 0 if flat."""
+        """Age of the oldest quote among symbols we actually hold. 0 if flat.
+
+        A position whose symbol has NEVER been quoted is aged from the moment
+        it was opened, not treated as infinitely stale. That distinction is not
+        cosmetic: a position is registered from the execution event, which
+        arrives before the first spot tick for that symbol, so treating
+        "no quote yet" as infinite age made the monitor demand an immediate
+        flatten of every position at the instant it opened. Found by replaying
+        a synthetic breach day end-to-end; the unit tests missed it because
+        they all happened to quote a symbol before asserting on posture.
+
+        Aging from the open gives a brand-new position the same grace period
+        as any other, and it still goes UNKNOWN and then FLATTEN if the quote
+        genuinely never arrives.
+        """
         if not self.positions:
             return 0.0
         ages = []
         for p in self.positions.values():
             q = self.quotes.get(p.symbol_id)
             if q is None:
-                return float("inf")
-            ages.append((now - q.at).total_seconds())
+                opened_at = self._opened_at.get(p.position_id)
+                if opened_at is None:
+                    return float("inf")  # unknown provenance: treat as fully stale
+                ages.append((now - opened_at).total_seconds())
+            else:
+                ages.append((now - q.at).total_seconds())
         return max(ages)
 
     def account_state(self) -> fr.AccountState:
@@ -239,12 +266,12 @@ class EquityMonitor:
             detail = "; ".join(verdict.reasons)
         elif self.positions and age >= self.stale_flatten_s:
             posture = FLATTEN
-            detail = (f"quotes stale {age:.0f}s (>= {self.stale_flatten_s:.0f}s) with "
+            detail = (f"quotes stale {_age_s(age)} (>= {self.stale_flatten_s:.0f}s) with "
                       f"{len(self.positions)} position(s) open — closing out rather "
                       f"than staying blind on a leveraged book")
         elif self.positions and age >= self.stale_block_s:
             posture = UNKNOWN
-            detail = (f"quotes stale {age:.0f}s (>= {self.stale_block_s:.0f}s) — equity "
+            detail = (f"quotes stale {_age_s(age)} (>= {self.stale_block_s:.0f}s) — equity "
                       f"cannot be valued; this is UNKNOWN, not safe")
         elif not verdict.can_open:
             posture = BLOCKED
@@ -313,6 +340,7 @@ class EquityMonitor:
     def on_position_opened(self, position: OpenPosition,
                            now: datetime) -> list[MonitorEvent]:
         self.positions[position.position_id] = position
+        self._opened_at[position.position_id] = now
         self.opened_today = True
         events = [MonitorEvent(
             kind="POSITION_OPENED",
@@ -325,6 +353,7 @@ class EquityMonitor:
     def on_position_closed(self, position_id: int, realized_pnl: float,
                            new_balance: float, now: datetime) -> list[MonitorEvent]:
         position = self.positions.pop(position_id, None)
+        self._opened_at.pop(position_id, None)
         self.balance = new_balance
         name = position.symbol_name if position else f"id={position_id}"
         events = [MonitorEvent(
@@ -445,6 +474,27 @@ def selftest() -> int:
     check("61s of silence escalates to FLATTEN", kinds(ev) == [FLATTEN])
     ev = m.on_quote(1, 100.0, 100.02, T0 + timedelta(seconds=62))
     check("a fresh quote recovers to OK", kinds(ev) == [OK])
+
+    print("a freshly-opened position is not instantly stale:")
+    # Regression: the execution event that registers a position arrives BEFORE
+    # the first spot tick for its symbol. Treating "no quote yet" as infinite
+    # age made the monitor demand an immediate flatten of every new position.
+    # Found by replaying a synthetic breach day, not by the unit tests above.
+    m = fresh()
+    ev = m.on_position_opened(pos(), T0)
+    check("opening with no quote yet does not flatten",
+          FLATTEN not in kinds(ev))
+    check("...and does not go UNKNOWN either", m.posture == OK)
+    check("...age is measured from the open, not infinity",
+          m.stalest_age_s(T0) == 0.0)
+    check("grace period still applies normally",
+          m.stalest_age_s(T0 + timedelta(seconds=5)) == 5.0)
+    ev = m.heartbeat(T0 + timedelta(seconds=11))
+    check("a quote that never arrives still goes UNKNOWN", kinds(ev) == [UNKNOWN])
+    ev = m.heartbeat(T0 + timedelta(seconds=61))
+    check("...and still escalates to FLATTEN", kinds(ev) == [FLATTEN])
+    check("infinity renders readably, not as 'infs'",
+          _age_s(float("inf")) == "never quoted")
 
     print("staleness only matters while holding something:")
     m = fresh()
