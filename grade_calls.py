@@ -7,11 +7,34 @@ what the price actually did afterward, and grades each call at 5-day and
 21-day horizons. Then prints a calibration report: win rate by direction and by
 confidence bucket. Run it weekly; the report IS the agent's track record.
 
-Grading rules (deliberately blunt):
-  long   -> correct if forward return > +0.5%  (beats noise threshold)
-  short  -> correct if forward return < -0.5%
-  no-edge-> correct if |forward return| <= 2%  (the market indeed went nowhere)
+Grading rules — a VOLATILITY-SCALED band that partitions the outcome space:
+  band   =  0.5 x that ticker's realized sigma of h-day returns, measured on
+            history STRICTLY BEFORE the note date (no lookahead)
+  long   -> correct if forward return >  +band
+  short  -> correct if forward return <  -band
+  no-edge-> correct if |forward return| <= band
 Notes younger than the horizon are marked pending, not graded.
+
+Why scaled, and why this is not post-hoc metric-tuning (CLAUDE.md rule 4):
+the old rule used a FIXED +/-2% flat band at both horizons and for every name.
+That is not a measure of the analyst, it is a measure of the box. Established
+2026-08-03 from 2y of price history ALONE — independently of any grade, so the
+finding reads identically whatever the agent scored:
+
+  - A no-edge call landed inside +/-2% ~42% of the time BY CHANCE at 5d, and
+    only ~21% of the time at 21d. One fixed band across horizons that differ 4x
+    in length means the 21d report would have printed ~21% and looked like
+    catastrophic failure while measuring nothing at all.
+  - 5d sigma across the watchlist ranges 2.4% (KO) to 9.2% (PLTR). Under a fixed
+    band, "no edge on KO" lands 63% of the time and "no edge on PLTR" 23% — the
+    same call, the same confidence, graded on which ticker it was handed.
+
+The legacy fixed-band grade is still computed and reported alongside, so the
+change is auditable and no result is silently restated.
+
+ALSO FIXED 2026-08-03: the old thresholds did not partition. NOISE=0.5 vs
+FLAT_BAND=2.0 meant a +1% return graded a `long` call correct AND a `no-edge`
+call correct at the same time. One band, three mutually exclusive outcomes.
 
 Usage: python3 grade_calls.py            # grade everything, print report
        python3 grade_calls.py --csv      # also write graded_calls.csv
@@ -22,6 +45,7 @@ import re
 import sys
 import warnings
 from datetime import datetime, timedelta
+from math import comb
 from pathlib import Path
 
 import pandas as pd
@@ -30,8 +54,12 @@ import yfinance as yf
 warnings.filterwarnings("ignore")
 
 LOG_DIR = Path(__file__).parent / "research_log"
-NOISE, FLAT_BAND = 0.5, 2.0  # percent
+NOISE, FLAT_BAND = 0.5, 2.0  # percent — LEGACY fixed band, reported for audit only
+BAND_SIGMAS = 0.5      # band = BAND_SIGMAS x realized sigma of h-day returns
+SIGMA_LOOKBACK_Y = 2   # years of pre-note history the sigma is measured on
 HORIZONS = {"5d": 5, "21d": 21}
+
+_SIGMA_CACHE: dict = {}
 
 
 def parse_note(path: Path) -> dict | None:
@@ -76,12 +104,95 @@ def forward_return(ticker: str, date_s: str, days: int) -> float | None:
     return float((df["Close"].iloc[days] / df["Close"].iloc[0] - 1) * 100)
 
 
-def grade(direction: str, fwd: float) -> bool:
+def _hist_returns(ticker: str, date_s: str, days: int):
+    """Overlapping `days`-bar returns (percent) from history STRICTLY BEFORE
+    date_s, or None.
+
+    The cutoff matters: measuring over a window that includes the outcome
+    would let the band widen exactly when the call went wrong, which is the
+    lookahead version of the bug this whole change exists to fix.
+    """
+    key = (ticker, date_s, days)
+    if key in _SIGMA_CACHE:
+        return _SIGMA_CACHE[key]
+
+    end = datetime.strptime(date_s, "%Y-%m-%d")
+    start = end - timedelta(days=int(365.25 * SIGMA_LOOKBACK_Y))
+    df = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
+                     end=end.strftime("%Y-%m-%d"), progress=False, auto_adjust=True)
+    rets = None
+    if df is not None and len(df):
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        close = df["Close"].squeeze()
+        if len(close) >= days * 4:  # need a usable number of overlapping windows
+            r = ((close.shift(-days) / close - 1) * 100).dropna()
+            if len(r) and float(r.std()) > 0:
+                rets = r
+    _SIGMA_CACHE[key] = rets
+    return rets
+
+
+def realized_sigma(ticker: str, date_s: str, days: int) -> float | None:
+    rets = _hist_returns(ticker, date_s, days)
+    return None if rets is None else float(rets.std())
+
+
+def null_rate(ticker: str, date_s: str, days: int, direction: str) -> float | None:
+    """How often this call would have been correct BY CHANCE — the empirical
+    frequency, on pre-note history, of the outcome region the call claims.
+
+    A win rate without its null is not evidence. 37% looks like failure and
+    26% looks worse, but if chance is 39% then both are simply noise. Reported
+    on every line so no future run can be read as skill without checking.
+    """
+    rets = _hist_returns(ticker, date_s, days)
+    if rets is None:
+        return None
+    band = BAND_SIGMAS * float(rets.std())
+    if direction == "long":
+        return float((rets > band).mean())
+    if direction == "short":
+        return float((rets < -band).mean())
+    return float((rets.abs() <= band).mean())
+
+
+def band_for(ticker: str, date_s: str, days: int) -> tuple[float, bool]:
+    """(band in percent, is_scaled). Falls back to the legacy fixed band when
+    there is not enough pre-note history to measure sigma."""
+    sigma = realized_sigma(ticker, date_s, days)
+    if sigma is None:
+        return FLAT_BAND, False
+    return BAND_SIGMAS * sigma, True
+
+
+def grade(direction: str, fwd: float, band: float) -> bool:
+    """One band, three mutually exclusive outcomes."""
+    if direction == "long":
+        return fwd > band
+    if direction == "short":
+        return fwd < -band
+    return abs(fwd) <= band  # no-edge
+
+
+def binom_two_sided(k: int, n: int, p: float) -> float:
+    """Exact two-sided binomial p-value. Hand-rolled: scipy is not a project
+    dependency and pulling one in for a single test is not worth the install."""
+    if n == 0 or not (0.0 < p < 1.0):
+        return 1.0
+    pmf = [comb(n, i) * p ** i * (1 - p) ** (n - i) for i in range(n + 1)]
+    return min(1.0, sum(x for x in pmf if x <= pmf[k] * (1 + 1e-9)))
+
+
+def grade_legacy(direction: str, fwd: float) -> bool:
+    """The old fixed-band rule, kept so the change stays auditable.
+    Note the overlap it carried: NOISE < FLAT_BAND meant `long` and `no-edge`
+    could both be correct for the same forward return."""
     if direction == "long":
         return fwd > NOISE
     if direction == "short":
         return fwd < -NOISE
-    return abs(fwd) <= FLAT_BAND  # no-edge
+    return abs(fwd) <= FLAT_BAND
 
 
 def main():
@@ -100,9 +211,15 @@ def main():
             continue
         for hname, hdays in HORIZONS.items():
             fwd = forward_return(note["ticker"], note["date"], hdays)
+            band, scaled = band_for(note["ticker"], note["date"], hdays)
             rows.append({**note, "horizon": hname,
                          "fwd_return_pct": None if fwd is None else round(fwd, 2),
-                         "correct": None if fwd is None else grade(note["direction"], fwd)})
+                         "band_pct": round(band, 2), "band_scaled": scaled,
+                         "null_p": null_rate(note["ticker"], note["date"], hdays,
+                                             note["direction"]),
+                         "correct": None if fwd is None else grade(note["direction"], fwd, band),
+                         "correct_legacy": None if fwd is None
+                         else grade_legacy(note["direction"], fwd)})
 
     if not rows:
         sys.exit("No gradable notes yet (all skipped or log empty). "
@@ -114,13 +231,33 @@ def main():
     print(f"\n=== CALL GRADING REPORT — {datetime.now():%Y-%m-%d} ===")
     print(f"Notes: {df['file'].nunique()}   graded: {len(graded)}   pending (too recent): {len(pending)}")
     if len(graded):
+        n_unscaled = int((~graded["band_scaled"]).sum())
+        print(f"\nBand: {BAND_SIGMAS}x realized sigma per ticker/horizon, measured on "
+              f"{SIGMA_LOOKBACK_Y}y of pre-note history."
+              + (f"  ({n_unscaled} fell back to the fixed +/-{FLAT_BAND}%)" if n_unscaled else ""))
         for h in HORIZONS:
             g = graded[graded["horizon"] == h]
             if len(g):
-                print(f"\n-- {h} horizon: {g['correct'].mean() * 100:.0f}% correct ({int(g['correct'].sum())}/{len(g)})")
-                by_dir = g.groupby("direction")["correct"].agg(["mean", "count"])
-                for d, r in by_dir.iterrows():
-                    print(f"   {d:<8} {r['mean'] * 100:>4.0f}% correct  (n={int(r['count'])})")
+                bands = g["band_pct"]
+                print(f"\n-- {h} horizon: {g['correct'].mean() * 100:.0f}% correct "
+                      f"({int(g['correct'].sum())}/{len(g)})"
+                      f"   [legacy fixed band: {g['correct_legacy'].mean() * 100:.0f}%]")
+                print(f"   band range {bands.min():.1f}%-{bands.max():.1f}% "
+                      f"(median {bands.median():.1f}%)")
+                gn = g.dropna(subset=["null_p"])
+                if len(gn):
+                    a, nul = gn["correct"].mean(), gn["null_p"].mean()
+                    pv = binom_two_sided(int(gn["correct"].sum()), len(gn), nul)
+                    print(f"   vs CHANCE {nul * 100:.0f}%  ->  edge {(a - nul) * 100:+.0f}pt"
+                          f"   (exact binomial p={pv:.2f}"
+                          f"{'' if pv <= 0.05 else ', i.e. indistinguishable from guessing'})")
+                print(f"   {'direction':<10}{'n':>4}{'actual':>9}{'chance':>9}{'edge':>8}{'legacy':>9}")
+                for d, gg in g.groupby("direction"):
+                    nul = gg["null_p"].mean()
+                    line = (f"   {d:<10}{len(gg):>4}{gg['correct'].mean() * 100:>8.0f}%")
+                    line += ("       ?" + " " * 8) if nul != nul else (
+                        f"{nul * 100:>8.0f}%{(gg['correct'].mean() - nul) * 100:>+7.0f}pt")
+                    print(line + f"{gg['correct_legacy'].mean() * 100:>8.0f}%")
         gc = graded.dropna(subset=["confidence"])
         if len(gc):
             gc = gc.copy()
