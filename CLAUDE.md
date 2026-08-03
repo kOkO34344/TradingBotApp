@@ -338,11 +338,21 @@ hole exactly where the unattended closes are.
    Note also **2026-07-24 (Friday) has no bar in yfinance for any ticker**
    (verified across SPY/MSFT/AAPL) — trading-day math over this window is off
    by one if you assume a normal week.
-   State as of 2026-08-02: `graded_calls.csv` is still **0 graded / 76 pending**
-   (38 at 5d, 38 at 21d) and is still the 2026-07-28 run — the projected
-   ~07-29 arrival of the first 5d grades came and went without a re-run, so
-   the grades exist in the price data but not in the file. Both cycles below
-   are overdue; neither has been run since 07-25/07-28. Next actions:
+   **FIRST REAL GRADES LANDED 2026-08-03: 38 graded at 5d, and the answer is
+   no detectable skill.** 26% correct against a chance base rate of **39%** —
+   an edge of -13pt at exact binomial **p=0.13**, i.e. indistinguishable from
+   guessing in EITHER direction. By direction: long 33% (n=6, chance 35%),
+   no-edge 29% (n=28, chance 42%), short 0% (n=4, chance 25%).
+   **Read the sample honestly before concluding anything: all 38 calls share
+   one market week, so they are heavily correlated — this is much closer to
+   ONE observation than to 38.** Not evidence the agent is bad; evidence that
+   we still have almost no evidence. 38 calls remain pending at 21d.
+   Calibration points the healthy way (low 1-4: 22%, mid 5-6: 40%, nothing
+   ever rated above 6/10), on n=27/10 — too small to bank.
+   **A win rate without its null is not evidence.** `grade_calls.py` now
+   prints the chance base rate, the edge over it, and a binomial p-value on
+   every line. Never quote a win rate from this project without the number it
+   is being compared against.
    - Re-run `python3 run_research_agent_watchlist.py` weekly. Every note in
      `research_log/` is dated 2026-07-25, so this is overdue.
      `--group <name>` / `--list-groups` also work if only part of the
@@ -350,11 +360,29 @@ hole exactly where the unattended closes are.
    - Re-run `python3 grade_calls.py --csv` and actually read the calibration
      report — don't just run it, look at it. Treat any report claiming grades
      from notes not in `research_log/` as corrupt.
-   - Pending-call shape as of 2026-07-28 (worth knowing before grading):
-     **74% no-edge** (28/38), 16% long, 11% short, and confidence is clustered
-     low (18 calls at 3/10, none above 6/10). A mostly-no-edge, low-confidence
-     book is cheap to be "right" about under the ±2% flat band — read the
-     eventual win rate with that in mind rather than as skill.
+   - **Grades are struck once and cached in `grading_cache.json` (tracked).**
+     `forward_return()` re-downloaded from yfinance every run and yfinance
+     returns slightly different bars run to run — three consecutive runs on
+     identical notes scored the same book 37% / 34% / 37%. A file the autonomy
+     bar is read from cannot change when you re-read it. `--refresh`
+     re-strikes deliberately. This buys reproducibility, NOT accuracy.
+   - **CORRECTION 2026-08-03 — the old note here said a mostly-no-edge book is
+     "cheap to be right about" under the ±2% flat band. That was exactly
+     backwards, and it mattered.** Measured from 2y of price history alone
+     (independent of any grade): a no-edge call landed inside ±2% only ~42% of
+     the time BY CHANCE at 5d and ~21% at 21d. One fixed band across horizons
+     differing 4x in length would have printed ~21% on the pending 21d book
+     and read as catastrophic failure while measuring nothing. And 5d sigma
+     across the watchlist runs 2.4% (KO) to 9.2% (PLTR), so the same call at
+     the same confidence was graded on which ticker it was handed. The band is
+     now **0.5x that ticker's realized sigma at that horizon**, measured
+     strictly before the note date; the legacy fixed-band grade is printed
+     alongside so the change stays auditable. Changing a metric after seeing a
+     bad result is the shape of what rule 4 forbids — it was allowed here only
+     because the flaw is provable from price history without reference to any
+     grade. Hold any future metric change to that same test.
+   - Book shape (unchanged): **74% no-edge** (28/38), 16% long, 11% short,
+     confidence clustered low (18 calls at 3/10, none above 6/10).
 4. **IBKR paper trading — RETIRED IN PLACE 2026-08-02 (rule 9), monitoring
    only.** No new orders on this venue. Three positions remain open and are
    still managed: **JNJ 19 @ 249.98, DIS 52 @ 95.39, AMZN 21 @ 232.73**, all
