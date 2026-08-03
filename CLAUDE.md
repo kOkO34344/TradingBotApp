@@ -178,12 +178,23 @@ File purposes are documented in each script's own module docstring
   | stocks | +0.036 (pooled, 2026-07-23) | — | 50.0% | — | no skill |
   | indices | +0.068 | +0.89 | 39.6% | -0.103 | **FAILED** |
   | FX (CME futures) | -0.138 | -1.55 | 48.4% | -0.002 | **FAILED** |
-  | commodities | screen running 2026-08-03 | | | | not yet screened |
-  | crypto | screen running 2026-08-03 | | | | not yet screened |
+  | commodities | -0.053 | -0.63 | 49.6% | +0.070 | **FAILED** |
+  | crypto | +0.103 | +1.34 | 50.4% | -0.013 | **FAILED** |
 
-  **Under rule 9, indices and FX are screened and FAILED — neither may be
-  enabled.** Momentum failed both too, so this is not Kronos losing to a better
-  alternative; nothing works on these classes at this cadence.
+  **ALL FOUR CLASSES ARE SCREENED AND ALL FOUR FAILED. Nothing may be enabled;
+  the FTMO path is cleared to trade nothing at all.** No |t| exceeded 1.55 in
+  either direction — this is not "close", it is four independent nulls. The
+  matched momentum baseline failed all four as well, so this is not Kronos
+  losing to a better alternative: nothing works on any of these classes at this
+  cadence. Combined with stocks (IC 0.036 daily, -0.081 hourly), Kronos now has
+  **no demonstrated edge on any asset class this project has ever measured.**
+
+  That is the rule 9 gate doing its job, before an order was placed or the
+  venue was even reachable. Do not read a failed screen as "needs a better
+  configuration" — re-running it with different tickers or sample counts until
+  one passes is exactly the parameter-tuning rule 4 forbids. A class gets
+  re-screened when there is a NEW reason to (different cadence, different data
+  source, a fixed defect in the input), and the re-run is recorded either way.
 
   **Judge a class on the DATE-WISE IC and its t-stat, never on pooled IC.**
   Pooled date x ticker pairs share a market move, so pooled n wildly overstates
@@ -488,14 +499,13 @@ hole exactly where the unattended closes are.
    - **IC screens: DONE for indices and FX, both FAILED (2026-08-03).** See the
      screen table under Empirical findings. Neither class may be enabled — and
      note this is now a measured refusal, not a missing-evidence one, so
-     "we never screened it" is no longer an argument for either. Commodities
-     and crypto were STILL RUNNING when this was written — fill their row in
-     the table before either is enabled, and treat an unfilled row as
-     unscreened. Stock CFDs inherit the existing evidence,
-     which is IC ~0. **As of this writing NO asset class has passed, so there
-     is nothing the FTMO path is cleared to trade** — that is the gate working,
-     not a blocker to route around. Re-run with
-     `./run_notify.sh KronosAI/kronos_ic_assetclass.py`.
+     "we never screened it" is no longer an argument for any of them. Stock
+     CFDs inherit the existing evidence, which is IC ~0. **ALL FOUR CLASSES
+     FAILED, so there is nothing the FTMO path is cleared to trade** — that is
+     the gate working, not a blocker to route around. The signal→order path
+     below can still be BUILT, but it has no class it may fire on, and that
+     gap must be closed with evidence rather than with a config change.
+     Re-run with `./run_notify.sh KronosAI/kronos_ic_assetclass.py`.
    - Build the signal→order path, then an integration pass driving all five
      modules together. **The one real bug found so far surfaced that way, not
      from unit tests** — see the `ftmo` skill.
