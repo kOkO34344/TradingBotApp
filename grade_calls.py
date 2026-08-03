@@ -121,6 +121,40 @@ def _cached(key: str, compute):
     return val
 
 
+def parse_confidence(text: str) -> int | None:
+    """The 1-10 confidence rating from a research note, or None.
+
+    Written out because the previous one-line regex ended in `10?` — a literal
+    `1` with an optional `0` — so it REQUIRED the "/10" suffix. The agent
+    writes the rating three ways, and only one of them survived:
+
+        ## Confidence          -> **3/10.**   parsed
+        ## Confidence (1-10)   -> **4.**      dropped
+        ## Confidence: 5/10                   dropped
+
+    Worse than dropping: on a miss the pattern kept scanning and matched any
+    digit pair whose second digit was a 1. AVGO_2026-08-03 rated itself 4 and
+    was recorded as **6**, scraped out of the phrase "RSI 61.8" further down
+    the note. A fabricated confidence in the calibration report is exactly the
+    failure mode of the synthetic-grades incident, in a different file.
+
+    So: locate the header, discard a "(1-10)" scale annotation on it, then take
+    the FIRST number in the next few characters. Anchoring near the header is
+    the point — a loose search over the following prose is what invented the 6.
+    """
+    m = re.search(r"##\s*Confidence\b(.*)", text, re.IGNORECASE | re.DOTALL)
+    if not m:
+        return None
+    seg = m.group(1)
+    # "(1-10)" / "(1–10)" is a scale annotation on the header, not the rating
+    seg = re.sub(r"^\s*\(\s*\d+\s*[-–]\s*\d+\s*\)", "", seg)
+    m2 = re.match(r"[^\d]{0,40}(\d{1,2})\s*(?:/\s*10|\s*out\s+of\s+10)?", seg, re.DOTALL)
+    if not m2:
+        return None
+    c = int(m2.group(1))
+    return c if 1 <= c <= 10 else None
+
+
 def parse_note(path: Path) -> dict | None:
     m = re.match(r"([A-Z0-9=.\-^]+)_(\d{4}-\d{2}-\d{2})_\d{4}\.md", path.name)
     if not m:
@@ -138,12 +172,7 @@ def parse_note(path: Path) -> dict | None:
             direction = "short"
         elif "long" in seg:
             direction = "long"
-    conf = None
-    conf_sec = re.search(r"##\s*Confidence[^\n]*\n.{0,200}?(\d{1,2})\s*(?:/|\s*out of\s*)?10?",
-                         text, re.IGNORECASE | re.DOTALL)
-    if conf_sec:
-        c = int(conf_sec.group(1))
-        conf = c if 1 <= c <= 10 else None
+    conf = parse_confidence(text)
 
     if direction is None:
         return None
