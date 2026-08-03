@@ -489,8 +489,9 @@ hole exactly where the unattended closes are.
      screen table under Empirical findings. Neither class may be enabled — and
      note this is now a measured refusal, not a missing-evidence one, so
      "we never screened it" is no longer an argument for either. Commodities
-     and crypto were screened the same evening; read the table for their
-     result rather than assuming. Stock CFDs inherit the existing evidence,
+     and crypto were STILL RUNNING when this was written — fill their row in
+     the table before either is enabled, and treat an unfilled row as
+     unscreened. Stock CFDs inherit the existing evidence,
      which is IC ~0. **As of this writing NO asset class has passed, so there
      is nothing the FTMO path is cleared to trade** — that is the gate working,
      not a blocker to route around. Re-run with
