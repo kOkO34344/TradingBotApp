@@ -167,11 +167,58 @@ File purposes are documented in each script's own module docstring
   running anyway per explicit owner request (see rule 7) — a deliberate live
   paper experiment, not a validated strategy.
 
+- **Per-asset-class IC screens — the rule 9 gate**
+  (`KronosAI/kronos_ic_assetclass.py`, 2026-08-03). Daily bars, same
+  LOOKBACK=400 / PRED_LEN=20 bar counts, same 2024-07-01 pretraining cutoff and
+  same matched momentum baseline as the daily stock test, so these sit on the
+  same scale as the existing stock evidence.
+
+  | class | Kronos date-wise IC | t | hit | momentum IC | verdict |
+  |---|---|---|---|---|---|
+  | stocks | +0.036 (pooled, 2026-07-23) | — | 50.0% | — | no skill |
+  | indices | +0.068 | +0.89 | 39.6% | -0.103 | **FAILED** |
+  | FX (CME futures) | -0.138 | -1.55 | 48.4% | -0.002 | **FAILED** |
+  | commodities | screen running 2026-08-03 | | | | not yet screened |
+  | crypto | screen running 2026-08-03 | | | | not yet screened |
+
+  **Under rule 9, indices and FX are screened and FAILED — neither may be
+  enabled.** Momentum failed both too, so this is not Kronos losing to a better
+  alternative; nothing works on these classes at this cadence.
+
+  **Judge a class on the DATE-WISE IC and its t-stat, never on pooled IC.**
+  Pooled date x ticker pairs share a market move, so pooled n wildly overstates
+  independence. This is not theoretical: indices pooled at **+0.181**, which
+  reported the way this project reported IC before would have read as the first
+  positive signal it ever found — the date-wise t is +0.89, i.e. noise. FX is
+  starker still: pooled **+0.042** vs date-wise **-0.138**, disagreeing in
+  SIGN. If the two disagree, believe the date series.
+
+  **FX is screened on CME futures (6E/6B/6J/6A/6C/6S/6N/6M), not spot pairs.**
+  yfinance reports volume identically ZERO for all ten spot FX pairs (verified
+  2026-08-03) and Kronos conditions on volume, so a spot screen would score the
+  model on a dead input and return a confident artifact. Any class whose volume
+  is dead is flagged UNRELIABLE by the screen and must not be read as a
+  negative result — it is an unscreened class.
+
 ## Open hypotheses (NOT findings — do not cite these as evidence)
 
 Kept separate from Empirical Findings on purpose: these are single
 observations that have not met this project's evidence bar. Promote one only
 after testing it properly.
+
+- **Kronos may carry a systematic LONG bias on indices.** The 2026-08-03
+  indices screen returned a positive date-wise IC (+0.068) alongside a
+  directional hit rate of **39.6%** — below a coin flip. Those are not
+  contradictory: IC scores cross-sectional RANKING, hit rate scores SIGN. Being
+  mildly right about the ordering while being wrong about direction 60% of the
+  time is what a systematic directional bias looks like — plausibly forecasting
+  positive returns across a period that fell. **One screen, 24 dates, one asset
+  class — nowhere near enough.** Proper test: check whether mean predicted
+  return is positive while mean realized is negative, per class, and whether
+  the same gap shows up on the classes that failed differently. If it holds it
+  matters beyond the screen, because a rotation strategy ranks rather than
+  predicts sign, so a biased-but-ordered forecast would be less useless than a
+  39.6% hit rate suggests.
 
 - **Kronos may be an expensive momentum proxy.** Its 2026-07-27 daily forecast
   ranking correlated **Spearman 0.916** (Pearson 0.825) with the hourly
@@ -438,8 +485,16 @@ hole exactly where the unattended closes are.
      but invented specs used in `ftmo_sizing.py`'s tests.
    - Migrate `trade_journal.csv` to add the `venue` column — see the gotcha
      about the header/row misalignment before doing it.
-   - IC-screen each asset class before enabling it (rule 9). Only stock CFDs
-     inherit any existing evidence, and that evidence is IC ~0.
+   - **IC screens: DONE for indices and FX, both FAILED (2026-08-03).** See the
+     screen table under Empirical findings. Neither class may be enabled — and
+     note this is now a measured refusal, not a missing-evidence one, so
+     "we never screened it" is no longer an argument for either. Commodities
+     and crypto were screened the same evening; read the table for their
+     result rather than assuming. Stock CFDs inherit the existing evidence,
+     which is IC ~0. **As of this writing NO asset class has passed, so there
+     is nothing the FTMO path is cleared to trade** — that is the gate working,
+     not a blocker to route around. Re-run with
+     `./run_notify.sh KronosAI/kronos_ic_assetclass.py`.
    - Build the signal→order path, then an integration pass driving all five
      modules together. **The one real bug found so far surfaced that way, not
      from unit tests** — see the `ftmo` skill.
