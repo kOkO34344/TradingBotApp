@@ -41,6 +41,7 @@ Usage: python3 grade_calls.py            # grade everything, print report
 """
 
 import argparse
+import json
 import re
 import sys
 import warnings
@@ -59,7 +60,65 @@ BAND_SIGMAS = 0.5      # band = BAND_SIGMAS x realized sigma of h-day returns
 SIGMA_LOOKBACK_Y = 2   # years of pre-note history the sigma is measured on
 HORIZONS = {"5d": 5, "21d": 21}
 
-_SIGMA_CACHE: dict = {}
+CACHE_FILE = Path(__file__).parent / "grading_cache.json"
+
+_SIGMA_CACHE: dict = {}   # in-process only, holds the return series
+_CACHE: dict = {}         # on-disk, holds struck values
+_CACHE_DIRTY = False
+
+
+# --------------------------------------------------------------- struck cache
+
+def load_cache(refresh: bool = False) -> None:
+    """A grade, once struck, must stay struck.
+
+    `forward_return` re-downloading from yfinance on every run made the report
+    non-deterministic: three consecutive runs on identical notes graded the
+    same book 37% / 34% / 37% under the legacy band (2026-08-03). yfinance
+    silently returns slightly different bars run to run, and a call sitting
+    near its band flips with them.
+
+    That is not survivable for `graded_calls.csv` specifically — it is the
+    file the autonomy bar is read from, and this project has already been
+    burned once by that CSV asserting a track record that was not real. An
+    audit trail that changes when you re-read it is not an audit trail.
+
+    So every value derived from price data is written here the first time it
+    resolves and reused verbatim afterwards. Only genuinely PENDING calls
+    (not enough forward data yet) are left uncached and retried. `--refresh`
+    discards the lot and re-strikes from current data, deliberately explicit.
+    """
+    global _CACHE
+    if refresh or not CACHE_FILE.exists():
+        _CACHE = {}
+        return
+    try:
+        _CACHE = json.loads(CACHE_FILE.read_text())
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"  grading cache unreadable ({e}) — re-striking from live data",
+              file=sys.stderr)
+        _CACHE = {}
+
+
+def save_cache() -> None:
+    if not _CACHE_DIRTY:
+        return
+    tmp = CACHE_FILE.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(_CACHE, indent=1, sort_keys=True))
+    tmp.replace(CACHE_FILE)
+
+
+def _cached(key: str, compute):
+    """Return the struck value for `key`, computing and storing it if absent.
+    A computed None means 'not resolvable yet' and is deliberately NOT stored."""
+    global _CACHE_DIRTY
+    if key in _CACHE:
+        return _CACHE[key]
+    val = compute()
+    if val is not None:
+        _CACHE[key] = val
+        _CACHE_DIRTY = True
+    return val
 
 
 def parse_note(path: Path) -> dict | None:
@@ -93,15 +152,20 @@ def parse_note(path: Path) -> dict | None:
 
 
 def forward_return(ticker: str, date_s: str, days: int) -> float | None:
-    start = datetime.strptime(date_s, "%Y-%m-%d")
-    end = start + timedelta(days=days * 2 + 10)  # calendar padding for trading days
-    df = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
-                     end=end.strftime("%Y-%m-%d"), progress=False, auto_adjust=True)
-    if isinstance(df.columns, pd.MultiIndex):
-        df.columns = df.columns.get_level_values(0)
-    if len(df) < days + 1:
-        return None  # not enough future data yet -> pending
-    return float((df["Close"].iloc[days] / df["Close"].iloc[0] - 1) * 100)
+    def fetch():
+        start = datetime.strptime(date_s, "%Y-%m-%d")
+        end = start + timedelta(days=days * 2 + 10)  # calendar padding for trading days
+        df = yf.download(ticker, start=start.strftime("%Y-%m-%d"),
+                         end=end.strftime("%Y-%m-%d"), progress=False, auto_adjust=True)
+        if df is None or not len(df):
+            return None
+        if isinstance(df.columns, pd.MultiIndex):
+            df.columns = df.columns.get_level_values(0)
+        if len(df) < days + 1:
+            return None  # not enough future data yet -> pending
+        return float((df["Close"].iloc[days] / df["Close"].iloc[0] - 1) * 100)
+
+    return _cached(f"fwd|{ticker}|{date_s}|{days}", fetch)
 
 
 def _hist_returns(ticker: str, date_s: str, days: int):
@@ -133,9 +197,27 @@ def _hist_returns(ticker: str, date_s: str, days: int):
     return rets
 
 
+def hist_stats(ticker: str, date_s: str, days: int) -> dict | None:
+    """Sigma and the per-direction chance rates, struck once from pre-note
+    history. Cached on disk with the grades — the band and the null are as
+    much a part of a struck grade as the forward return is, so re-striking
+    one without the others would make an old grade unreproducible."""
+    def compute():
+        rets = _hist_returns(ticker, date_s, days)
+        if rets is None:
+            return None
+        band = BAND_SIGMAS * float(rets.std())
+        return {"sigma": float(rets.std()),
+                "long": float((rets > band).mean()),
+                "short": float((rets < -band).mean()),
+                "no-edge": float((rets.abs() <= band).mean())}
+
+    return _cached(f"hist|{ticker}|{date_s}|{days}", compute)
+
+
 def realized_sigma(ticker: str, date_s: str, days: int) -> float | None:
-    rets = _hist_returns(ticker, date_s, days)
-    return None if rets is None else float(rets.std())
+    st = hist_stats(ticker, date_s, days)
+    return None if st is None else st["sigma"]
 
 
 def null_rate(ticker: str, date_s: str, days: int, direction: str) -> float | None:
@@ -146,15 +228,8 @@ def null_rate(ticker: str, date_s: str, days: int, direction: str) -> float | No
     26% looks worse, but if chance is 39% then both are simply noise. Reported
     on every line so no future run can be read as skill without checking.
     """
-    rets = _hist_returns(ticker, date_s, days)
-    if rets is None:
-        return None
-    band = BAND_SIGMAS * float(rets.std())
-    if direction == "long":
-        return float((rets > band).mean())
-    if direction == "short":
-        return float((rets < -band).mean())
-    return float((rets.abs() <= band).mean())
+    st = hist_stats(ticker, date_s, days)
+    return None if st is None else st.get(direction)
 
 
 def band_for(ticker: str, date_s: str, days: int) -> tuple[float, bool]:
@@ -198,10 +273,18 @@ def grade_legacy(direction: str, fwd: float) -> bool:
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--csv", action="store_true")
+    ap.add_argument("--refresh", action="store_true",
+                    help="discard the struck-grade cache and re-strike from current "
+                         "data. Grades may move — yfinance is not stable run to run.")
     args = ap.parse_args()
 
     if not LOG_DIR.exists() or not any(LOG_DIR.glob("*.md")):
         sys.exit("No research notes found in research_log/ — run research_agent.py first.")
+
+    load_cache(refresh=args.refresh)
+    if args.refresh and CACHE_FILE.exists():
+        print("--refresh: re-striking every grade from current data.", file=sys.stderr)
+    struck_before = len(_CACHE)
 
     rows = []
     for path in sorted(LOG_DIR.glob("*.md")):
@@ -230,6 +313,9 @@ def main():
 
     print(f"\n=== CALL GRADING REPORT — {datetime.now():%Y-%m-%d} ===")
     print(f"Notes: {df['file'].nunique()}   graded: {len(graded)}   pending (too recent): {len(pending)}")
+    newly = len(_CACHE) - struck_before
+    print(f"Struck grades: {len(_CACHE)} cached ({newly} new this run) — "
+          f"reproducible, re-strike with --refresh.")
     if len(graded):
         n_unscaled = int((~graded["band_scaled"]).sum())
         print(f"\nBand: {BAND_SIGMAS}x realized sigma per ticker/horizon, measured on "
@@ -270,6 +356,8 @@ def main():
                   "confidence numbers are noise.]")
     print("\nAutonomy bar (from the plan): months of graded calls with healthy calibration, "
           "then paper trading with approval — in that order.")
+
+    save_cache()
 
     if args.csv:
         out = Path(__file__).parent / "graded_calls.csv"
