@@ -325,11 +325,22 @@ class FTMOError(RuntimeError):
     """A ProtoOAErrorRes came back, or the venue refused something."""
 
 
+# Every payload type that means "this failed". ProtoOAOrderErrorEvent is the
+# one that matters most and is the easiest to miss: a REJECTED ORDER comes back
+# as an *event*, not as a ProtoOAErrorRes, so a handler that only knows about
+# the Res types treats a rejection as success. That happened on the first live
+# FTMO order (2026-08-05) — the venue refused it and the code reported
+# {'sent': True}. Only the smoke test's own read-back caught it.
+_ERROR_PAYLOADS = ("ProtoOAErrorRes", "ProtoErrorRes", "ProtoOAOrderErrorEvent")
+
+
 def _raise_if_error(payload) -> None:
     name = type(payload).__name__
-    if name in ("ProtoOAErrorRes", "ProtoErrorRes"):
-        raise FTMOError(f"{getattr(payload, 'errorCode', '?')}: "
-                        f"{getattr(payload, 'description', '')}")
+    if name in _ERROR_PAYLOADS:
+        detail = getattr(payload, "description", "") or ""
+        order_id = getattr(payload, "orderId", 0)
+        where = f" (orderId {order_id})" if order_id else ""
+        raise FTMOError(f"{getattr(payload, 'errorCode', '?')}: {detail}{where}")
 
 
 def select_account(accounts, configured: str, choice: str):
@@ -619,6 +630,16 @@ def fetch_symbol_specs(env: dict | None = None, timeout_s: int = 120,
                     "trading_mode": _enum_name(model.ProtoOATradingMode,
                                                s.tradingMode),
                     "enable_short_selling": bool(s.enableShortSelling),
+                    # The venue's own trading calendar. Captured because a
+                    # STREAMING QUOTE DOES NOT MEAN A TRADEABLE MARKET: on
+                    # 2026-08-05 US30.cash and BTCUSD both quoted happily and
+                    # both rejected an order with MARKET_CLOSED. Note the zone
+                    # is the SYMBOL's (Europe/Moscow here), which is NOT the
+                    # Europe/Prague boundary ftmo_rules uses for the FTMO day —
+                    # two different timezones in one system, do not conflate.
+                    "schedule_timezone": getattr(s, "scheduleTimeZone", ""),
+                    "schedule": [{"start": iv.startSecond, "end": iv.endSecond}
+                                 for iv in s.schedule],
                     "base_asset": assets.get(l.baseAssetId, ""),
                     "quote_asset": assets.get(l.quoteAssetId, ""),
                     "category_id": l.symbolCategoryId,
@@ -762,6 +783,17 @@ def selftest() -> int:
         pass
     _Ok.__name__ = "ProtoOATraderRes"
     check("a normal response does not raise", _raise_if_error(_Ok()) is None)
+
+    class _OrderErr:
+        errorCode = "TRADING_BAD_VOLUME"
+        description = "volume is invalid"
+        orderId = 4242
+    _OrderErr.__name__ = "ProtoOAOrderErrorEvent"
+    check("a REJECTED ORDER raises — it arrives as an Event, not a Res, and "
+          "treating it as success reported a refused order as sent",
+          _raises_with(lambda: _raise_if_error(_OrderErr()), FTMOError))
+    check("...and the message carries the venue's own reason",
+          "volume is invalid" in _message(lambda: _raise_if_error(_OrderErr())))
 
     print("endpoint/account-type routing:")
     check("live host + live account is fine", routing_hint("live", True) is None)
