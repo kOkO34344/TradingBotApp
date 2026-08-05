@@ -104,10 +104,59 @@ def forecast_tickers(tickers: list, pred_len: int = PRED_LEN,
     if not df_list:
         raise RuntimeError("No tickers had enough history to forecast.")
 
+    pred_dfs = _predict(ok_tickers, df_list, x_ts_list, y_ts_list,
+                        pred_len, sample_count, verbose)
+    return ok_tickers, hist_data, pred_dfs
+
+
+def forecast_frames(frames: dict, pred_len: int = PRED_LEN,
+                    sample_count: int = DEFAULT_SAMPLE_COUNT,
+                    verbose: bool = True):
+    """Forecast from ALREADY-FETCHED OHLCV frames, skipping yfinance entirely.
+
+    `forecast_tickers()` above is hardwired to `_fetch_fresh()`, i.e. yfinance
+    via `ta.fetch`. That is fine for US equities and cannot serve the FTMO
+    venue at all: its instruments are CFDs named `US30.cash`, `XAUUSD`,
+    `NATGAS.cash` with no yfinance ticker, and forecasting a proxy series
+    instead of the one actually being traded would quietly measure the wrong
+    thing. `ftmo_signal.py` pulls cTrader trendbars and hands them here.
+
+    `frames` maps symbol -> DataFrame with a DatetimeIndex and OHLCV columns
+    (any capitalisation). Returns the same shape `forecast_tickers` does, so
+    downstream ranking code is identical for both venues.
+    """
+    predictor = get_predictor()
+    hist_data, df_list, x_ts_list, y_ts_list, ok = {}, [], [], [], []
+    for sym, df in frames.items():
+        if df is None or len(df) < LOOKBACK:
+            print(f"  {sym}: only {0 if df is None else len(df)} bars, "
+                  f"need {LOOKBACK} — skipped", file=sys.stderr)
+            continue
+        kdf = (df.rename(columns=str.lower)[["open", "high", "low", "close",
+                                             "volume"]].tail(LOOKBACK))
+        x_ts_list.append(pd.Series(kdf.index))
+        y_ts_list.append(pd.Series(pd.bdate_range(
+            kdf.index[-1] + pd.Timedelta(days=1), periods=pred_len)))
+        df_list.append(kdf.reset_index(drop=True))
+        hist_data[sym] = df
+        ok.append(sym)
+
+    if not df_list:
+        raise RuntimeError("No symbols had enough history to forecast.")
+
+    pred_dfs = _predict(ok, df_list, x_ts_list, y_ts_list, pred_len,
+                        sample_count, verbose)
+    return ok, hist_data, pred_dfs
+
+
+def _predict(names, df_list, x_ts_list, y_ts_list, pred_len, sample_count,
+             verbose):
+    """The Kronos call itself. Shared so the yfinance path and the venue-bars
+    path cannot drift in temperature, top_p or sampling."""
     if verbose:
-        print(f"Forecasting {len(ok_tickers)} tickers, {pred_len} trading days ahead, "
-              f"sample_count={sample_count}: {ok_tickers}")
-    pred_df_list = predictor.predict_batch(
+        print(f"Forecasting {len(names)} symbols, {pred_len} periods ahead, "
+              f"sample_count={sample_count}: {names}")
+    pred_df_list = get_predictor().predict_batch(
         df_list=df_list,
         x_timestamp_list=x_ts_list,
         y_timestamp_list=y_ts_list,
@@ -117,8 +166,7 @@ def forecast_tickers(tickers: list, pred_len: int = PRED_LEN,
         sample_count=sample_count,
         verbose=verbose,
     )
-    pred_dfs = dict(zip(ok_tickers, pred_df_list))
-    return ok_tickers, hist_data, pred_dfs
+    return dict(zip(names, pred_df_list))
 
 
 def forecast_signal(settings: dict, pred_len: int = PRED_LEN,
