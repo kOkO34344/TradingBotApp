@@ -476,24 +476,40 @@ hole exactly where the unattended closes are.
    - The UI is IBKR-only and stays that way for now — FTMO has no browser
      surface yet. Deciding whether it gets one is a later call, not an
      assumed requirement.
-6. **FTMO venue — IN PROGRESS, 2026-08-02.** New trading venue per rule 9.
-   Five modules built and selftested offline (259 checks, no credentials
+6. **FTMO venue — IN PROGRESS. CONNECTED 2026-08-05.** New trading venue per
+   rule 9. Five modules, selftested offline (**294 checks**, no credentials
    needed): `ftmo_rules.py`, `ftmo_monitor.py`, `ftmo_sizing.py`,
    `ftmo_audit.py`, `ftmo_service.py`. **Read the `ftmo` skill** for the agreed
    configuration, derived limits and invariants.
-   **BLOCKED on one external thing:** the cTrader Open API app at
-   `openapi.ctrader.com/apps` is still `Submitted`, not `Active`, so
-   application auth returns `CH_CLIENT_AUTH_FAILURE` (see Known environment
-   gotchas — that error already proves TLS, protobuf and error mapping all
-   work). Nothing past that layer can be built or verified: the order path
-   needs real `SymbolSpec` data from `ProtoOASymbolsListReq` and confirmation
-   that server-side stops attach as assumed.
-   Next actions, in order, once the app activates:
-   - `python3 ftmo_service.py --authorize` then `--probe`. If no accounts are
-     visible, the likeliest cause is the trial account being created AFTER the
-     app was authorised — re-run `--authorize` to re-consent.
-   - Bind real `SymbolSpec` values from the venue and replace the plausible
-     but invented specs used in `ftmo_sizing.py`'s tests.
+   **The cTrader app went Active and the venue is now reachable end to end.**
+   OAuth completed, tokens in `.env` (access token ~30 days — `--refresh`
+   before it lapses). Verified read-only by `--probe` on 2026-08-05:
+
+   ```
+   ctidTraderAccountId 48137229   login 17166058   broker ftmo
+   balance 25,000.00 USD   leverage 100x   HEDGED   FULL_ACCESS
+   0 open positions   0 pending orders   202 tradeable symbols
+   ```
+
+   **The account is live-TYPE and that is not a rule 1 problem.** cTrader
+   routes by endpoint, so `CTRADER_HOST=live` is required; FTMO issues
+   Challenge and Free Trial accounts on its LIVE cTrader server with SIMULATED
+   capital. `isLive` is a routing flag, not a statement about money — the
+   $25,000 balance with zero positions is the agreed Free Trial. See the
+   `CANT_ROUTE_REQUEST` gotcha before "fixing" the host back to demo.
+   Next actions, in order:
+   - ~~`--authorize` then `--probe`~~ — DONE 2026-08-05, both pass.
+   - ~~Bind real `SymbolSpec` values~~ — DONE 2026-08-05.
+     `python3 ftmo_service.py --symbols` captures all 202 real specs to the
+     TRACKED `ftmo_symbol_specs.json`, and `ftmo_sizing.spec_from_capture()`
+     reads them. **Every invented spec had been wrong, some by 1000x**
+     (EURUSD min/step 100 → 100,000; XAUUSD 1 → 100; US30.cash 10 → 1 and
+     digits 1 → 2), so the sizer's risk maths had been validated against
+     fiction. The sizer now sweeps all 202 real symbols asserting no accepted
+     size ever exceeds the budget. Re-capture only when the venue's universe
+     changes; the file is tracked so the selftest stays offline.
+   - Confirm server-side stops attach as assumed — **still unverified, and it
+     needs a real order, so it is the first thing the order path must prove.**
    - Migrate `trade_journal.csv` to add the `venue` column — see the gotcha
      about the header/row misalignment before doing it.
    - **IC screens: DONE for indices and FX, both FAILED (2026-08-03).** See the
@@ -654,7 +670,39 @@ sections close to verbatim, so keep those reasonably current.
   handshake to `demo.ctraderapi.com:5035` succeeded, the protobuf request
   encoded and sent, and a real `ProtoOAErrorRes` came back — so do NOT go
   hunting for network, TLS or SDK problems. Wait for activation, then re-run
-  `python3 ftmo_service.py --probe`.
+  `python3 ftmo_service.py --probe`. **RESOLVED 2026-08-05** — the app went
+  Active and application auth now succeeds. Kept here because the diagnosis
+  is the reusable part: an Open API error that fires at app-auth time is about
+  the app's state, not your credentials.
+- **cTrader `CANT_ROUTE_REQUEST: Cannot route request` means the ENDPOINT is
+  wrong for that account, not that anything is unauthorised.** cTrader routes
+  by endpoint: a live-type account authenticates ONLY on
+  `live.ctraderapi.com` and a demo-type account ONLY on `demo.ctraderapi.com`.
+  Send `ProtoOAAccountAuthReq` to the wrong one and you get four words that
+  name neither the account nor the endpoint, arriving immediately AFTER a
+  successful application auth and a successful account list — which reads like
+  a token-scope problem and sends you to the wrong place entirely. Hit
+  2026-08-05 on the first probe after activation.
+  **FTMO Challenge and Free Trial accounts are live-TYPE with SIMULATED
+  capital**, so `CTRADER_HOST=live` is correct and is NOT a rule 1 breach —
+  `isLive` is a cTrader routing flag, not a claim about real money. Do not
+  "fix" this by switching back to demo; the account is simply not there.
+  `ftmo_service.select_account()` now refuses the mismatch BEFORE sending
+  account auth and names the exact `CTRADER_HOST` value to set, with offline
+  tests covering both directions.
+- **`ProtoOASymbolsListReq` does NOT return anything you can size an order
+  with.** It returns `ProtoOALightSymbol` — id, name, category, asset ids, and
+  nothing else. Every number the sizer needs (`minVolume`, `stepVolume`,
+  `maxVolume`, `digits`, `pipPosition`, `lotSize`) lives on the full
+  `ProtoOASymbol`, which only comes back from `ProtoOASymbolByIdReq`
+  (`symbolId` is a repeated field, so batch it — 202 individual round trips
+  will meet the rate limiter). The old work-queue note saying the order path
+  "needs real `SymbolSpec` data from `ProtoOASymbolsListReq`" named the wrong
+  request.
+- **`brokerName` is on `ProtoOATrader`, not on `ProtoOACtidTraderAccount`.**
+  The account-list response carries only `ctidTraderAccountId`, `isLive`,
+  `traderLogin` and two timestamps, so a `getattr(a, "brokerName", "?")` there
+  printed `broker=?` forever and looked like the venue withholding data.
 - **GitHub: `gh` is installed manually at `~/.local/bin/gh`** — there is no
   Homebrew on this machine, so upgrades mean re-downloading the release zip
   and `install -m 755` over it. Auth token is in the macOS keyring, config in

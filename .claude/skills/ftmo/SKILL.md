@@ -185,12 +185,46 @@ protobuf==3.20.1, Twisted==24.3.0, pyOpenSSL==24.1.0. See the comments in
 `requirements.txt` before changing any of them — particularly the note on why
 yfinance must NOT be dropped to "resolve" the protobuf downgrade.
 
-## Current blocker
+## Connection status — LIVE as of 2026-08-05
 
-The Open API app at `openapi.ctrader.com/apps` is still `Submitted` rather than
-`Active`, so application auth returns `CH_CLIENT_AUTH_FAILURE`. See the entry
-under Known environment gotchas in `CLAUDE.md` for what that error already
-proves working. Nothing past application auth can be built or verified until it
-activates — the order path needs real `SymbolSpec` data from
-`ProtoOASymbolsListReq` and confirmation that server-side stops attach as
-assumed.
+The Open API app is `Active`, OAuth is complete and the venue is reachable end
+to end. `--probe` and `--symbols` both pass read-only:
+
+```
+ctidTraderAccountId 48137229   login 17166058   broker ftmo
+balance 25,000.00 USD   leverage 100x   HEDGED   FULL_ACCESS
+0 open positions   0 pending orders   202 tradeable symbols
+```
+
+**`CTRADER_HOST=live` is required and is not a rule 1 breach.** cTrader routes
+by endpoint and FTMO issues Challenge/Trial accounts on its LIVE server with
+SIMULATED capital, so the account is live-*type* while the money is not real.
+The wrong endpoint returns a bare `CANT_ROUTE_REQUEST` naming neither account
+nor endpoint; `select_account()` now refuses that before account auth and says
+which value to set. Do not switch back to demo — the account is not there.
+
+The access token lasts ~30 days. `python3 ftmo_service.py --refresh` renews it;
+`--probe` prints the remaining life on every run.
+
+### Symbol specs are captured, not invented
+
+`python3 ftmo_service.py --symbols` writes all 202 real `ProtoOASymbol` specs
+to `ftmo_symbol_specs.json`, which is **tracked in git** so `ftmo_sizing.py`'s
+selftest can assert against real venue values while staying offline.
+`spec_from_capture(name)` builds a `SymbolSpec` from it.
+
+This mattered more than expected: **every spec the sizing tests had invented
+was wrong**, EURUSD's min/step by 1000x (100 → 100,000), XAUUSD's by 100x,
+US30.cash's digits by one place. The risk maths had been validated against
+numbers the venue never reports. The selftest now sweeps all 202 real symbols
+asserting no accepted size ever exceeds the budget.
+
+Note `ProtoOASymbolsListReq` returns only `ProtoOALightSymbol` and carries no
+volume or lot data at all — the specs come from `ProtoOASymbolByIdReq`.
+
+### Still unverified
+
+**That server-side stops attach at entry as assumed.** It cannot be checked
+read-only, so it is the first thing the order path must prove. Note also that
+all four asset classes failed their IC screen (rule 9), so the path may be
+built but has nothing it is cleared to fire on.

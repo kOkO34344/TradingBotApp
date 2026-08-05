@@ -25,26 +25,41 @@ later imports this module into the web backend must call that installer first.
 CREDENTIALS live in a gitignored `.env` (see `.env` for the key names). They
 are never logged, never printed, and never interpolated into a shell command.
 
+ENDPOINT ROUTING IS BY ACCOUNT TYPE, and it is the one thing that will waste
+your afternoon. A live-type account authenticates ONLY on the live host and a
+demo-type account ONLY on the demo host; the wrong pairing returns a bare
+`CANT_ROUTE_REQUEST` immediately after a SUCCESSFUL application auth and a
+SUCCESSFUL account list, so it reads like a token problem and is not.
+FTMO issues Challenge and Free Trial accounts on its LIVE cTrader server with
+SIMULATED capital, so `CTRADER_HOST=live` is correct for an FTMO trial and does
+not breach rule 1 — `isLive` is a routing flag, not a claim about real money.
+`select_account()` refuses a mismatch before account auth and names the fix.
+
 Usage:
   python3 ftmo_service.py --authorize     # one-time OAuth, writes tokens to .env
+  python3 ftmo_service.py --refresh       # new access token from the refresh token
   python3 ftmo_service.py --probe         # connect, list accounts, show state
+  python3 ftmo_service.py --symbols       # capture real symbol specs to JSON
   python3 ftmo_service.py --selftest      # offline checks, no network
 """
 
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import sys
 import threading
 import time
 import urllib.parse
 import webbrowser
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent
 ENV_FILE = BASE_DIR / ".env"
+SPECS_FILE = BASE_DIR / "ftmo_symbol_specs.json"
 
 # cTrader quotes prices and money as scaled integers. Money is in "cents of a
 # cent": divide by 100 to get the account currency. Getting this wrong by a
@@ -109,13 +124,48 @@ def require(env: dict, *keys: str) -> list:
     return [env[k] for k in keys]
 
 
-def host_for(env: dict) -> str:
-    from ctrader_open_api import EndPoints
+def host_choice(env: dict) -> str:
+    """'demo' or 'live' — the configured endpoint name, validated.
+
+    Unset defaults to 'demo' and a typo raises, both in the safe direction:
+    nothing should ever reach the live endpoint by falling through a default.
+    """
     choice = (env.get("CTRADER_HOST") or "demo").strip().lower()
     if choice not in ("demo", "live"):
         raise ValueError(f"CTRADER_HOST must be 'demo' or 'live', got {choice!r}")
-    return (EndPoints.PROTOBUF_DEMO_HOST if choice == "demo"
+    return choice
+
+
+def host_for(env: dict) -> str:
+    from ctrader_open_api import EndPoints
+    return (EndPoints.PROTOBUF_DEMO_HOST if host_choice(env) == "demo"
             else EndPoints.PROTOBUF_LIVE_HOST)
+
+
+def routing_hint(choice: str, is_live: bool) -> str | None:
+    """An actionable message when the endpoint cannot serve this account type.
+
+    cTrader routes by endpoint: a live-type account authenticates ONLY on the
+    live host and a demo-type account ONLY on the demo host. Sending
+    `ProtoOAAccountAuthReq` to the wrong one returns a bare
+    `CANT_ROUTE_REQUEST: Cannot route request` which names neither the account
+    nor the endpoint, and reads like a permissions or token problem. Hit
+    2026-08-05 on the first probe after the app went Active.
+
+    `isLive` is the account's cTrader ROUTING TYPE and is NOT evidence that
+    real money is at stake. FTMO issues its Challenge and Free Trial accounts
+    on its LIVE cTrader server with simulated capital, so an FTMO trial is
+    legitimately live-type — see rule 9 in CLAUDE.md. Returns None when the
+    pairing is fine.
+    """
+    needed = "live" if is_live else "demo"
+    if choice == needed:
+        return None
+    return (f"CTRADER_HOST is '{choice}', but this account is {needed}-type and "
+            f"is reachable only on the '{needed}' endpoint. Set "
+            f"CTRADER_HOST={needed} in .env and re-run. (FTMO Challenge and "
+            f"Free Trial accounts are live-type with SIMULATED capital — "
+            f"live-type is not real money. See rule 9.)")
 
 
 def install_asyncio_reactor() -> bool:
@@ -274,6 +324,47 @@ def _raise_if_error(payload) -> None:
                         f"{getattr(payload, 'description', '')}")
 
 
+def select_account(accounts, configured: str, choice: str):
+    """Pick which account to use, and refuse an endpoint/type mismatch.
+
+    Pure and offline-testable: `accounts` only needs `ctidTraderAccountId` and
+    `isLive`, so the selection rules are covered by the selftest without a
+    connection. Every network mode routes through this, so none of them can
+    disagree about which account they are talking to.
+    """
+    if not accounts:
+        raise FTMOError("No trading accounts are visible for this access token.")
+    configured = (configured or "").strip()
+    if configured:
+        if not configured.isdigit():
+            raise FTMOError(
+                f"CTRADER_ACCOUNT_ID must be a number, got {configured!r}.")
+        target = int(configured)
+        selected = next((a for a in accounts
+                         if a.ctidTraderAccountId == target), None)
+        if selected is None:
+            visible = ", ".join(str(a.ctidTraderAccountId) for a in accounts)
+            raise FTMOError(
+                f"CTRADER_ACCOUNT_ID={target} is not among the accounts this "
+                f"access token can see ({visible}).")
+    else:
+        selected = accounts[0]
+        target = selected.ctidTraderAccountId
+    hint = routing_hint(choice, bool(getattr(selected, "isLive", False)))
+    if hint:
+        raise FTMOError(hint)
+    return target, selected
+
+
+def _enum_name(wrapper, value, default: str = "?") -> str:
+    """Render a protobuf enum as its name. Never raises — this is only ever
+    used for reporting, and an unknown id must not abort a read-only probe."""
+    try:
+        return wrapper.Name(value)
+    except Exception:
+        return default if value is None else f"{default}({value})"
+
+
 def probe(env: dict | None = None, timeout_s: int = 45) -> int:
     """Connect, authenticate, list accounts and report account state.
 
@@ -282,11 +373,13 @@ def probe(env: dict | None = None, timeout_s: int = 45) -> int:
     """
     from twisted.internet import reactor, defer
     from ctrader_open_api import Client, Protobuf, TcpProtocol
+    from ctrader_open_api.messages import OpenApiModelMessages_pb2 as model
 
     env = env or load_env()
     client_id, client_secret, access_token = require(
         env, "CTRADER_CLIENT_ID", "CTRADER_CLIENT_SECRET", "CTRADER_ACCESS_TOKEN")
     host = host_for(env)
+    choice = host_choice(env)
     configured_account = (env.get("CTRADER_ACCOUNT_ID") or "").strip()
 
     print(f"cTrader Open API -> {host}:5035  (token {token_expiry_note(env)})")
@@ -316,14 +409,16 @@ def probe(env: dict | None = None, timeout_s: int = 45) -> int:
                 state["rc"] = 2
                 return
 
+            # brokerName is NOT on ProtoOACtidTraderAccount — it lives on
+            # ProtoOATrader, fetched below. Printing it here always rendered
+            # "broker=?" and looked like the venue withholding data.
             print(f"\n{len(accounts)} trading account(s) visible:")
             for a in accounts:
-                live = "LIVE" if getattr(a, "isLive", False) else "demo"
-                print(f"  ctidTraderAccountId={a.ctidTraderAccountId}  {live}  "
-                      f"broker={getattr(a, 'brokerName', '?')}")
+                kind = "live-type" if getattr(a, "isLive", False) else "demo-type"
+                print(f"  ctidTraderAccountId={a.ctidTraderAccountId}  {kind}  "
+                      f"login={getattr(a, 'traderLogin', '?')}")
 
-            target = int(configured_account) if configured_account.isdigit() \
-                else accounts[0].ctidTraderAccountId
+            target, _ = select_account(accounts, configured_account, choice)
             if not configured_account:
                 print(f"\nCTRADER_ACCOUNT_ID is unset — probing the first account "
                       f"({target}).")
@@ -334,6 +429,19 @@ def probe(env: dict | None = None, timeout_s: int = 45) -> int:
             _raise_if_error(Protobuf.extract(res))
             print(f"account {target} authenticated")
 
+            # Asset names, so the deposit currency reads "USD" rather than the
+            # bare id 15. The sizer's quote_to_account_rate is meaningless
+            # unless we know what the account currency actually is.
+            assets = {}
+            try:
+                res = yield client.send("ProtoOAAssetListReq",
+                                        ctidTraderAccountId=target)
+                payload = Protobuf.extract(res)
+                _raise_if_error(payload)
+                assets = {a.assetId: a.name for a in payload.asset}
+            except Exception as e:  # non-fatal: it only affects labelling
+                print(f"  (asset list unavailable: {type(e).__name__})")
+
             res = yield client.send("ProtoOATraderReq", ctidTraderAccountId=target)
             payload = Protobuf.extract(res)
             _raise_if_error(payload)
@@ -341,11 +449,22 @@ def probe(env: dict | None = None, timeout_s: int = 45) -> int:
             digits = getattr(t, "moneyDigits", 2) or 2
             scale = float(10 ** digits)
             balance = t.balance / scale
+            deposit_id = getattr(t, "depositAssetId", None)
+            currency = assets.get(deposit_id, f"assetId {deposit_id}")
+            rights = _enum_name(model.ProtoOAAccessRights,
+                                getattr(t, "accessRights", None))
             print(f"\naccount state:")
-            print(f"  balance           {balance:,.2f}")
-            print(f"  currency id       {getattr(t, 'depositAssetId', '?')}")
+            print(f"  broker            {getattr(t, 'brokerName', '?')}")
+            print(f"  balance           {balance:,.2f} {currency}")
             print(f"  leverage          {getattr(t, 'leverageInCents', 0) / 100:.0f}x")
-            print(f"  registered        {getattr(t, 'registrationTimestamp', 0)}")
+            print(f"  account type      "
+                  f"{_enum_name(model.ProtoOAAccountType, getattr(t, 'accountType', None))}")
+            # FULL_ACCESS is the only value under which the order path can work.
+            # CLOSE_ONLY / NO_TRADING would let every pre-trade check pass and
+            # then fail at the venue, which is the worst place to discover it.
+            print(f"  access rights     {rights}"
+                  f"{'' if rights == 'FULL_ACCESS' else '   <-- NOT FULL_ACCESS'}")
+            print(f"  money digits      {digits}")
 
             res = yield client.send("ProtoOAReconcileReq", ctidTraderAccountId=target)
             payload = Protobuf.extract(res)
@@ -387,6 +506,165 @@ def probe(env: dict | None = None, timeout_s: int = 45) -> int:
     reactor.callLater(timeout_s, lambda: reactor.running and reactor.stop())
     reactor.run()
     return state["rc"]
+
+
+def fetch_symbol_specs(env: dict | None = None, timeout_s: int = 120,
+                       out_path: Path | None = None) -> int:
+    """Capture REAL ProtoOASymbol specs from the venue into a tracked JSON file.
+
+    WHY THIS EXISTS. `ftmo_sizing.py` needs min/step/max volume, digits and lot
+    size per symbol to turn a risk budget into an order volume, and until now
+    its tests used plausible but INVENTED numbers. An invented step size is
+    precisely the kind of thing that passes every test and then places a
+    wrongly-sized order at the venue — the sizer's own docstring notes that
+    flooring to the step is what keeps risk under budget, and that guarantee is
+    only as good as the step being real.
+
+    The capture is written to disk and tracked in git so the sizer's selftest
+    can assert against real venue values while staying OFFLINE and
+    credential-free, the same reasoning that makes `grading_cache.json`
+    tracked: a file the risk maths is validated against must not change
+    depending on whether the network was up.
+
+    `ProtoOASymbolsListReq` alone is NOT enough — it returns ProtoOALightSymbol
+    (id, name, category, asset ids) with no volume or lot data at all. The
+    numbers that matter only come from `ProtoOASymbolByIdReq`.
+
+    Read-only. Lists symbols and asks for their specs; places nothing.
+    """
+    from twisted.internet import reactor, defer
+    from ctrader_open_api import Client, Protobuf, TcpProtocol
+    from ctrader_open_api.messages import OpenApiModelMessages_pb2 as model
+
+    env = env or load_env()
+    client_id, client_secret, access_token = require(
+        env, "CTRADER_CLIENT_ID", "CTRADER_CLIENT_SECRET", "CTRADER_ACCESS_TOKEN")
+    host = host_for(env)
+    choice = host_choice(env)
+    configured_account = (env.get("CTRADER_ACCOUNT_ID") or "").strip()
+    out_path = out_path or SPECS_FILE
+
+    print(f"cTrader Open API -> {host}:5035  (token {token_expiry_note(env)})")
+    state = {"rc": 1}
+
+    @defer.inlineCallbacks
+    def run(client):
+        try:
+            res = yield client.send("ProtoOAApplicationAuthReq",
+                                    clientId=client_id, clientSecret=client_secret)
+            _raise_if_error(Protobuf.extract(res))
+
+            res = yield client.send("ProtoOAGetAccountListByAccessTokenReq",
+                                    accessToken=access_token)
+            payload = Protobuf.extract(res)
+            _raise_if_error(payload)
+            target, _ = select_account(list(payload.ctidTraderAccount),
+                                       configured_account, choice)
+
+            res = yield client.send("ProtoOAAccountAuthReq",
+                                    ctidTraderAccountId=target,
+                                    accessToken=access_token)
+            _raise_if_error(Protobuf.extract(res))
+            print(f"account {target} authenticated")
+
+            res = yield client.send("ProtoOAAssetListReq",
+                                    ctidTraderAccountId=target)
+            payload = Protobuf.extract(res)
+            _raise_if_error(payload)
+            assets = {a.assetId: a.name for a in payload.asset}
+
+            res = yield client.send("ProtoOASymbolsListReq",
+                                    ctidTraderAccountId=target)
+            payload = Protobuf.extract(res)
+            _raise_if_error(payload)
+            light = {s.symbolId: s for s in payload.symbol}
+            print(f"{len(light)} symbols listed; fetching full specs")
+
+            # Batched: symbolId is a repeated field, and one request per symbol
+            # would be 202 round trips into cTrader's rate limiter.
+            specs = {}
+            ids = sorted(light)
+            for i in range(0, len(ids), 100):
+                chunk = ids[i:i + 100]
+                res = yield client.send("ProtoOASymbolByIdReq",
+                                        ctidTraderAccountId=target,
+                                        symbolId=chunk)
+                payload = Protobuf.extract(res)
+                _raise_if_error(payload)
+                for s in payload.symbol:
+                    specs[s.symbolId] = s
+                print(f"  specs {len(specs)}/{len(ids)}")
+
+            records = {}
+            for sid in ids:
+                s, l = specs.get(sid), light[sid]
+                if s is None:
+                    continue
+                records[l.symbolName] = {
+                    "symbol_id": sid,
+                    "digits": s.digits,
+                    "pip_position": s.pipPosition,
+                    "lot_size": s.lotSize,
+                    "min_volume": s.minVolume,
+                    "step_volume": s.stepVolume,
+                    "max_volume": s.maxVolume,
+                    "trading_mode": _enum_name(model.ProtoOATradingMode,
+                                               s.tradingMode),
+                    "enable_short_selling": bool(s.enableShortSelling),
+                    "base_asset": assets.get(l.baseAssetId, ""),
+                    "quote_asset": assets.get(l.quoteAssetId, ""),
+                    "category_id": l.symbolCategoryId,
+                    "description": l.description,
+                }
+
+            doc = {
+                "_meta": {
+                    "captured_utc": datetime.now(timezone.utc)
+                                            .strftime("%Y-%m-%dT%H:%M:%SZ"),
+                    "host": choice,
+                    "ctid_trader_account_id": target,
+                    "symbol_count": len(records),
+                    "note": ("Real venue specs, captured read-only. Volumes are "
+                             "in cTrader centi-units exactly as reported. "
+                             "Regenerate with: python3 ftmo_service.py "
+                             "--symbols"),
+                },
+                "symbols": dict(sorted(records.items())),
+            }
+            out_path.write_text(json.dumps(doc, indent=2) + "\n")
+            print(f"\nwrote {len(records)} specs to {out_path.name}")
+            state["rc"] = 0
+        except Exception as e:
+            print(f"\nSPEC FETCH FAILED: {type(e).__name__}: {e}", file=sys.stderr)
+            state["rc"] = 1
+        finally:
+            if reactor.running:
+                reactor.stop()
+
+    client = Client(host, 5035, TcpProtocol)
+    client.setConnectedCallback(lambda c: run(c))
+    client.setDisconnectedCallback(
+        lambda c, reason: print(f"disconnected: {reason.getErrorMessage()}"))
+    client.setMessageReceivedCallback(lambda c, m: None)
+    client.startService()
+
+    reactor.callLater(timeout_s, lambda: reactor.running and reactor.stop())
+    reactor.run()
+    return state["rc"]
+
+
+def load_symbol_specs(path: Path | None = None) -> dict:
+    """Read the captured venue specs. Raises if the capture is missing.
+
+    Callers get a clear instruction rather than a KeyError, because the file
+    is generated and a fresh clone will not have re-run the capture.
+    """
+    path = path or SPECS_FILE
+    if not path.exists():
+        raise FileNotFoundError(
+            f"{path} not found — run `python3 ftmo_service.py --symbols` "
+            f"once against the venue to capture real symbol specs.")
+    return json.loads(path.read_text())["symbols"]
 
 
 # ------------------------------------------------------------------ selftest
@@ -477,6 +755,61 @@ def selftest() -> int:
     _Ok.__name__ = "ProtoOATraderRes"
     check("a normal response does not raise", _raise_if_error(_Ok()) is None)
 
+    print("endpoint/account-type routing:")
+    check("live host + live account is fine", routing_hint("live", True) is None)
+    check("demo host + demo account is fine", routing_hint("demo", False) is None)
+    check("demo host + live account is refused with the fix named",
+          "CTRADER_HOST=live" in (routing_hint("demo", True) or ""))
+    check("live host + demo account is refused with the fix named",
+          "CTRADER_HOST=demo" in (routing_hint("live", False) or ""))
+    check("the hint says live-type is not real money",
+          "SIMULATED" in (routing_hint("demo", True) or ""))
+
+    print("host_choice normalises before host_for uses it:")
+    check("unset -> demo", host_choice({}) == "demo")
+    check("whitespace and case tolerated",
+          host_choice({"CTRADER_HOST": "  LIVE "}) == "live")
+    check("a typo raises rather than defaulting",
+          _raises(lambda: host_choice({"CTRADER_HOST": "liv"})))
+
+    print("select_account:")
+
+    class _Acct:
+        def __init__(self, i, live):
+            self.ctidTraderAccountId, self.isLive = i, live
+
+    demo_a, live_a = _Acct(11, False), _Acct(22, True)
+    check("unset id picks the first account",
+          select_account([live_a, demo_a], "", "live")[0] == 22)
+    check("a configured id is honoured over ordering",
+          select_account([live_a, _Acct(33, True)], "33", "live")[0] == 33)
+    check("an id the token cannot see is refused",
+          _raises_with(lambda: select_account([live_a], "99", "live"), FTMOError))
+    check("...and the error lists what IS visible",
+          "22" in _message(lambda: select_account([live_a], "99", "live")))
+    check("a non-numeric id is refused, not coerced",
+          _raises_with(lambda: select_account([live_a], "abc", "live"), FTMOError))
+    check("an empty account list is refused",
+          _raises_with(lambda: select_account([], "", "live"), FTMOError))
+    check("a type/endpoint mismatch is refused before AccountAuth is sent",
+          _raises_with(lambda: select_account([live_a], "", "demo"), FTMOError))
+    check("...naming the endpoint to switch to",
+          "CTRADER_HOST=live" in _message(
+              lambda: select_account([live_a], "", "demo")))
+
+    print("symbol spec capture:")
+    with tempfile.TemporaryDirectory() as d:
+        missing = Path(d) / "nope.json"
+        check("a missing capture tells you how to make one",
+              "--symbols" in _message(lambda: load_symbol_specs(missing)))
+        good = Path(d) / "specs.json"
+        good.write_text(json.dumps(
+            {"_meta": {}, "symbols": {"EURUSD": {"symbol_id": 1,
+                                                 "min_volume": 100}}}))
+        loaded = load_symbol_specs(good)
+        check("captured specs load by symbol name",
+              loaded["EURUSD"]["min_volume"] == 100)
+
     print("\nFAILED" if failures else "\nAll ftmo_service offline selftests passed.")
     return 1 if failures else 0
 
@@ -499,6 +832,16 @@ def _raises_with(fn, exc) -> bool:
     return False
 
 
+def _message(fn) -> str:
+    """The text of whatever `fn` raises, so a test can assert an error is
+    ACTIONABLE and not merely present."""
+    try:
+        fn()
+    except Exception as e:
+        return str(e)
+    return ""
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description="FTMO venue adapter (cTrader Open API).")
     g = ap.add_mutually_exclusive_group()
@@ -508,11 +851,14 @@ def main() -> int:
                    help="Exchange the refresh token for a fresh access token.")
     g.add_argument("--probe", action="store_true",
                    help="Connect read-only: list accounts, balance, positions, symbols.")
+    g.add_argument("--symbols", action="store_true",
+                   help="Capture real symbol specs to ftmo_symbol_specs.json (read-only).")
     g.add_argument("--selftest", action="store_true",
                    help="Offline checks; no network, no credentials needed.")
     args = ap.parse_args()
 
-    if args.selftest or not any((args.authorize, args.refresh, args.probe)):
+    modes = (args.authorize, args.refresh, args.probe, args.symbols)
+    if args.selftest or not any(modes):
         return selftest()
     if args.authorize:
         authorize()
@@ -521,6 +867,8 @@ def main() -> int:
         refresh_tokens()
         print("Access token refreshed and written to .env.")
         return 0
+    if args.symbols:
+        return fetch_symbol_specs()
     return probe()
 
 
