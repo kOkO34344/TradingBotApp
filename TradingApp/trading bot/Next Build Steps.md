@@ -6,21 +6,31 @@ last_updated: 2026-08-02
 
 # Next Build Steps — Prioritized Action Queue
 
-> [!important] Reordered 2026-08-02 — the venue changed
-> The work queue below predates the move to FTMO. Current priorities:
+> [!important] Reordered 2026-08-05 — the venue is connected, and it may trade nothing
+> The tiers below predate the move to FTMO. Current priorities:
 >
-> 1. **cTrader Open API app must reach `Active`** — everything on the FTMO side
->    is built and blocked on it. See [[FTMO Venue]].
-> 2. **`grade_calls.py --csv`** — still 0 graded / 76 pending, still the
->    2026-07-28 run, overdue since ~07-29. This is the artefact the
->    earn-autonomy rule depends on.
-> 3. **Weekly watchlist research re-run** — all notes still dated 2026-07-25.
-> 4. **IC-screen each FTMO asset class before enabling it.** Only stock CFDs
->    inherit any evidence, and that evidence is IC ~0. Indices, FX and
->    commodities have none at all.
-> 5. Once FTMO connects: bind real symbol specs, add the `venue` column to the
->    trade journal, build the signal→order path, then an **integration pass** —
->    the only real bug found so far surfaced that way, not from unit tests.
+> 1. ~~cTrader app reaching `Active`~~ — **DONE 2026-08-05.** The venue is
+>    connected end to end: account 48137229, $25,000, FULL_ACCESS, 202 symbols.
+>    See [[FTMO Venue]].
+> 2. ~~IC-screen each FTMO asset class~~ — **DONE 2026-08-03, and ALL FOUR
+>    FAILED.** Indices, FX, commodities and crypto all returned |t| < 1.55, and
+>    the matched momentum baseline failed all four too. **There is now no asset
+>    class the FTMO path is cleared to trade.** That is the gate working, not a
+>    blocker to route around — see [[Kronos Research Agent]].
+> 3. **The real bottleneck is evidence, and it always was.** The only route
+>    forward is more research cycles and more graded calls:
+>    - Re-run `run_research_agent_watchlist.py` — every note in `research_log/`
+>      still dates from **2026-07-25**, so the book has not grown in 11 days.
+>    - Re-run `grade_calls.py --csv` as the 38 calls mature at 21d.
+> 4. **Prove server-side stops attach at entry.** Needs a real order; cannot be
+>    checked read-only. The whole FTMO risk model assumes it.
+> 5. Then: `venue` column in the trade journal, the signal→order path, and an
+>    **integration pass** — the only real bug found so far surfaced that way,
+>    not from unit tests.
+>
+> Note the shape of this list. Everything mechanical is done or nearly done;
+> what remains is waiting for evidence that does not exist yet. Building more
+> machinery does not move it.
 >
 > Items below about building `paper_trader.py` and IBKR rebalances are DONE or
 > retired; keep them for the reasoning, not as instructions.
@@ -95,7 +105,17 @@ watching.
 
 ## Tier 1: Not due yet — don't run early
 
-### 1.1: `grade_calls.py` — first real grades ~2026-07-29
+### 1.1: ~~`grade_calls.py` — first real grades~~ — LANDED 2026-08-03
+
+**38 calls graded at 5d: 26% correct against a 39% chance base rate**, an edge
+of -13pt at binomial p=0.13 — indistinguishable from guessing in either
+direction. All 38 share one market week, so this is much closer to **one**
+observation than to 38. 38 remain pending at 21d. Full breakdown and the two
+methodology fixes that came with it are in [[Graded Calls Tracker]].
+
+The historical detail below is kept for the reasoning about timing arithmetic.
+
+
 
 ```bash
 cd /Users/kaloyanivanov/TradingBotApp
@@ -121,11 +141,15 @@ file that gates autonomy. Overwritten now.
 | 07-23 (12) | needs 4 more sessions | needs 20 more |
 | 07-25 (14) | needs 5 more sessions | needs 21 more |
 
-**What to do once grades exist (~2026-07-29+):**
+**What to do on each subsequent run:**
 - Copy the calibration report into [[Graded Calls Tracker]]
-- Read it against the pending book's shape: **74% no-edge, confidence
-  clustered at 3-5/10**. A mostly-no-edge, low-confidence book is cheap to be
-  "right" about under the ±2% flat band — the win rate will flatter the skill.
+- **Always quote the chance base rate alongside the win rate.** A bare win rate
+  is not evidence; `grade_calls.py` now prints the null, the edge and a
+  binomial p-value on every line.
+- Note the earlier claim here that a no-edge book is "cheap to be right about"
+  under the ±2% flat band was **backwards** — such a call landed inside ±2%
+  only ~42% of the time by chance at 5d and ~21% at 21d. The band is now
+  0.5× the ticker's realized sigma at that horizon.
 - Treat any report claiming grades from notes not in `research_log/` as corrupt
 
 **Frequency:** Weekly from ~2026-07-29 onward.

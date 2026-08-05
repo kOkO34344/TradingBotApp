@@ -1,8 +1,8 @@
 ---
 tags: [research, kronos, agent, workflow]
 source: KronosAI/kronos_agent.py
-status: "THE project signal (owner decision 2026-07-28) — still no measured edge"
-last_updated: 2026-07-28
+status: "THE project signal (owner decision 2026-07-28) — no measured edge on ANY asset class (all four screened + failed 2026-08-03)"
+last_updated: 2026-08-05
 ---
 
 # Kronos Research Agent
@@ -113,6 +113,52 @@ Log.md`.
 **If revisited:** re-run with 2-3 different seeds to confirm the IC finding
 is stable (not urgent — a result this flat is unlikely to flip on a
 different draw, but hasn't been formally confirmed).
+
+## Per-asset-class IC screens, 2026-08-03 — all four failed
+
+The rule 9 gate for the FTMO venue: Kronos may only trade an asset class that
+has passed its own IC screen. All four were screened
+(`KronosAI/kronos_ic_assetclass.py`), on daily bars with the same LOOKBACK=400 /
+PRED_LEN=20 counts, the same 2024-07-01 pretraining cutoff and the same matched
+momentum baseline as the stock test — so these sit on the same scale as the
+evidence above.
+
+| class | Kronos date-wise IC | t | hit rate | momentum IC | verdict |
+|---|---|---|---|---|---|
+| stocks | +0.036 (pooled, 07-23) | — | 50.0% | — | no skill |
+| indices | +0.068 | +0.89 | 39.6% | -0.103 | **FAILED** |
+| FX (CME futures) | -0.138 | -1.55 | 48.4% | -0.002 | **FAILED** |
+| commodities | -0.053 | -0.63 | 49.6% | +0.070 | **FAILED** |
+| crypto | +0.103 | +1.34 | 50.4% | -0.013 | **FAILED** |
+
+**No |t| exceeded 1.55 in either direction.** This is not "close" — it is four
+independent nulls. The matched momentum baseline failed all four as well, so it
+is not Kronos losing to a better alternative: *nothing* works on any of these
+classes at this cadence. Combined with stocks, Kronos now has **no demonstrated
+edge on any asset class this project has ever measured.**
+
+**Judge a class on the DATE-WISE IC, never on pooled.** Pooled date×ticker pairs
+share a market move, so pooled n wildly overstates independence. Not
+theoretical: indices pooled at **+0.181**, which under this project's older
+reporting style would have read as the first positive signal it ever found —
+the date-wise t is +0.89, i.e. noise. FX is starker, pooled **+0.042** against
+date-wise **-0.138**, disagreeing in *sign*. If the two disagree, believe the
+date series.
+
+**FX is screened on CME futures, not spot pairs.** yfinance reports volume as
+identically zero for all ten spot FX pairs, and Kronos conditions on volume, so
+a spot screen would have scored the model on a dead input and returned a
+confident artifact. Any class whose volume is dead is flagged UNRELIABLE and
+must be read as *unscreened*, not as a negative result.
+
+A failed screen is **not** "needs a better configuration". Re-running with
+different tickers or sample counts until one passes is exactly the parameter
+tuning the honest-backtesting rule forbids. A class gets re-screened when there
+is a genuinely new reason — different cadence, different data source, a fixed
+defect in the input — and the re-run is recorded either way.
+
+Consequence for [[FTMO Venue]]: **nothing may be enabled, and the venue is
+cleared to trade nothing at all.**
 
 ## Live forecast re-run, 2026-07-27 — two observations worth keeping
 

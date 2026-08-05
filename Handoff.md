@@ -4,28 +4,50 @@ For Koko, and for whichever session picks this up next. Written at the end of
 a long session; everything below was verified against the live paper account,
 not inferred.
 
+> [!warning] SUPERSEDED IN PART — read this first (updated 2026-08-05)
+> This document is a **point-in-time handoff from 2026-07-28** and several of
+> its facts have since changed. The *reasoning* in sections 2 and 3 is still
+> worth reading; the *state* is not current. What changed:
+>
+> - **The venue changed.** FTMO replaced IBKR for new orders on 2026-08-02.
+>   IBKR is retired in place, monitoring only. The FTMO venue **connected**
+>   2026-08-05 (account 48137229, $25,000, FULL_ACCESS).
+> - **AAPL has closed.** The open IBKR positions are now **JNJ, DIS, AMZN** —
+>   three, not four. See the table below.
+> - **Grading is no longer 0.** The first 38 real grades landed 2026-08-03:
+>   26% correct against a 39% chance base rate, p=0.13 — no detectable skill,
+>   on a sample closer to one observation than to 38.
+> - **All four FTMO asset classes were IC-screened 2026-08-03 and all four
+>   failed.** There is currently no asset class the bot is cleared to trade.
+> - The "immediate next action" below (a supervised Kronos rebalance on IBKR)
+>   **no longer applies** — IBKR places no new orders.
+>
+> Current state of record lives in `CLAUDE.md` and the vault's
+> `00 MOC - Trading Bot Vault.md`. Prefer those over this file.
+
 ---
 
 ## 1. Where things actually stand
 
-**Account DUQ903866 (paper), verified read-only at 01:50 local:**
+**Account DUQ903866 (paper) — as verified 2026-07-28 at 01:50 local. AAPL has
+since closed; the current three are marked below.**
 
 | Symbol | Qty | Avg cost | Stop | TIF | Status |
 |---|---|---|---|---|---|
-| AAPL | 15 | 328.04 | 309.10 | GTC | PreSubmitted |
-| JNJ | 19 | 249.98 | 237.61 | GTC | PreSubmitted |
-| DIS | 52 | 95.39 | 90.83 | GTC | PreSubmitted |
-| AMZN | 21 | 232.73 | 217.74 | GTC | PreSubmitted |
+| ~~AAPL~~ | ~~15~~ | ~~328.04~~ | ~~309.10~~ | — | **CLOSED since this was written** |
+| JNJ | 19 | 249.98 | 237.61 | GTC | still open, verified 2026-08-02 |
+| DIS | 52 | 95.39 | 90.83 | GTC | still open, verified 2026-08-02 |
+| AMZN | 21 | 232.73 | 217.74 | GTC | still open, verified 2026-08-02 |
 
-Four positions, every one covered by a full-size GTC stop. Zero leftover
-orders from tonight's diagnostic probes.
+Every open position is covered by a full-size GTC stop.
 
 - **Signal:** Kronos, everywhere. Momentum is gated off in code (`signal_policy.py`).
 - **Autotrade:** still `enabled: false`. Deliberate — not turned on tonight.
-- **Immediate next action:** supervised Kronos rebalance at the next open,
-  **16:30 local / 09:30 ET**. `./trader_app.sh` for the app; the rebalance is
-  `.venv/bin/python paper_trader.py` (add `--dry-run` first to preview).
-- **Grading:** 0 real graded calls, 76 pending. First 5d grades land ~07-29.
+- ~~**Immediate next action:** supervised Kronos rebalance at the next open~~
+  — **no longer applies.** IBKR is retired in place and places no new orders;
+  the venue is FTMO, which is cleared to trade nothing.
+- ~~**Grading:** 0 real graded calls, 76 pending.~~ — **38 graded at 5d on
+  2026-08-03**, 38 still pending at 21d.
 
 **Two beliefs that were wrong and are now corrected — don't re-inherit them:**
 1. The 07-27 rebalance did *not* place zero trades. DIS and AMZN filled.

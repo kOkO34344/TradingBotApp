@@ -1,8 +1,8 @@
 ---
 tags: [ftmo, execution, infrastructure, risk, prop-firm]
-status: "In progress — five modules built and selftested; blocked on cTrader app activation"
+status: "In progress — CONNECTED to the venue 2026-08-05; no asset class cleared to trade (all four failed IC)"
 source: ftmo_rules.py, ftmo_monitor.py, ftmo_sizing.py, ftmo_audit.py, ftmo_service.py
-last_updated: 2026-08-02
+last_updated: 2026-08-05
 ---
 
 # FTMO Venue
@@ -100,7 +100,7 @@ capital on IBKR) stays locked.
 ## The five modules
 
 All pure-logic except the last, all with offline `--selftest` needing no
-credentials and no network. **259 checks total.**
+credentials and no network. **294 checks total.**
 
 - **`ftmo_rules.py`** — the decision. Answers three questions that must never
   be conflated: may I OPEN, must I FLATTEN, could this phase PASS. The third is
@@ -135,34 +135,88 @@ realistic sequence. **Do an integration pass before trusting the unit tests.**
 position a hair small. Flooring to the volume step means the error can only
 ever *reduce* risk. Rounding to nearest would break that.
 
-## Current blocker
+## Connected — 2026-08-05
 
-The cTrader Open API app at `openapi.ctrader.com/apps` is still **Submitted**,
-not **Active**, so application auth returns `CH_CLIENT_AUTH_FAILURE: OA client
-is not in active state`.
+The app went **Active**, OAuth completed, and the venue is reachable end to
+end. `--probe` and `--symbols` both pass read-only:
 
-That error already proves a lot works: the TLS handshake to
-`demo.ctraderapi.com:5035` succeeded, the protobuf request encoded and sent,
-and a real error response came back and was mapped correctly. Nothing below the
-application-auth layer needs investigating.
+```
+ctidTraderAccountId 48137229   login 17166058   broker ftmo
+balance 25,000.00 USD   leverage 100x   HEDGED   FULL_ACCESS
+0 open positions   0 pending orders   202 tradeable symbols
+```
 
-Nothing past that layer can be built or verified — the order path needs real
-symbol specifications from the venue and confirmation that server-side stops
-attach as assumed.
+The access token lasts ~30 days; `--refresh` renews it and `--probe` prints the
+remaining life every run.
 
-## Next steps once the app activates
+### `CTRADER_HOST=live` is required, and it is not a rule 1 breach
 
-1. `python3 ftmo_service.py --authorize`, then `--probe`. If no accounts appear,
-   the likeliest cause is the trial account being created *after* the app was
-   authorised — re-run `--authorize` to re-consent.
-2. Bind real symbol specs from the venue, replacing the plausible-but-invented
-   ones used in the sizing tests.
-3. Migrate `trade_journal.csv` to add a `venue` column (there is a header
+cTrader routes **by endpoint**: a live-type account authenticates only on
+`live.ctraderapi.com`, a demo-type account only on the demo host. FTMO issues
+its Challenge and Free Trial accounts on its **live** cTrader server with
+**simulated** capital, so the trial is legitimately live-*type* while the money
+is not real. `isLive` is a routing flag, not a claim about capital.
+
+Get it wrong and the venue says only `CANT_ROUTE_REQUEST: Cannot route
+request` — four words naming neither the account nor the endpoint, arriving
+immediately *after* a successful application auth and a successful account
+list. It reads exactly like a token-scope problem and is not.
+`select_account()` now refuses the mismatch before sending account auth and
+names the value to set.
+
+### Every invented symbol spec was wrong
+
+The first real capture showed the sizing tests had been validated against
+numbers the venue never reports:
+
+| symbol | field | invented | real |
+|---|---|---|---|
+| EURUSD | min/step volume | 100 | **100,000** |
+| XAUUSD | min/step volume | 1 | **100** |
+| US30.cash | min/step volume | 10 | **1** |
+| US30.cash | digits | 1 | **2** |
+
+`python3 ftmo_service.py --symbols` now captures all 202 real specs to
+`ftmo_symbol_specs.json`, which is **tracked in git** so the sizing selftest
+asserts against real venue values while staying offline. The selftest sweeps
+every one of the 202 asserting no accepted size ever exceeds the risk budget.
+
+Worth noting for anyone reading the code: `ProtoOASymbolsListReq` returns only
+*light* symbols and carries no volume or lot data at all. The numbers that
+matter come from `ProtoOASymbolByIdReq`.
+
+## What the venue is cleared to trade: nothing
+
+All four asset classes were IC-screened on 2026-08-03 and **all four failed** —
+see [[Kronos Research Agent]] for the table. That is the gate working exactly as
+designed: it refused before an order was placed and before the venue was even
+reachable.
+
+The signal→order path can still be *built*. It has no class it may fire on, and
+that gap closes with evidence, not with a config change.
+
+## Still unverified
+
+**That server-side stops attach at entry as assumed.** It cannot be checked
+read-only, so it is the first thing the order path must prove. This matters more
+than usual here: the whole risk model assumes a stop is sitting at the venue,
+and this venue can fail the account on floating P&L alone.
+
+## Next steps
+
+1. ~~`--authorize` then `--probe`~~ — done 2026-08-05, both pass.
+2. ~~Bind real symbol specs~~ — done 2026-08-05, see above.
+3. Prove server-side stops attach at entry (needs a real order).
+4. Migrate `trade_journal.csv` to add a `venue` column (there is a header
    misalignment trap — see the code notes).
-4. **IC-screen each asset class before enabling it.** Only stock CFDs inherit
-   any existing evidence, and that evidence is IC ~0.
 5. Build the signal→order path, then an integration pass across all five
-   modules.
+   modules. **No class may be enabled until one passes a screen.**
+
+## Credentials
+
+`secrets/ctrader.env`, mode 600, gitignored — see [[Risk Management System]]
+and `secrets_store.py`. Audited 2026-08-05 against the full git history: no
+credential has ever been committed.
 
 ## Related
 
