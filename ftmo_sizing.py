@@ -105,6 +105,41 @@ class SizingResult:
                 f"of {self.budget_remaining:,.2f} remaining")
 
 
+def spec_from_capture(name: str, capture: dict | None = None) -> SymbolSpec:
+    """Build a SymbolSpec from the REAL venue capture in ftmo_symbol_specs.json.
+
+    Written 2026-08-05, when the first successful `--symbols` capture showed
+    that every spec this module's tests had invented was wrong, several by two
+    or three orders of magnitude:
+
+        EURUSD     min/step  invented 100      real 100,000   (1000x)
+        XAUUSD     min/step  invented 1        real 100        (100x)
+        US30.cash  min/step  invented 10       real 1          digits 1 -> 2
+
+    Sizing maths validated against invented minimums proves nothing about what
+    the venue will accept, which is why the capture is tracked in git and the
+    selftest below reads from it.
+    """
+    capture = capture if capture is not None else _load_capture()
+    if name not in capture:
+        # ValueError, not KeyError: this is input validation, and it matches
+        # how SymbolSpec.__post_init__ rejects a bad spec.
+        raise ValueError(
+            f"{name!r} is not in the symbol capture. Available example names: "
+            f"{', '.join(sorted(capture)[:5])}...")
+    r = capture[name]
+    return SymbolSpec(
+        symbol_id=r["symbol_id"], name=name,
+        min_volume=r["min_volume"], step_volume=r["step_volume"],
+        max_volume=r["max_volume"], digits=r["digits"],
+        quote_currency=r.get("quote_asset") or "USD")
+
+
+def _load_capture() -> dict:
+    import ftmo_service
+    return ftmo_service.load_symbol_specs()
+
+
 def stop_price_from_atr(entry_price: float, atr: float, side: str,
                         mult: float = STOP_ATR_MULT) -> float:
     """Stop `mult` x ATR away from entry, on the correct side.
@@ -262,8 +297,12 @@ def selftest() -> int:
     cfg = fr.FTMOConfig(product="2step", phase="challenge", initial_capital=25_000.0)
     flat = fr.AccountState(equity=25_000, balance=25_000, day_start_balance=25_000)
 
-    # Realistic-ish specs. Volumes are centi-units, as cTrader reports them.
-    fx = SymbolSpec(1, "EURUSD", min_volume=100, step_volume=100,
+    # SYNTHETIC fixtures, kept deliberately. Their round numbers make the
+    # arithmetic below checkable by hand, which is what these cases test — the
+    # formula, not the venue. They are NOT what FTMO actually reports: the real
+    # specs differ by up to 1000x and are exercised in the "REAL venue specs"
+    # section at the end of this selftest, against the tracked capture.
+    fx = SymbolSpec(1, "EURUSD-synthetic", min_volume=100, step_volume=100,
                     max_volume=1_000_000_00, digits=5, quote_currency="USD")
     idx = SymbolSpec(2, "US30", min_volume=10, step_volume=10,
                      max_volume=100_00, digits=1, quote_currency="USD")
@@ -400,6 +439,84 @@ def selftest() -> int:
           _raises(lambda: SymbolSpec(9, "X", 0, 100, 1000)))
     check("max below min refused",
           _raises(lambda: SymbolSpec(9, "X", 100, 100, 50)))
+
+    # ---------------------------------------------------------------------
+    # REAL venue specs. Everything above proves the arithmetic; this proves it
+    # still holds against what FTMO actually reports. These are PROPERTY
+    # assertions, not recomputed magic numbers, deliberately: hand-deriving an
+    # expected volume from a real spec and then asserting it would only prove I
+    # ran the same formula twice. The properties below are what the venue will
+    # actually reject an order for.
+    # ---------------------------------------------------------------------
+    print("REAL venue specs (ftmo_symbol_specs.json):")
+    try:
+        capture = _load_capture()
+    except FileNotFoundError as e:
+        check(f"capture present ({e})", False)
+        capture = {}
+
+    if capture:
+        check("the capture is not trivially small", len(capture) >= 100)
+        built, bad = 0, []
+        for nm in capture:
+            try:
+                spec_from_capture(nm, capture)
+                built += 1
+            except Exception as exc:
+                bad.append(f"{nm}: {exc}")
+        check(f"every one of {len(capture)} captured specs is a valid "
+              f"SymbolSpec (built {built})", not bad)
+        if bad:
+            for b in bad[:5]:
+                print(f"        {b}")
+
+        check("an unknown symbol name raises rather than returning a default",
+              _raises(lambda: spec_from_capture("NOT_A_SYMBOL", capture)))
+
+        # The four the tests used to invent, now bound to the venue's numbers.
+        for nm, price, atr, rate in (("EURUSD", 1.0850, 0.0050, 1.0),
+                                     ("US30.cash", 39_000.0, 180.0, 1.0),
+                                     ("AAPL", 300.0, 4.0, 1.0),
+                                     ("XAUUSD", 2_350.0, 20.0, 1.0)):
+            if nm not in capture:
+                check(f"{nm} present in capture", False)
+                continue
+            spec = spec_from_capture(nm, capture)
+            r = plan_entry(spec, cfg, flat, price, atr, "BUY", rate, risk_pct=1.0)
+            if not r.accepted:
+                # A refusal is legitimate (min volume over budget) but must say so.
+                check(f"{nm}: refusal names the minimum-volume reason",
+                      "minimum volume" in r.reasons[0])
+                continue
+            check(f"{nm}: risk at stop {r.risk_at_stop:,.2f} within the 250 "
+                  f"per-trade cap", r.risk_at_stop <= 250.0 + 1e-6)
+            check(f"{nm}: volume {r.volume} is at or above the venue minimum "
+                  f"{spec.min_volume}", r.volume >= spec.min_volume)
+            check(f"{nm}: volume sits on the venue's step grid",
+                  (r.volume - spec.min_volume) % spec.step_volume == 0)
+            check(f"{nm}: volume within the venue maximum",
+                  r.volume <= spec.max_volume)
+
+        # The invariant that matters most, swept across the whole universe:
+        # nothing the sizer accepts may ever risk more than the budget allowed.
+        over, refused, accepted = [], 0, 0
+        for nm in sorted(capture):
+            spec = spec_from_capture(nm, capture)
+            r = size_position(spec, 25_000, 1.0, 100.0, 98.0, 1.0,
+                              budget_remaining=250.0)
+            if not r.accepted:
+                refused += 1
+                continue
+            accepted += 1
+            if r.risk_at_stop > 250.0 + 1e-6:
+                over.append(f"{nm} risks {r.risk_at_stop:,.2f}")
+        check(f"across all {len(capture)} real symbols, no accepted size ever "
+              f"exceeds the budget ({accepted} sized, {refused} refused)", not over)
+        if over:
+            for o in over[:5]:
+                print(f"        {o}")
+        check("the refusal path is reachable with real minimums, not dead code",
+              refused > 0 or accepted > 0)
 
     print("\nFAILED" if failures else "\nAll FTMO sizing selftests passed.")
     return 1 if failures else 0
