@@ -98,6 +98,11 @@ File purposes are documented in each script's own module docstring
   `ftmo_rules.py` decides (limits, three thresholds, both products),
   `ftmo_monitor.py` watches equity continuously, `ftmo_sizing.py` sizes,
   `ftmo_audit.py` records why, `ftmo_service.py` talks to cTrader.
+  Three more since 2026-08-05: `ftmo_session.py` is the LONG-LIVED connection
+  (streaming quotes, trendbars, orders — `ftmo_service` is one-shot and cannot
+  trade), `ftmo_signal.py` turns a Kronos ranking into sized stop-protected
+  orders, and `ftmo_smoke_order.py` proves the order path with one tiny trade.
+  **374 offline checks across the eight.**
   **Read the `ftmo` skill before touching any of them** — it carries the agreed
   configuration, the derived dollar limits, and the invariants that are easy to
   break. The one to know without opening anything: every FTMO limit is measured
@@ -527,8 +532,12 @@ hole exactly where the unattended closes are.
      fiction. The sizer now sweeps all 202 real symbols asserting no accepted
      size ever exceeds the budget. Re-capture only when the venue's universe
      changes; the file is tracked so the selftest stays offline.
-   - Confirm server-side stops attach as assumed — **still unverified, and it
-     needs a real order, so it is the first thing the order path must prove.**
+   - ~~Confirm server-side stops attach as assumed~~ — **DONE 2026-08-05,
+     PASSED.** One real minimum-size trade on the live trial (BTCUSD, position
+     9822997, 0.01 units, risk $29.72): placed, read back with
+     `stopLoss 61,784.01 protected: True`, closed, account flat again.
+     `ftmo_smoke_order.py --confirm` reruns it. The whole FTMO risk model
+     rested on this and it is no longer an assumption.
    - Migrate `trade_journal.csv` to add the `venue` column — see the gotcha
      about the header/row misalignment before doing it.
    - **IC screens: DONE for indices and FX, both FAILED (2026-08-03).** See the
@@ -693,6 +702,43 @@ sections close to verbatim, so keep those reasonably current.
   Active and application auth now succeeds. Kept here because the diagnosis
   is the reusable part: an Open API error that fires at app-auth time is about
   the app's state, not your credentials.
+- **A REJECTED cTrader ORDER ARRIVES AS AN EVENT, NOT A `Res`.** A refused
+  order comes back as `ProtoOAOrderErrorEvent`, so an error check that only
+  knows `ProtoOAErrorRes` / `ProtoErrorRes` treats a rejection as success.
+  Hit on the first live FTMO order (2026-08-05): the venue refused it and the
+  code reported `{'sent': True}`. Only the smoke test's own read-back caught
+  it. Same class as the IBKR "`Cancelled` RESULT row seconds after placement"
+  incident — never report an outcome you did not verify against the venue.
+- **A cTrader MARKET order cannot carry an absolute stop.** The venue says so
+  plainly: *"SL/TP in absolute values are allowed only for order types:
+  [LIMIT, STOP, STOP_LIMIT]"*. Market orders need `relativeStopLoss`, an
+  int64 DISTANCE in 1/100000 price units. The stop is still a field on the
+  same request, so it stays atomic with the entry.
+  This is the SAFER form and worth keeping deliberately: the stop is applied
+  from the ACTUAL FILL, so the risk distance survives slippage. An absolute
+  stop would widen real risk by exactly the slippage.
+- **A streaming quote does NOT mean a tradeable market.** US30.cash and
+  BTCUSD both quoted live and both rejected with `MARKET_CLOSED` at 23:55
+  Moscow — FTMO's daily ten-minute maintenance window. `trading_mode:
+  ENABLED` in the spec does not mean open *now* either. The symbol schedule
+  is captured in `ftmo_symbol_specs.json` and read by
+  `ftmo_session.market_open_now()`, which returns `None` for UNKNOWN rather
+  than `False`, leaving the venue as the authority.
+  **The schedule's timezone is the SYMBOL's (`Europe/Moscow` on this broker)
+  and is NOT the `Europe/Prague` boundary `ftmo_rules` uses for the FTMO
+  day.** Two different timezones in one system — conflating them puts the
+  maintenance window hours off.
+- **cTrader trendbar prices are scaled by a FIXED 1e5, never by the symbol's
+  `digits`.** `digits` is a DISPLAY hint, not the wire scale. EURUSD hides
+  this perfectly because its digits IS 5 — and it is the symbol anyone
+  smoke-tests first. Everything else breaks by 1000x: XAUUSD priced at
+  4,076,760 against a live bid of 4,248, an ATR of 1.49 million on BTC, and a
+  NEGATIVE stop price on NATGAS.cash which the sizer then costed as $199 of
+  "risk". `size_position` only asks whether the stop DISTANCE fits the
+  budget; it has no opinion on whether the price is real, so
+  `ftmo_signal.plan_orders` now validates the stop before sizing and
+  `ftmo_session.assert_bars_match_quote()` cross-checks bars against the live
+  quote and raises on an order-of-magnitude mismatch.
 - **cTrader `CANT_ROUTE_REQUEST: Cannot route request` means the ENDPOINT is
   wrong for that account, not that anything is unauthorised.** cTrader routes
   by endpoint: a live-type account authenticates ONLY on
