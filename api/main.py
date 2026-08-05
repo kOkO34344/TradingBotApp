@@ -33,6 +33,7 @@ from pathlib import Path
 
 from fastapi import FastAPI, HTTPException, Query, WebSocket, WebSocketDisconnect
 from fastapi.middleware.cors import CORSMiddleware
+from starlette.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -43,6 +44,7 @@ import signal_policy  # noqa: E402
 import trader_app as ta  # noqa: E402
 
 from . import backtests_api  # noqa: E402
+from . import ftmo_api  # noqa: E402
 from . import bars as bars_mod  # noqa: E402
 from . import indicators_api  # noqa: E402
 from . import jobs  # noqa: E402
@@ -667,6 +669,73 @@ async def orders():
 
 
 # --------------------------------------------------------------- websocket
+
+# ---------------------------------------------------------------- FTMO venue
+#
+# Every one of these hops to a threadpool. ftmo_session runs Twisted on its own
+# thread and blocks the caller, so awaiting it inline would stall the whole
+# event loop for a protobuf round trip — including the requests the dashboard
+# uses to report that something is wrong.
+#
+# IBKR keeps its endpoints above and stays READ-ONLY: rule 9 retired it for new
+# orders while three positions are still open and monitored. FTMO is the
+# venue that can trade.
+
+@app.get("/api/ftmo/snapshot")
+async def ftmo_snapshot():
+    """Account, rule-engine verdict and positions in ONE consistent read."""
+    return await run_in_threadpool(ftmo_api.snapshot)
+
+
+@app.get("/api/ftmo/connection")
+async def ftmo_connection():
+    return ftmo_api.connection_state()
+
+
+@app.get("/api/ftmo/quotes")
+async def ftmo_quotes():
+    return {"quotes": await run_in_threadpool(ftmo_api.quotes)}
+
+
+@app.get("/api/ftmo/universe")
+async def ftmo_universe():
+    return {"universe": await run_in_threadpool(ftmo_api.universe)}
+
+
+@app.get("/api/ftmo/bars")
+async def ftmo_bars(symbol: str, period: str = "D1", count: int = 300):
+    try:
+        return await run_in_threadpool(ftmo_api.bars, symbol, period, count)
+    except Exception as e:                                    # noqa: BLE001
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.websocket("/ws/ftmo")
+async def ftmo_stream(ws: WebSocket):
+    """Push the FTMO snapshot on a timer.
+
+    Polled rather than event-driven, deliberately. The equity that matters is
+    balance + floating P&L across every open position, so it changes on every
+    tick of every held symbol — forwarding raw ticks would push far more
+    messages than the UI can use and still leave the browser to recompute
+    equity, which is exactly the recomputation that must not live in the
+    presentation layer. One consistent server-computed snapshot per second is
+    both cheaper and harder to get wrong.
+
+    The first frame is sent immediately so a client connecting during an
+    outage learns about it at once instead of looking healthy for a second.
+    """
+    await ws.accept()
+    try:
+        while True:
+            snap = await run_in_threadpool(ftmo_api.snapshot)
+            await ws.send_json({"topic": "ftmo", "data": snap})
+            await asyncio.sleep(1.0)
+    except WebSocketDisconnect:
+        pass
+    except Exception:                                         # noqa: BLE001
+        log.debug("FTMO WebSocket closed", exc_info=True)
+
 
 @app.websocket("/ws")
 async def websocket_endpoint(ws: WebSocket):
