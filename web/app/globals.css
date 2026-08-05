@@ -14,9 +14,9 @@
   --color-chart-down: var(--chart-down);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-sans);
-  --font-mono: var(--font-geist-mono);
-  --font-heading: var(--font-sans);
+  --font-sans: var(--font-inter-tight);
+  --font-mono: var(--font-jetbrains-mono);
+  --font-heading: var(--font-inter-tight);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -111,18 +111,23 @@
    than pure black so the amber accent and the red/green P&L colours all sit
    on the same visual footing. */
 .dark {
-  --background: oklch(0.155 0.008 65);
-  --foreground: oklch(0.96 0.004 85);
-  --card: oklch(0.196 0.009 65);
-  --card-foreground: oklch(0.96 0.004 85);
-  --popover: oklch(0.196 0.009 65);
-  --popover-foreground: oklch(0.96 0.004 85);
-  --primary: oklch(0.78 0.16 68);
-  --primary-foreground: oklch(0.18 0.03 60);
-  --secondary: oklch(0.26 0.012 65);
-  --secondary-foreground: oklch(0.96 0.004 85);
-  --muted: oklch(0.24 0.01 65);
-  --muted-foreground: oklch(0.7 0.015 70);
+  /* Swiss instrument panel: a near-neutral greyscale carrying all the
+     structure, with exactly ONE signal colour (--primary, a cold precise
+     cyan) reserved for interaction and focus. Chrome never competes with
+     data: profit/loss keep their own hues below because those encode a
+     VALUE, not a state, and desaturating them would cost real information. */
+  --background: oklch(0.145 0.004 250);
+  --foreground: oklch(0.965 0.002 250);
+  --card: oklch(0.185 0.005 250);
+  --card-foreground: oklch(0.965 0.002 250);
+  --popover: oklch(0.185 0.005 250);
+  --popover-foreground: oklch(0.965 0.002 250);
+  --primary: oklch(0.80 0.14 210);
+  --primary-foreground: oklch(0.16 0.02 250);
+  --secondary: oklch(0.245 0.006 250);
+  --secondary-foreground: oklch(0.965 0.002 250);
+  --muted: oklch(0.225 0.005 250);
+  --muted-foreground: oklch(0.68 0.008 250);
   --accent: oklch(0.3 0.035 65);
   --accent-foreground: oklch(0.92 0.03 80);
   --destructive: oklch(0.68 0.2 25);
@@ -171,4 +176,63 @@
   html {
     @apply font-sans;
   }
+}
+
+/* ---------------------------------------------------------------- Swiss chrome
+   Three global decisions that define the instrument-panel look, kept here
+   rather than sprinkled per component so they cannot drift.
+
+   1. TABULAR FIGURES EVERYWHERE. Numbers are the product. Proportional digits
+      let a price column shift horizontally as the last digit ticks, which
+      makes a live quote look like noise and two prices hard to compare.
+   2. NEAR-SQUARE CORNERS. --radius drops to 2px. Rounded cards read as
+      consumer software; hairline rectangles read as an instrument.
+   3. TIGHT HEADINGS. Inter Tight is already tight; headings go tighter still
+      and drop to a restrained weight, because scale and spacing carry the
+      hierarchy in this style, not boldness. */
+
+:root,
+.dark {
+  --radius: 0.125rem;
+}
+
+html {
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1, "cv01" 1;
+}
+
+h1, h2, h3, h4 {
+  letter-spacing: -0.022em;
+  font-weight: 500;
+}
+
+/* Numeric cells opt into mono explicitly. Mono digits are already tabular,
+   but stating it means a future font swap cannot quietly break alignment. */
+.tabular {
+  font-family: var(--font-mono);
+  font-variant-numeric: tabular-nums;
+  letter-spacing: -0.01em;
+}
+
+/* A hairline is 1px at any DPR; on a 2x display a 1px CSS border renders as
+   two device pixels and reads heavy, which is what makes most dark UIs look
+   soft rather than precise. */
+@media (min-resolution: 2dppx) {
+  .hairline {
+    border-width: 0.5px;
+  }
+}
+
+/* Motion. Deliberately short and eased-out: at this density anything slower
+   than ~150ms reads as lag rather than as polish, and a trading panel that
+   feels laggy feels untrustworthy. */
+@media (prefers-reduced-motion: no-preference) {
+  .tick-flash {
+    animation: tick-flash 420ms ease-out;
+  }
+}
+
+@keyframes tick-flash {
+  from { background-color: color-mix(in oklch, var(--primary) 22%, transparent); }
+  to   { background-color: transparent; }
 }
