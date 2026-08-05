@@ -1,7 +1,7 @@
 ---
 tags: [project-management, phases, roadmap]
-status: "VENUE CHANGED 2026-08-02 — FTMO is the trading venue, IBKR retired in place with 3 positions still monitored"
-last_updated: 2026-08-02
+status: "FTMO venue CONNECTED 2026-08-05 but cleared to trade nothing (all 4 classes failed IC); first 38 real grades show no detectable skill"
+last_updated: 2026-08-05
 ---
 
 # Phase Milestones Dashboard
@@ -14,6 +14,24 @@ last_updated: 2026-08-02
 > lives in [[FTMO Venue]] — it is deliberately NOT a phase, because it did not
 > earn its way through this ladder; it was an owner decision made with the
 > evidence position stated.
+
+> [!warning] 2026-08-05 — where the project actually stands
+> Two things resolved since, and both point the same way.
+>
+> **The FTMO venue is connected** (account 48137229, $25,000, FULL_ACCESS, 202
+> symbols) and **cleared to trade nothing.** All four asset classes were
+> IC-screened on 2026-08-03 and all four failed — no |t| above 1.55, with the
+> matched momentum baseline failing all four as well.
+>
+> **The first 38 real graded calls landed 2026-08-03**: 26% correct against a
+> 39% chance base rate, p=0.13. Indistinguishable from guessing, on a sample
+> that is really closer to one observation than to 38.
+>
+> So the machinery is essentially finished and the evidence is still absent.
+> That is not a failure of the build — it is the evidence gates doing exactly
+> what they were put there to do, refusing before an order was placed. The
+> honest summary of this project right now: **it can trade, and it has not
+> earned the right to.**
 
 This is the quick-reference status of each phase. Detailed rationale lives in [[Plan]]; this is the "where's the bot right now" snapshot.
 
@@ -31,7 +49,7 @@ This is the quick-reference status of each phase. Detailed rationale lives in [[
 
 ---
 
-## Phase 1: Research Agent (No Execution) 🟡 OUTPUT READY, GRADING NOT DUE YET
+## Phase 1: Research Agent (No Execution) 🟡 FIRST GRADES IN — NO DETECTABLE SKILL YET
 
 **What it is:** An agent that reads market data (price, volume, technicals, fundamentals) and writes a grounded research thesis with direction, confidence, risks, and levels.
 

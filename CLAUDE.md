@@ -94,7 +94,7 @@ File purposes are documented in each script's own module docstring
   selftest. To change the project's focus signal, change `DEFAULT_SIGNAL` /
   `DISABLED_SIGNALS` there — not in five `.get()` fallbacks.
 
-- **FTMO venue — five modules, all with offline `--selftest` (259 checks).**
+- **FTMO venue — five modules, all with offline `--selftest` (294 checks).**
   `ftmo_rules.py` decides (limits, three thresholds, both products),
   `ftmo_monitor.py` watches equity continuously, `ftmo_sizing.py` sizes,
   `ftmo_audit.py` records why, `ftmo_service.py` talks to cTrader.

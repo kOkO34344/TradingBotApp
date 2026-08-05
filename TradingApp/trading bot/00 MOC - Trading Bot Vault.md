@@ -1,7 +1,7 @@
 ---
 tags: [moc, index]
-status: "Live — venue changed to FTMO 2026-08-02"
-last_updated: 2026-08-02
+status: "Live — FTMO venue connected 2026-08-05; cleared to trade nothing (all 4 classes failed IC)"
+last_updated: 2026-08-05
 ---
 
 # Trading Bot — Map of Contents
@@ -13,28 +13,38 @@ This is the central index for the Trading Bot project. The codebase lives at `/U
 | Phase                        | Status                              | Key Files                                                                                                                          |
 | ---------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
 | **Phase 0** (setup)          | ✅ Done                              | Python 3.13, Claude Code, IBKR account live                                                                                        |
-| **Phase 1** (research agent) | 🟡 Real output, grading not due yet | `research_agent.py` → 14 notes in `research_log/` (re-run 2026-07-25), oldest from 2026-07-20/21 — 5-*trading*-day grading horizon lands ~2026-07-30, not yet |
+| **Phase 1** (research agent) | 🟡 First 38 grades in — **no detectable skill** | `research_agent.py` → 14 notes (all still 2026-07-25). Graded 2026-08-03: 26% vs a 39% chance base rate, p=0.13. 38 pending at 21d. See [[Graded Calls Tracker]] |
 | **Phase 2** (backtesting)    | ✅ Done, action taken                | SMA rejected (beats 1/10), momentum rotation identified (16.6% CAGR)                                                               |
 | **Phase 3** (paper trading)  | ✅ Built, now RETIRED IN PLACE       | `paper_trader.py`. IBKR places no new orders as of 2026-08-02. Three positions still open and monitored: **JNJ(19) / DIS(52) / AMZN(21)**, all verified GTC-stopped 2026-08-02. |
-| **FTMO venue**               | 🟡 In progress                       | Five modules built, 259 offline selftests. Blocked on cTrader app activation. See [[FTMO Venue]] |
+| **FTMO venue**               | 🟢 CONNECTED, 🔴 cleared to trade **nothing** | Five modules, 294 offline selftests. Account 48137229, $25,000, FULL_ACCESS, 202 symbols. **All four asset classes failed their IC screen 2026-08-03.** See [[FTMO Venue]] |
 | **Phase 4** (tiny live)      | ⏸ Locked                            | Unchanged — real capital still gated on paper evidence that does not exist yet |
 
-**Most urgent right now:**
-1. **The cTrader Open API app needs to reach `Active`** at
-   `openapi.ctrader.com/apps` — everything else on the FTMO side is built and
-   waiting on it. See [[FTMO Venue]].
-2. **`grade_calls.py --csv` has still never been re-run.** As of 2026-08-02 the
-   file is still **0 graded / 76 pending** and still the 2026-07-28 run. The
-   grades exist in the price data; they are not in the file. This is the one
-   artefact rule 5 gates autonomy on, and it has been overdue since ~07-29.
-   See [[Call Grading System]].
-3. **Watchlist research re-run is overdue** — every note in `research_log/` is
-   dated 2026-07-25 against a weekly cadence.
+**Most urgent right now (rewritten 2026-08-05):**
+
+The two things that were blocking are both resolved, and both resolved
+*negatively*. The venue connected; the screens failed. What is left is not
+engineering.
+
+1. **Grow the evidence — this is the only thing that actually unblocks
+   anything.** Every note in `research_log/` is still dated **2026-07-25**, so
+   the book has not grown in 11 days. Re-run
+   `run_research_agent_watchlist.py`, then `grade_calls.py --csv` as the 38
+   open calls mature at 21d. See [[Graded Calls Tracker]].
+2. **Nothing may be enabled on FTMO.** All four asset classes failed their IC
+   screen on 2026-08-03 (no |t| above 1.55; the matched momentum baseline
+   failed all four too). A failed screen is not "needs a better
+   configuration" — re-running with different tickers until one passes is the
+   parameter-tuning the honest-backtesting rule forbids. See
+   [[Kronos Research Agent]].
+3. **Prove server-side stops attach at entry on FTMO.** Needs a real order, so
+   it cannot be checked read-only. The entire FTMO risk model assumes it.
 4. The three open IBKR positions stay monitored until they close naturally.
    `reflect_on_trades.py` and its launchd job keep running. **Verify stops are
    GTC, not merely present**, whenever checking.
 5. Momentum rotation still has no portfolio-level walk-forward validation, and
    the broad-universe test written on 2026-07-23 has still never been run.
+   Worth remembering that momentum is the *only* strategy family that ever
+   earned Phase 3, and it is currently gated off.
 
 
 **Standing context (durable, not a to-do list):**
