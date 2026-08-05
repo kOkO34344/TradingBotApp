@@ -11,8 +11,9 @@ connection-loss alerts, research_agent.py run failures, grade_calls.py
 weekly calibration summaries, launchd job failures, etc. One bot, one
 chat_id, many message sources.
 
-Credentials live in TelegramBot/.env (never committed — covered by
-.gitignore's `*.env` rule), not hardcoded and not passed on the CLI
+Credentials live in secrets/telegram.env (never committed — see
+secrets_store.py; TelegramBot/.env still works as a fallback),
+not hardcoded and not passed on the CLI
 (shell history / `ps` would leak them).
 
 One-time setup
@@ -24,7 +25,8 @@ One-time setup
 3. Run:  python3 notify.py --get-chat-id <TOKEN>
    This calls getUpdates and prints the chat_id tied to the message you
    just sent.
-4. Create TradingBotApp/TelegramBot/.env (copy .env.example) with:
+4. Create TradingBotApp/secrets/telegram.env (copy
+   secrets/telegram.env.example) with:
        TELEGRAM_BOT_TOKEN=123456789:AAExampleTokenString
        TELEGRAM_CHAT_ID=987654321
 5. Test:  python3 notify.py "hello from TradingBotApp"
@@ -54,7 +56,27 @@ import urllib.request
 from datetime import datetime
 from pathlib import Path
 
-ENV_PATH = Path(__file__).parent / ".env"
+
+def _env_path() -> Path:
+    """Where the Telegram credentials are.
+
+    Prefers `secrets/telegram.env` via the project's secrets_store, and falls
+    back to the historical `TelegramBot/.env`. The import is guarded and the
+    fallback is unconditional BECAUSE THIS IS THE NOTIFICATION PATH: every
+    launchd job reports through it, so if anything about locating credentials
+    goes wrong, the correct outcome is "use the old place and still send", not
+    an ImportError that silences every alert on the machine.
+    """
+    legacy = Path(__file__).resolve().parent / ".env"
+    try:
+        sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+        import secrets_store
+        return secrets_store.resolve("telegram")
+    except Exception:
+        return legacy
+
+
+ENV_PATH = _env_path()
 FAILED_LOG = Path(__file__).parent / "failed_sends.log"
 API_BASE = "https://api.telegram.org/bot{token}/{method}"
 
@@ -79,9 +101,10 @@ def _credentials() -> tuple[str, str]:
     chat_id = env.get("TELEGRAM_CHAT_ID")
     if not token or not chat_id:
         raise RuntimeError(
-            "Telegram not configured. Create TradingBotApp/TelegramBot/.env "
-            "with TELEGRAM_BOT_TOKEN=... and TELEGRAM_CHAT_ID=... "
-            "(see notify.py's module docstring for setup steps)."
+            f"Telegram not configured. Create {ENV_PATH} with "
+            "TELEGRAM_BOT_TOKEN=... and TELEGRAM_CHAT_ID=... "
+            "(copy secrets/telegram.env.example; see notify.py's module "
+            "docstring for how to get the two values)."
         )
     return token, chat_id
 

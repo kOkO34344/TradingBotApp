@@ -104,6 +104,25 @@ File purposes are documented in each script's own module docstring
   on **equity including floating P&L**, so the account can fail with no order
   placed. That is why this venue gets a continuous monitor and not a pre-trade
   gate like `RiskGuard`, which structurally cannot see it.
+- **`secrets_store.py` is the SINGLE SOURCE OF TRUTH for where credentials
+  live.** All of them sit in `secrets/` (mode 700), one file per provider:
+  `secrets/ctrader.env` (FTMO venue) and `secrets/telegram.env` (every phone
+  alert). Contents are gitignored; `secrets/README.md` and the `*.example`
+  templates are tracked. The `.gitignore` rule is `secrets/*` and NOT
+  `secrets*` — an ignored *directory* is never descended into, so the
+  template negations would silently do nothing.
+  `resolve()` prefers the new path and **falls back to the legacy
+  `./.env` / `TelegramBot/.env`**, deliberately: both consumers are on
+  unattended paths, so a half-applied migration must degrade to "still works",
+  never to "no notifications and nobody notices". When both exist the file in
+  `secrets/` wins, so a forgotten copy cannot shadow the real one. The legacy
+  paths currently exist as symlinks into `secrets/`, which is why an
+  unmigrated checkout on this machine still runs.
+  `python3 secrets_store.py --describe` reports what this machine holds
+  without printing a value. Audited 2026-08-05 against the full git history:
+  **no credential has ever been committed**, and this move was reorganisation,
+  not leak cleanup. If one ever does leak, rotate it at the provider — moving
+  or rewriting history does not recall a value that reached a commit.
 - `indicators.py` is the SINGLE SOURCE OF TRUTH for technical math, shared by
   trader_app charts and research_agent prompts (human and AI see identical
   numbers). It has `--selftest`. Never reimplement indicators elsewhere —

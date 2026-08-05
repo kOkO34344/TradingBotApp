@@ -22,8 +22,10 @@ a no-op once a reactor exists. The CLI paths in this file run standalone and
 use the default reactor, which is why they are safe today — but anything that
 later imports this module into the web backend must call that installer first.
 
-CREDENTIALS live in a gitignored `.env` (see `.env` for the key names). They
-are never logged, never printed, and never interpolated into a shell command.
+CREDENTIALS live in the gitignored `secrets/ctrader.env` (see
+`secrets/ctrader.env.example` for the key names, and `secrets_store.py` for why
+they moved and why the old repo-root `.env` still works). They are never
+logged, never printed, and never interpolated into a shell command.
 
 ENDPOINT ROUTING IS BY ACCOUNT TYPE, and it is the one thing that will waste
 your afternoon. A live-type account authenticates ONLY on the live host and a
@@ -58,8 +60,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent
-ENV_FILE = BASE_DIR / ".env"
 SPECS_FILE = BASE_DIR / "ftmo_symbol_specs.json"
+
+# Credentials live under secrets/ (see secrets_store.py). resolve() falls back
+# to the old repo-root .env when the migration has not been applied to this
+# checkout, so an unmigrated clone keeps working rather than failing at auth.
+import secrets_store  # noqa: E402  (after BASE_DIR, before it is used)
+
+ENV_FILE = secrets_store.resolve("ctrader")
 
 # cTrader quotes prices and money as scaled integers. Money is in "cents of a
 # cent": divide by 100 to get the account currency. Getting this wrong by a

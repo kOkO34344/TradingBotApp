@@ -9,15 +9,18 @@ risk circuit-breaker trips, IBKR disconnects, launchd job failures, etc.
 | File | Purpose |
 |---|---|
 | `notify.py` | The module. `send_telegram(text)` is the one function callers need. Also runnable directly: `python3 notify.py "message"` to send, or `python3 notify.py --get-chat-id <TOKEN>` during setup. |
-| `.env` | Your real credentials (`TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`). **Not committed** — gitignored via the repo's `*.env` rule. Doesn't exist until you create it. |
-| `.env.example` | Template — copy to `.env` and fill in. |
+Credentials live in **`secrets/telegram.env`** at the repo root, not in this
+directory — see `secrets/README.md`. They hold `TELEGRAM_BOT_TOKEN` and
+`TELEGRAM_CHAT_ID` and are never committed. A legacy `TelegramBot/.env` still
+works if you have one: `secrets_store.resolve()` falls back to it so an
+unmigrated checkout keeps sending.
 
 ## One-time setup
 
 1. In Telegram, message **@BotFather** → `/newbot` → follow the prompts. You get a token like `123456789:AAExampleTokenString`.
 2. Send your new bot **any message** from your phone (bots can't message you first).
 3. `cd TelegramBot && python3 notify.py --get-chat-id <TOKEN>` → prints your `chat_id`.
-4. `cp .env.example .env` and fill in both values.
+4. `cp secrets/telegram.env.example secrets/telegram.env` (from the repo root) and fill in both values.
 5. Test: `python3 notify.py "hello from TradingBotApp"` — should land on your phone in a couple seconds.
 
 ## Using it from a new script anywhere in the project
