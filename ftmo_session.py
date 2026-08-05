@@ -133,6 +133,44 @@ def validate_stop(side: str, entry_price: float, stop_price: float) -> None:
             f"would close the position on fill")
 
 
+def market_open_now(spec: dict, now_utc=None) -> bool | None:
+    """Is this symbol tradeable right now, per the venue's own schedule?
+
+    Returns None when the capture has no schedule — UNKNOWN, never False. A
+    missing calendar is missing information, and refusing to trade on it would
+    be a different bug from refusing to trade because the market is shut.
+
+    WHY THIS IS NEEDED AT ALL: a streaming quote does not mean a tradeable
+    market. On 2026-08-05 both US30.cash and BTCUSD were quoting live and both
+    rejected an order with MARKET_CLOSED — it was 23:55 Moscow, inside FTMO's
+    daily ten-minute maintenance window.
+
+    The schedule's zone is the SYMBOL's (`scheduleTimeZone`, Europe/Moscow on
+    this broker) and is NOT the Europe/Prague boundary `ftmo_rules` uses for
+    the FTMO day. Two different timezones live in this system; conflating them
+    would put the maintenance window an hour or two off.
+
+    cTrader expresses each interval in seconds from the start of the trading
+    WEEK, where second 0 is Sunday 00:00 in the schedule's own timezone.
+    """
+    from datetime import datetime, timezone as _tz
+    from zoneinfo import ZoneInfo
+
+    intervals = spec.get("schedule")
+    zone = spec.get("schedule_timezone")
+    if not intervals or not zone:
+        return None
+    try:
+        tz = ZoneInfo(zone)
+    except Exception:
+        return None
+    now = (now_utc or datetime.now(_tz.utc)).astimezone(tz)
+    # isoweekday(): Mon=1..Sun=7. cTrader's week starts Sunday at second 0.
+    week_second = (now.isoweekday() % 7) * 86400 + \
+        now.hour * 3600 + now.minute * 60 + now.second
+    return any(iv["start"] <= week_second < iv["end"] for iv in intervals)
+
+
 def scale_price(raw: int) -> float:
     """Trendbar prices are ints scaled by 10^5 — ALWAYS, whatever `digits` says.
 
@@ -499,14 +537,32 @@ class FTMOSession:
             raise SessionError(f"{symbol} is not tradeable right now "
                                f"(tradingMode={spec.get('trading_mode')})")
 
+        # A MARKET order must carry its stop as `relativeStopLoss`, not as an
+        # absolute `stopLoss`. The venue is explicit about it:
+        #   INVALID_REQUEST: SL/TP in absolute values are allowed only for
+        #   order types: [LIMIT, STOP, STOP_LIMIT]
+        # Found on the first real order, 2026-08-05. The stop is still a field
+        # on the same request, so it remains atomic with the entry — only the
+        # encoding differs. relativeStopLoss is a positive DISTANCE in
+        # 1/100000 price units; the venue applies it on the correct side from
+        # tradeSide, which is why validate_stop() above still has to check the
+        # side we were given rather than trusting the number alone.
+        distance = abs(reference_price - stop_price)
+        relative = int(round(distance * SPOT_SCALE))
+        if relative <= 0:
+            raise SessionError(
+                f"stop distance rounds to zero at 1e-5 precision "
+                f"({distance!r}) — refusing an order whose stop is its entry")
+
         payload = self._send(
             "ProtoOANewOrderReq", timeout_s=timeout_s,
             symbolId=spec["symbol_id"], orderType=1,
             tradeSide=1 if side.upper() == "BUY" else 2,
-            volume=volume, stopLoss=stop_price, label=label,
+            volume=volume, relativeStopLoss=relative, label=label,
             comment=f"ftmo/{label}")
         return {"sent": True, "symbol": symbol, "side": side.upper(),
                 "volume": volume, "stop_loss": stop_price,
+                "relative_stop_loss": relative,
                 "response": type(payload).__name__}
 
     def close_position(self, position_id: int, volume: int) -> dict:
@@ -650,6 +706,33 @@ def selftest() -> int:
     check("quotes survive a disconnect so staleness is detectable",
           1 in s2.quotes)
     check("...and the session reports itself not ready", not s2.ready)
+
+    print("market_open_now (a live quote does NOT mean a tradeable market):")
+    from datetime import datetime, timezone as _tz
+    # BTCUSD on this broker: Mon-Sat 00:05 -> 23:55 Europe/Moscow. cTrader
+    # counts seconds from Sunday 00:00, so Wednesday is day index 3.
+    wed = {"schedule_timezone": "Europe/Moscow",
+           "schedule": [{"start": 3 * 86400 + 5 * 60,
+                         "end": 3 * 86400 + 23 * 3600 + 55 * 60}]}
+    def moscow(y, mo, d, h, mi):
+        from zoneinfo import ZoneInfo
+        return datetime(y, mo, d, h, mi, tzinfo=ZoneInfo("Europe/Moscow")).astimezone(_tz.utc)
+    check("open in the middle of the session",
+          market_open_now(wed, moscow(2026, 8, 5, 12, 0)) is True)
+    check("CLOSED inside the 23:55-00:05 maintenance window — the exact case "
+          "that rejected a live order on 2026-08-05",
+          market_open_now(wed, moscow(2026, 8, 5, 23, 57)) is False)
+    check("closed just before the open", 
+          market_open_now(wed, moscow(2026, 8, 5, 0, 1)) is False)
+    check("open right at the start boundary",
+          market_open_now(wed, moscow(2026, 8, 5, 0, 5)) is True)
+    check("closed on a day with no interval (Thursday)",
+          market_open_now(wed, moscow(2026, 8, 6, 12, 0)) is False)
+    check("a missing schedule is UNKNOWN, never False",
+          market_open_now({"schedule": [], "schedule_timezone": ""}) is None)
+    check("an unparseable timezone is UNKNOWN, never False",
+          market_open_now({"schedule": [{"start": 0, "end": 10}],
+                           "schedule_timezone": "Mars/Olympus"}) is None)
 
     print("period names:")
     check("D1 maps to cTrader's 12", PERIODS["D1"] == 12)
