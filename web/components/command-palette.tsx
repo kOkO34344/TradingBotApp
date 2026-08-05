@@ -1,0 +1,168 @@
+"use client";
+
+import { useEffect, useMemo, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+
+/**
+ * Cmd-K command palette.
+ *
+ * Deliberately hand-rolled rather than pulled from shadcn's `Command`. That
+ * component wraps Base UI's dialog, and web/CLAUDE.md records two Base UI
+ * traps that type-check cleanly and then fail at runtime (menu items firing
+ * `onClick` not `onSelect`, `DropdownMenuLabel` throwing outside a
+ * `DropdownMenuGroup`). A palette is keyboard-only surface area where a
+ * silent no-op handler is the whole failure mode, so this uses plain
+ * elements whose behaviour is visible in this file.
+ *
+ * Navigation only. It deliberately cannot place, flatten or cancel anything:
+ * every write in this app goes through preview -> execute(token) so the UI
+ * cannot show one order and send another, and a fuzzy-matched keystroke is
+ * exactly the wrong way to reach that path.
+ */
+
+interface Cmd {
+  id: string;
+  label: string;
+  hint: string;
+  href: string;
+  keywords: string;
+}
+
+const COMMANDS: Cmd[] = [
+  { id: "ftmo", label: "FTMO", hint: "venue · limits · positions", href: "/ftmo",
+    keywords: "ftmo venue equity drawdown daily limit prop challenge" },
+  { id: "charts", label: "Charts", hint: "price + indicators (IBKR)", href: "/charts",
+    keywords: "charts price candles indicator sma ema bollinger atr ibkr" },
+  { id: "dashboard", label: "Dashboard", hint: "account overview (IBKR)", href: "/dashboard",
+    keywords: "dashboard overview account summary ibkr" },
+  { id: "positions", label: "Positions", hint: "open positions + stops (IBKR)", href: "/positions",
+    keywords: "positions holdings stops protected ibkr" },
+  { id: "rebalance", label: "Rebalance", hint: "Kronos proposal (IBKR)", href: "/rebalance",
+    keywords: "rebalance rotate kronos proposal target ibkr" },
+  { id: "journal", label: "Journal", hint: "every order attempt and fill", href: "/journal",
+    keywords: "journal trades log fills blocked audit history" },
+  { id: "kronos", label: "Kronos", hint: "forecast + monte carlo", href: "/kronos",
+    keywords: "kronos forecast predict model monte carlo signal" },
+  { id: "backtests", label: "Backtests", hint: "strategy results", href: "/backtests",
+    keywords: "backtest strategy results momentum sma performance" },
+];
+
+/** Subsequence match: "ftm" hits "FTMO", "reb" hits "Rebalance". */
+function score(cmd: Cmd, q: string): number {
+  if (!q) return 1;
+  const needle = q.toLowerCase();
+  const hay = `${cmd.label} ${cmd.keywords}`.toLowerCase();
+  if (hay.includes(needle)) return 100 - hay.indexOf(needle);
+  let i = 0;
+  for (const ch of hay) if (ch === needle[i]) i++;
+  return i === needle.length ? 1 : 0;
+}
+
+export function CommandPalette() {
+  const router = useRouter();
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const [active, setActive] = useState(0);
+  const inputRef = useRef<HTMLInputElement>(null);
+
+  const results = useMemo(
+    () =>
+      COMMANDS.map((c) => ({ c, s: score(c, q) }))
+        .filter((r) => r.s > 0)
+        .sort((a, b) => b.s - a.s)
+        .map((r) => r.c),
+    [q],
+  );
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        setOpen((v) => !v);
+        setQ("");
+        setActive(0);
+      } else if (e.key === "Escape") {
+        setOpen(false);
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, []);
+
+  useEffect(() => {
+    if (open) inputRef.current?.focus();
+  }, [open]);
+
+  // Clamp rather than reset: re-clamping on every keystroke would fight the
+  // arrow keys as the result list shrinks under the selection.
+  useEffect(() => {
+    setActive((a) => Math.min(a, Math.max(0, results.length - 1)));
+  }, [results.length]);
+
+  if (!open) return null;
+
+  const go = (href: string) => {
+    setOpen(false);
+    router.push(href);
+  };
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-start justify-center bg-background/70 pt-[12vh] backdrop-blur-[2px]"
+      onClick={() => setOpen(false)}
+    >
+      <div
+        role="dialog"
+        aria-modal="true"
+        aria-label="Command palette"
+        className="w-full max-w-lg border hairline border-border bg-popover shadow-2xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <input
+          ref={inputRef}
+          value={q}
+          onChange={(e) => setQ(e.target.value)}
+          onKeyDown={(e) => {
+            if (e.key === "ArrowDown") {
+              e.preventDefault();
+              setActive((a) => Math.min(a + 1, results.length - 1));
+            } else if (e.key === "ArrowUp") {
+              e.preventDefault();
+              setActive((a) => Math.max(a - 1, 0));
+            } else if (e.key === "Enter" && results[active]) {
+              e.preventDefault();
+              go(results[active].href);
+            }
+          }}
+          placeholder="Go to…"
+          className="w-full bg-transparent px-4 py-3 text-sm outline-none placeholder:text-muted-foreground"
+        />
+        <div className="border-t hairline border-border">
+          {results.length === 0 ? (
+            <p className="px-4 py-6 text-center text-sm text-muted-foreground">
+              No match.
+            </p>
+          ) : (
+            results.map((c, i) => (
+              <button
+                key={c.id}
+                onClick={() => go(c.href)}
+                onMouseEnter={() => setActive(i)}
+                className={`flex w-full items-baseline justify-between px-4 py-2 text-left text-sm ${
+                  i === active ? "bg-secondary text-foreground" : "text-muted-foreground"
+                }`}
+              >
+                <span>{c.label}</span>
+                <span className="text-xs text-muted-foreground/70">{c.hint}</span>
+              </button>
+            ))
+          )}
+        </div>
+        <div className="flex justify-between border-t hairline border-border px-4 py-1.5 text-[10px] uppercase tracking-widest text-muted-foreground/60">
+          <span>↑↓ move · ↵ open · esc close</span>
+          <span>navigation only</span>
+        </div>
+      </div>
+    </div>
+  );
+}

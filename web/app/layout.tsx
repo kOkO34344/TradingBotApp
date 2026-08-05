@@ -3,6 +3,7 @@ import { Inter_Tight, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { Toaster } from "@/components/ui/sonner";
+import { CommandPalette } from "@/components/command-palette";
 
 // Swiss instrument-panel typography. Inter Tight for everything structural —
 // its tighter default tracking reads as a precision instrument rather than as
@@ -44,6 +45,7 @@ export default function RootLayout({
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <AppShell>{children}</AppShell>
+        <CommandPalette />
         <Toaster richColors position="bottom-right" />
       </body>
     </html>

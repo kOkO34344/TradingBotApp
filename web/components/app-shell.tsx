@@ -193,7 +193,14 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
 
-          {connState !== "live" && (
+          {/* Scope the IBKR banner to IBKR screens.
+              Rule 9 retired IBKR for new orders, so a dead Gateway is an
+              expected state, not an application fault. Showing it full-width
+              on the FTMO screen — a venue that does not touch Gateway at all —
+              made a working app look broken and buried the one venue that can
+              actually trade. It still shows loudly on every screen that DOES
+              depend on Gateway, because there it is the reason nothing loads. */}
+          {connState !== "live" && !pathname.startsWith("/ftmo") && (
             <div
               className={cn(
                 "px-4 py-1.5 text-xs border-t",
