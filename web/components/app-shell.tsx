@@ -30,7 +30,7 @@ import {
   Power,
   Repeat,
   Sun,
-  Wallet,
+  Wallet, Gauge,
 } from "lucide-react";
 
 import { api, type Status } from "@/lib/api";
@@ -41,6 +41,9 @@ import { Button } from "@/components/ui/button";
 import { KillSwitch } from "@/components/kill-switch";
 
 const NAV = [
+  // FTMO leads: it is the venue that can trade. IBKR stays reachable but is
+  // read-only monitoring for the three positions still open (rule 9).
+  { href: "/ftmo", label: "FTMO", icon: Gauge },
   { href: "/charts", label: "Charts", icon: BarChart3 },
   { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard },
   { href: "/positions", label: "Positions", icon: Wallet },

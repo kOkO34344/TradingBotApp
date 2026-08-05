@@ -1,22 +1,32 @@
 import type { Metadata } from "next";
-import { Geist, Geist_Mono } from "next/font/google";
+import { Inter_Tight, JetBrains_Mono } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { Toaster } from "@/components/ui/sonner";
 
-const geistSans = Geist({
-  variable: "--font-geist-sans",
+// Swiss instrument-panel typography. Inter Tight for everything structural —
+// its tighter default tracking reads as a precision instrument rather than as
+// a website — and JetBrains Mono for prices and volumes.
+//
+// Numbers are the entire product here, so both faces run with TABULAR figures
+// (see globals.css). Proportional digits let a column of prices shift
+// horizontally as the last digit ticks, which turns a quietly updating quote
+// into visual noise and makes two prices genuinely hard to compare by eye.
+const interTight = Inter_Tight({
+  variable: "--font-inter-tight",
   subsets: ["latin"],
+  display: "swap",
 });
 
-const geistMono = Geist_Mono({
-  variable: "--font-geist-mono",
+const jetbrainsMono = JetBrains_Mono({
+  variable: "--font-jetbrains-mono",
   subsets: ["latin"],
+  display: "swap",
 });
 
 export const metadata: Metadata = {
   title: "TradingBotApp",
-  description: "Local control panel for the IBKR paper trading system",
+  description: "Local control panel for the FTMO and IBKR trading venues",
 };
 
 export default function RootLayout({
@@ -29,7 +39,7 @@ export default function RootLayout({
     // the chosen default, and the theme toggle in the header flips this class.
     <html
       lang="en"
-      className={`dark ${geistSans.variable} ${geistMono.variable} h-full antialiased`}
+      className={`dark ${interTight.variable} ${jetbrainsMono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
