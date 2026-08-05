@@ -53,11 +53,17 @@ BASE_DIR = Path(__file__).resolve().parent
 # cTrader trendbar periods we actually use, by the project's own naming.
 PERIODS = {"M1": 1, "M5": 5, "M15": 7, "M30": 8, "H1": 9, "H4": 10, "D1": 12}
 
-# Prices arrive as integers scaled by 10^digits for trendbars, and as
-# "relative" 1e-5 scaled integers on spot events. Two different scales on one
-# connection is exactly the kind of thing that silently misprices a stop, so
-# both conversions are named and never inlined.
+# Spot events and trendbars BOTH arrive as integers in a fixed 1/100000 unit.
+# The symbol's `digits` describes how the venue DISPLAYS a price; it is not the
+# wire scale, and treating it as one is a 1000x error on every symbol whose
+# digits is not 5. Named rather than inlined because a mis-scaled price
+# silently misprices a stop.
 SPOT_SCALE = 100_000.0
+
+# Trendbars use the SAME fixed 1e5 scale as spot events, NOT the symbol's
+# `digits`. See scale_price() — assuming digits here produced a 1000x error on
+# every symbol whose digits is not 5.
+TRENDBAR_SCALE = 100_000.0
 
 
 class SessionError(RuntimeError):
@@ -127,9 +133,25 @@ def validate_stop(side: str, entry_price: float, stop_price: float) -> None:
             f"would close the position on fill")
 
 
-def scale_price(raw: int, digits: int) -> float:
-    """Trendbar / position prices arrive as ints scaled by 10^digits."""
-    return raw / float(10 ** digits)
+def scale_price(raw: int) -> float:
+    """Trendbar prices are ints scaled by 10^5 — ALWAYS, whatever `digits` says.
+
+    This cost a real bug on 2026-08-05. The obvious reading is that a price is
+    scaled by the symbol's own `digits`, and it is wrong: cTrader sends
+    trendbars in a fixed 1/100000 unit for every instrument. EURUSD hides it
+    perfectly, because EURUSD's digits IS 5 — and EURUSD is the symbol anyone
+    smoke-tests first.
+
+    Everything else breaks loudly once you look: XAUUSD (digits 2) priced at
+    4,076,760 against a live bid of 4,248, BTCUSD at 64,285,760. Downstream
+    that produced an ATR of 1.49 MILLION on BTC and a NEGATIVE stop price on
+    NATGAS.cash, and the sizer accepted it and proposed an order.
+
+    The lesson generalises past this function: a per-symbol scale that happens
+    to be right for your test symbol is indistinguishable from a global one
+    until you try a second symbol with different digits.
+    """
+    return raw / TRENDBAR_SCALE
 
 
 class FTMOSession:
@@ -379,20 +401,54 @@ class FTMOSession:
         payload = self._send("ProtoOAGetTrendbarsReq", symbolId=spec["symbol_id"],
                              period=PERIODS[period], fromTimestamp=from_ms,
                              toTimestamp=now_ms, count=count)
-        digits = spec["digits"]
         bars = []
         for b in payload.trendbar:
             low = b.low
             bars.append({
                 "ts": b.utcTimestampInMinutes * 60,
-                "open": scale_price(low + b.deltaOpen, digits),
-                "high": scale_price(low + b.deltaHigh, digits),
-                "low": scale_price(low, digits),
-                "close": scale_price(low + b.deltaClose, digits),
+                "open": scale_price(low + b.deltaOpen),
+                "high": scale_price(low + b.deltaHigh),
+                "low": scale_price(low),
+                "close": scale_price(low + b.deltaClose),
                 "volume": b.volume,
             })
         bars.sort(key=lambda r: r["ts"])
         return bars
+
+    def assert_bars_match_quote(self, symbol: str, tolerance: float = 0.25) -> None:
+        """Cross-check the bar series against the live quote, and RAISE on a
+        mismatch rather than trading on a mis-scaled price.
+
+        Directly modelled on `paper_trader.get_net_liquidation_usd`, which
+        verifies IBKR's FX direction against an independent quote and raises,
+        because an inverted rate misstated equity by ~29% and would have
+        mis-sized every order. The failure here is the same shape and worse:
+        the 10^digits trendbar bug priced gold at 4,076,760 and produced a
+        negative stop, and NOTHING downstream noticed — the sizer accepted it
+        and proposed a live order.
+
+        A daily bar legitimately differs from the current tick, so the
+        tolerance is deliberately loose. It is not checking accuracy; it is
+        checking for an order-of-magnitude scaling error, which is the failure
+        that actually happens.
+        """
+        q = self.quote(symbol)
+        if q is None or not (q.bid or q.ask):
+            return  # no tick yet; nothing to compare against, so assert nothing
+        bars = self.trendbars(symbol, "D1", 3)
+        if not bars:
+            return
+        close = bars[-1]["close"]
+        live = q.bid or q.ask
+        if close <= 0 or live <= 0:
+            raise SessionError(
+                f"{symbol}: non-positive price (bar {close}, live {live})")
+        ratio = close / live
+        if not (1 - tolerance) <= ratio <= (1 + tolerance):
+            raise SessionError(
+                f"{symbol}: bar close {close:,.5f} and live quote {live:,.5f} "
+                f"differ by {ratio:.1f}x — this is a PRICE SCALING error, not "
+                f"a market move. Do not trade on it.")
 
     def subscribe(self, symbols: list[str]) -> None:
         ids = []
@@ -527,9 +583,15 @@ def selftest() -> int:
     check("a valid short stop passes",
           validate_stop("SELL", 100.0, 102.0) is None)
 
-    print("price scaling:")
-    check("5-digit FX price", abs(scale_price(108500, 5) - 1.085) < 1e-9)
-    check("2-digit index price", abs(scale_price(3900012, 2) - 39000.12) < 1e-9)
+    print("price scaling is FIXED at 1e5, not per-symbol digits:")
+    check("a 5-digit FX price", abs(scale_price(115_512) - 1.15512) < 1e-9)
+    check("a 2-digit metal price scales the same way",
+          abs(scale_price(424_588_000) - 4245.88) < 1e-6)
+    check("a 2-digit crypto price scales the same way",
+          abs(scale_price(6_495_040_000) - 64950.40) < 1e-4)
+    check("scale_price takes no digits argument at all — the whole bug was "
+          "believing it should",
+          scale_price.__code__.co_argcount == 1)
 
     print("quote marks at the exit side of the spread:")
     q = Quote(symbol_id=1, bid=1.0840, ask=1.0842, ts=time.time())
