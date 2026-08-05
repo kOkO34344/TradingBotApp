@@ -16,10 +16,20 @@ price_data_backtest/
 price_data_live/
 KronosAI/price_data_hourly/
 KronosAI/price_data_hourly_live/
+KronosAI/price_data_assetclass/
 
-# IBKR credentials or local secrets, if ever added
+# Credentials. secrets/ holds one file per provider (see secrets_store.py).
+# Its CONTENTS are ignored, but the README and the .example templates ARE
+# tracked so a fresh clone can see what needs filling in without ever holding
+# a value. Note the rule is `secrets/*` and NOT `secrets*`: an ignored
+# DIRECTORY is never descended into, so the negations below would silently do
+# nothing and the templates would vanish from the repo.
 *.env
-secrets*
+secrets/*
+!secrets/README.md
+!secrets/*.example
+# ...and a stray secrets.json / secrets.yaml dropped anywhere else.
+secrets.*
 
 # Runtime logs from the daily vault-sync automation (grows continuously,
 # not meaningful version-controlled content)
