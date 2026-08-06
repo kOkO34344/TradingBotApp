@@ -26,10 +26,12 @@ rather than a 500.
 
 from __future__ import annotations
 
+import json
 import logging
 import sys
 import threading
 import time
+from datetime import datetime
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -37,6 +39,7 @@ if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
 import ftmo_rules as fr          # noqa: E402
+import ftmo_runner as runner     # noqa: E402
 import ftmo_service as svc       # noqa: E402
 import ftmo_session as fs        # noqa: E402
 import ftmo_signal as sig        # noqa: E402
@@ -207,6 +210,187 @@ def bars(symbol: str, period: str = "D1", count: int = 300) -> dict:
         raise RuntimeError("FTMO session is not connected")
     rows = session.trendbars(symbol, period, count)
     return {"symbol": symbol, "period": period, "bars": rows}
+
+
+def autotrade_state() -> dict:
+    """Whether the FTMO runner is armed, plus the settings it would run with.
+
+    Read straight from `trader_settings.json` through `ftmo_runner`'s own
+    accessor rather than re-parsing the block here, so the browser cannot
+    report a configuration different from the one the runner would actually
+    use. The runner defaults every absent key to OFF and to the most
+    conservative value, and that behaviour is what the UI shows.
+    """
+    cfg = runner.autotrade_config(runner.load_settings())
+    state = runner.load_state()
+    return {
+        "enabled": cfg["enabled"],
+        "riskPct": cfg["risk_pct"],
+        "rotationMarginPct": cfg["margin_pct"],
+        "topN": cfg["top_n"],
+        "sampleCount": cfg["sample_count"],
+        "product": cfg["product"],
+        "bufferPct": cfg["buffer_pct"],
+        "dayState": (state.to_json() if state else None),
+    }
+
+
+def set_autotrade(enabled: bool) -> dict:
+    """Arm or disarm the FTMO runner.
+
+    Deliberately independent of the IBKR autotrade toggle and of IB Gateway's
+    health. Rule 9 retired IBKR for new orders, so gating this venue's switch
+    on a dead Gateway would make it impossible to disarm FTMO for a reason
+    that has nothing to do with FTMO.
+
+    Writes raw JSON rather than going through `trader_app.load_settings()`,
+    which merges DEFAULT_SETTINGS and would write a pile of unrelated defaults
+    into the owner's config as a side effect of flipping one boolean. The write
+    is atomic so a crash cannot leave a half-written config that reads as
+    disabled by accident — or worse, as enabled.
+
+    Both directions are journalled. Rule 6 is about orders, but "who armed the
+    robot, and when" belongs in the same trail, especially for a path CLAUDE.md
+    flags as a deliberate exception to rule 5.
+    """
+    path = runner.SETTINGS
+    raw = json.loads(path.read_text())
+    ftmo_block = dict(raw.get("ftmo") or {})
+    autotrade = dict(ftmo_block.get("autotrade") or {})
+    was = bool(autotrade.get("enabled", False))
+    autotrade["enabled"] = bool(enabled)
+    ftmo_block["autotrade"] = autotrade
+    raw["ftmo"] = ftmo_block
+
+    tmp = path.with_suffix(".json.tmp")
+    tmp.write_text(json.dumps(raw, indent=2))
+    tmp.replace(path)
+
+    if was != bool(enabled):
+        runner.journal_ftmo(
+            "NOTE",
+            status="autotrade " + ("enabled" if enabled else "DISABLED"),
+            detail=(f"FTMO autotrade turned {'ON' if enabled else 'OFF'} from "
+                    f"the web UI. Signal: kronos. The rule engine, sizer and "
+                    f"stop attachment stay enforced either way."))
+        log.info("FTMO autotrade %s via web UI",
+                 "enabled" if enabled else "disabled")
+    return {"autotrade": autotrade_state(), "changed": was != bool(enabled)}
+
+
+def plan(ctx, sample_count: int | None = None) -> dict:
+    """What Kronos would trade on FTMO right now. Places NOTHING.
+
+    The read-only twin of `ftmo_runner.run()` — same universe, same bars, same
+    ranking, same rule engine and the same sizer, so the browser preview and
+    the unattended run cannot propose different orders. Anything that only the
+    preview knows how to compute would be a second implementation of the risk
+    maths, which is the thing the whole `api/` layer exists to avoid.
+
+    Runs inside a job thread: Kronos inference takes minutes and the session's
+    methods all block.
+    """
+    cfg = runner.autotrade_config(runner.load_settings())
+    samples = int(sample_count or cfg["sample_count"])
+
+    ctx.log("Building the FTMO universe from the captured symbol specs…")
+    specs = svc.load_symbol_specs()
+    pairs = sig.build_universe(specs, sig.load_universe())
+    symbols = [s for s, _ in pairs]
+    classes = dict(pairs)
+    ctx.log(f"{len(symbols)} symbols across {len(set(classes.values()))} classes")
+
+    session = get_session()
+    if session is None:
+        raise RuntimeError(
+            f"FTMO session is not connected: {_state.get('error') or 'unknown'}")
+
+    ctx.progress(0.05, "Reading the account…")
+    positions = session.refresh_positions()
+    acct = session.account()
+    now = datetime.now(runner.PRAGUE)
+    config = runner.config_from(cfg)
+    state_obj, notes = runner.advance_state(runner.load_state(),
+                                            acct["balance"], now, config)
+    for n in notes:
+        ctx.log(n)
+    account_state, unpriced = runner.build_account_state(session, positions,
+                                                         state_obj)
+    verdict = fr.evaluate(config, account_state)
+    ctx.log(verdict.summary())
+
+    ctx.progress(0.12, "Pulling daily bars from the venue…")
+    sys.path.insert(0, str(BASE_DIR / "KronosAI"))
+    import kronos_agent as ka                                 # noqa: PLC0415
+    import pandas as pd                                       # noqa: PLC0415
+
+    bars_by_symbol, frames, rejected = {}, {}, []
+    for i, sym in enumerate(symbols):
+        ctx.raise_if_cancelled()
+        ctx.progress(0.12 + 0.28 * (i / max(1, len(symbols))), f"Bars: {sym}")
+        try:
+            session.assert_bars_match_quote(sym)
+        except Exception as e:                                # noqa: BLE001
+            rejected.append({"symbol": sym, "reason": str(e)})
+            ctx.log(f"{sym}: {e}")
+            continue
+        rows = session.trendbars(sym, "D1", sig.BARS_NEEDED)
+        if len(rows) < ka.LOOKBACK:
+            rejected.append({"symbol": sym,
+                             "reason": f"only {len(rows)} daily bars, "
+                                       f"need {ka.LOOKBACK}"})
+            continue
+        bars_by_symbol[sym] = rows
+        idx = pd.to_datetime([b["ts"] for b in rows], unit="s")
+        frames[sym] = pd.DataFrame(
+            {"open": [b["open"] for b in rows], "high": [b["high"] for b in rows],
+             "low": [b["low"] for b in rows], "close": [b["close"] for b in rows],
+             "volume": [b["volume"] for b in rows]}, index=idx)
+    ctx.log(f"bars usable for {len(frames)}/{len(symbols)} symbols")
+    if not frames:
+        raise RuntimeError("No symbol had usable daily history — nothing to "
+                           "forecast. Check the venue connection and the "
+                           "symbol capture.")
+
+    ctx.progress(0.45, f"Kronos forecast, sample_count={samples}…")
+    t0 = time.time()
+    _, _, pred_dfs = ka.forecast_frames(frames, sample_count=samples)
+    ctx.log(f"forecast for {len(pred_dfs)} symbols in {time.time() - t0:.0f}s")
+
+    ctx.progress(0.92, "Ranking and sizing…")
+    ranked = sig.rank_candidates(pred_dfs, bars_by_symbol, classes)
+    held = [p.symbol for p in positions]
+    proposal = sig.plan_orders(session, config, account_state, ranked, held,
+                               risk_pct=cfg["risk_pct"],
+                               margin_pct=cfg["margin_pct"],
+                               top_n=cfg["top_n"])
+
+    ctx.progress(1.0, "Done.")
+    return {
+        "generatedAt": time.time(),
+        "armed": cfg["enabled"],
+        "sampleCount": samples,
+        "topN": cfg["top_n"],
+        "rotationMarginPct": cfg["margin_pct"],
+        "verdict": _verdict_json(verdict),
+        "account": {"balance": account_state.balance,
+                    "equity": account_state.equity,
+                    "dayStartBalance": account_state.day_start_balance,
+                    "unpricedPositions": unpriced},
+        "held": held,
+        "target": proposal.get("target", []),
+        "exits": proposal["exits"],
+        "entries": proposal["entries"],
+        "skipped": proposal["skipped"],
+        "rankGap": proposal.get("rank_gap"),
+        "gapIsNarrow": (proposal.get("rank_gap") is not None
+                        and proposal["rank_gap"] < 1.0),
+        "rejectedSymbols": rejected,
+        "ranked": [{"symbol": c.symbol, "assetClass": c.asset_class,
+                    "predictedReturnPct": c.predicted_return_pct,
+                    "lastClose": c.last_close, "atr": c.atr}
+                   for c in ranked],
+    }
 
 
 def universe() -> list[dict]:

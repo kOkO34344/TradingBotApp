@@ -79,3 +79,18 @@ autotrade_launchd.log
 # FTMO day. Not version-controlled content — the findings that matter get
 # written into CLAUDE.md, same convention as autotrade_runner.log.
 ftmo_audit/
+
+# Timestamped safety copies written by trade_journal.migrate() before it
+# rewrites the journal in place. The point of them is local recovery if a
+# migration ever goes wrong; committing them would put several near-identical
+# copies of the audit trail in the history and make it ambiguous which one is
+# the journal.
+trade_journal.csv.bak-*
+
+# The FTMO runner's day-boundary memory (day-start balance, trailing high-water
+# mark, trading-day count). Runtime state that belongs to THIS machine's
+# account — committing it would mean a checkout on another machine inheriting
+# a day-start balance from an account it is not connected to, which is exactly
+# how the daily limit would evaluate against a fiction.
+ftmo_runner_state.json
+ftmo_runner.log

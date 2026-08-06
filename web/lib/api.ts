@@ -570,6 +570,91 @@ export const jobs = {
   cancel: (id: string) => post<{ cancelled: string }>(`/api/jobs/${id}/cancel`, {}),
 };
 
+/* ----------------------------------------------------- FTMO Kronos plan */
+
+export interface FtmoAutotradeState {
+  enabled: boolean;
+  riskPct: number;
+  rotationMarginPct: number;
+  topN: number;
+  sampleCount: number;
+  product: string;
+  bufferPct: number;
+  dayState: {
+    ftmo_day: string;
+    day_start_balance: number;
+    highest_eod_balance: number;
+    trading_days: number;
+    daily_profits: number[];
+    opened_today: boolean;
+  } | null;
+}
+
+export interface FtmoRankRow {
+  symbol: string;
+  assetClass: string;
+  predictedReturnPct: number;
+  lastClose: number;
+  atr: number;
+}
+
+export interface FtmoEntry {
+  symbol: string;
+  asset_class: string;
+  side: string;
+  volume: number;
+  units: number;
+  entry_price: number;
+  stop_price: number;
+  risk_at_stop: number;
+  predicted_return_pct: number;
+  atr: number;
+}
+
+export interface FtmoPlanResult {
+  generatedAt: number;
+  armed: boolean;
+  sampleCount: number;
+  topN: number;
+  rotationMarginPct: number;
+  verdict: {
+    canOpen: boolean;
+    mustFlatten: boolean;
+    breached: boolean;
+    reasons: string[];
+    posture: string;
+  };
+  account: {
+    balance: number;
+    equity: number;
+    dayStartBalance: number;
+    unpricedPositions: number;
+  };
+  held: string[];
+  target: string[];
+  exits: string[];
+  entries: FtmoEntry[];
+  skipped: string[];
+  rankGap: number | null;
+  gapIsNarrow: boolean;
+  rejectedSymbols: { symbol: string; reason: string }[];
+  ranked: FtmoRankRow[];
+}
+
+export const ftmo = {
+  autotrade: () => request<FtmoAutotradeState>("/api/ftmo/autotrade"),
+  setAutotrade: (enabled: boolean) =>
+    post<{ autotrade: FtmoAutotradeState; changed: boolean }>(
+      "/api/ftmo/autotrade",
+      { enabled }
+    ),
+  plan: (sampleCount?: number) =>
+    post<Job<FtmoPlanResult>>(
+      `/api/ftmo/plan${sampleCount ? `?sampleCount=${sampleCount}` : ""}`,
+      {}
+    ),
+};
+
 /* ------------------------------------------------------------ rebalance */
 
 export interface RebalanceBuy {

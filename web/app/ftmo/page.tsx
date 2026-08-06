@@ -2,6 +2,7 @@
 
 import { useFtmoStream, type FtmoLimit, type FtmoPosition } from "@/lib/use-ftmo";
 import { DASH, fmtAge, fmtPrice, fmtSigned, fmtUsd, pnlClass } from "@/lib/format";
+import { FtmoKronosPanel } from "@/components/ftmo-kronos-panel";
 
 /**
  * FTMO venue dashboard.
@@ -74,6 +75,8 @@ export default function FtmoPage() {
           </p>
         )}
       </section>
+
+      <FtmoKronosPanel />
 
       <section className="space-y-3">
         <SectionTitle>
