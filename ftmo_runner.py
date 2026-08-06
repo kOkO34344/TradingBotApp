@@ -64,7 +64,7 @@ import json
 import sys
 import time
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import datetime, time as dtime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
@@ -92,6 +92,62 @@ JOURNAL = tj.JOURNAL_FILE
 VENUE = "ftmo"
 
 PRAGUE = ZoneInfo("Europe/Prague")
+
+# ---------------------------------------------------------- trading window
+# Owner decision, 2026-08-06: run hourly between 16:30 and 11:30 the next
+# morning, every day EXCEPT Sunday, in Sofia time.
+#
+# THIS CHECK IS AUTHORITATIVE; the launchd schedule is only a superset.
+# Exactly the arrangement `autotrade_runner.py` uses for NYSE hours, and for
+# the same reason: a plist encodes wall-clock local time and cannot express
+# "except Sunday" across a window that wraps midnight without 120 entries,
+# while `zoneinfo` handles the DST switch (EEST +03 -> EET +02) and the
+# weekday rule in a few lines that can be unit-tested offline with no clock,
+# no network and no credentials.
+#
+# The window WRAPS MIDNIGHT, so it is a union and not a range: a moment
+# qualifies when it is at or after 16:30, OR at or before 11:30. Writing this
+# as `OPEN <= t <= CLOSE` would be empty for every t, which is the obvious way
+# to get it silently wrong.
+#
+# "Except Sunday" is applied to the CALENDAR day in Sofia, so Saturday's
+# evening leg (16:30-23:30) runs and Sunday's morning leg does not. That is
+# the literal reading of the instruction and it is the one that can be checked
+# by looking at a clock, rather than asking which session a firing "belongs
+# to" across a midnight boundary.
+TRADING_TZ = ZoneInfo("Europe/Sofia")
+WINDOW_OPEN = dtime(16, 30)     # inclusive
+WINDOW_CLOSE = dtime(11, 30)    # inclusive, the NEXT morning
+CLOSED_WEEKDAY = 6              # Monday=0 ... Sunday=6
+
+
+def within_trading_window(now: datetime) -> tuple[bool, str]:
+    """Is `now` inside the configured trading window? Pure, tz-aware.
+
+    Returns (allowed, reason) so the caller can log WHY it did nothing —
+    a runner that no-ops without saying which rule stopped it is
+    indistinguishable from one that is broken.
+
+    A naive datetime is refused rather than assumed to be local, the same
+    stance `ftmo_rules.ftmo_day()` takes. Host-local time is not the venue's
+    time and guessing has already cost this project real money elsewhere.
+    """
+    if now.tzinfo is None:
+        raise RunnerError(
+            "within_trading_window needs a timezone-aware datetime; a naive "
+            "one would be interpreted as host-local time, which is not "
+            "necessarily Sofia")
+    local = now.astimezone(TRADING_TZ)
+    stamp = local.strftime("%a %H:%M %Z")
+
+    if local.weekday() == CLOSED_WEEKDAY:
+        return False, f"Sunday — the runner does not trade on Sundays ({stamp})"
+
+    t = local.time()
+    if t >= WINDOW_OPEN or t <= WINDOW_CLOSE:
+        return True, f"inside the 16:30-11:30 Sofia window ({stamp})"
+    return False, (f"outside the 16:30-11:30 Sofia window ({stamp}) — "
+                   f"the gap between 11:30 and 16:30 is deliberate")
 
 
 class RunnerError(RuntimeError):
@@ -447,6 +503,17 @@ def run(force: bool = False, dry_run: bool = False,
 
     config = config_from(cfg)
     now = datetime.now(PRAGUE)
+
+    # Checked BEFORE the audit log is opened and long before torch is
+    # imported, so an out-of-window firing costs a settings read and nothing
+    # else. With ~20 in-window firings a day the out-of-window ones are the
+    # majority of wakeups, and they must stay free.
+    allowed, why = within_trading_window(now)
+    if not allowed and not force:
+        log(f"outside the trading window — no-op: {why}")
+        return 0
+    log(f"trading window: {why}")
+
     audit = fa.AuditLog()
 
     # Imported here, not at module scope: Kronos pulls in torch, and this
@@ -609,6 +676,13 @@ def selftest() -> int:
         if not cond:
             failures.append(name)
 
+    def raises(fn, needle=""):
+        try:
+            fn()
+        except Exception as e:                                # noqa: BLE001
+            return needle.lower() in str(e).lower()
+        return False
+
     tmpdir = Path(tempfile.mkdtemp(prefix="ftmo-runner-selftest-"))
     cfg25 = fr.FTMOConfig(initial_capital=25_000.0)
 
@@ -624,6 +698,69 @@ def selftest() -> int:
           is True)
     check("IBKR's autotrade toggle does NOT arm FTMO",
           autotrade_config({"autotrade": {"enabled": True}})["enabled"] is False)
+
+    print("trading window (16:30-11:30 Sofia, every day except Sunday):")
+
+    def sofia(y, mo, d, h, mi):
+        return datetime(y, mo, d, h, mi, tzinfo=TRADING_TZ)
+
+    # 2026-08-06 is a Thursday; 08-09 is a Sunday.
+    def allowed(dt):
+        return within_trading_window(dt)[0]
+
+    check("16:30 exactly is INSIDE (inclusive open)",
+          allowed(sofia(2026, 8, 6, 16, 30)))
+    check("16:29 is outside", not allowed(sofia(2026, 8, 6, 16, 29)))
+    check("11:30 exactly is INSIDE (inclusive close)",
+          allowed(sofia(2026, 8, 6, 11, 30)))
+    check("11:31 is outside", not allowed(sofia(2026, 8, 6, 11, 31)))
+    check("the 11:30-16:30 gap is closed (13:00)",
+          not allowed(sofia(2026, 8, 6, 13, 0)))
+    check("the window WRAPS midnight — 23:30 is inside",
+          allowed(sofia(2026, 8, 6, 23, 30)))
+    check("...and 00:30 is inside",
+          allowed(sofia(2026, 8, 7, 0, 30)))
+    check("...and 04:30 is inside",
+          allowed(sofia(2026, 8, 7, 4, 30)))
+
+    print("Sunday is excluded on the CALENDAR day, both legs:")
+    check("Sunday 04:30 is refused", not allowed(sofia(2026, 8, 9, 4, 30)))
+    check("Sunday 20:30 is refused", not allowed(sofia(2026, 8, 9, 20, 30)))
+    check("Saturday evening still runs (16:30)",
+          allowed(sofia(2026, 8, 8, 16, 30)))
+    check("Saturday 23:30 still runs", allowed(sofia(2026, 8, 8, 23, 30)))
+    check("Monday morning still runs (00:30)",
+          allowed(sofia(2026, 8, 10, 0, 30)))
+    check("the Sunday refusal says why",
+          "Sunday" in within_trading_window(sofia(2026, 8, 9, 4, 30))[1])
+
+    print("the window is evaluated in SOFIA time, not host time:")
+    # 03:30 UTC on a Thursday is 06:30 Sofia (inside). Same instant, other tz.
+    utc_moment = datetime(2026, 8, 6, 3, 30, tzinfo=ZoneInfo("UTC"))
+    check("a UTC-expressed instant is converted before testing",
+          allowed(utc_moment))
+    # 09:00 UTC = 12:00 Sofia, which is in the closed gap.
+    check("...and the conversion can move a moment OUT of the window",
+          not allowed(datetime(2026, 8, 6, 9, 0, tzinfo=ZoneInfo("UTC"))))
+    check("a naive datetime is refused rather than assumed local",
+          raises(lambda: within_trading_window(datetime(2026, 8, 6, 17, 0)),
+                 "timezone-aware"))
+
+    print("DST: the rule is wall-clock Sofia time on both sides of the switch")
+    # Sofia is EEST (+03) in August and EET (+02) in December.
+    check("17:00 in August (EEST) is inside",
+          allowed(sofia(2026, 8, 6, 17, 0)))
+    check("17:00 in December (EET) is also inside",
+          allowed(datetime(2026, 12, 3, 17, 0, tzinfo=TRADING_TZ)))
+    check("13:00 in December is still in the closed gap",
+          not allowed(datetime(2026, 12, 3, 13, 0, tzinfo=TRADING_TZ)))
+
+    print("the firing count matches the agreed 20 per day:")
+    fires = [h for h in range(24)
+             if allowed(sofia(2026, 8, 6, h, 30))]
+    check("20 hourly firings per non-Sunday day", len(fires) == 20)
+    check("...covering 16:00-23:00 and 00:00-11:00",
+          fires == list(range(0, 12)) + list(range(16, 24)))
 
     print("day-boundary state:")
     now = datetime(2026, 8, 6, 12, 0, tzinfo=PRAGUE)
@@ -752,6 +889,12 @@ def selftest() -> int:
           rsrc.index("must_flatten") < rsrc.index("forecast_frames"))
     check("torch is imported only after the enabled check",
           rsrc.index('enabled"] and not force') < rsrc.index("import kronos_agent"))
+    check("the trading window is checked before the audit log is opened",
+          rsrc.index("within_trading_window(now)") < rsrc.index("fa.AuditLog()"))
+    check("...and before torch is imported, so an out-of-window wakeup is free",
+          rsrc.index("within_trading_window(now)") < rsrc.index("import kronos_agent"))
+    check("an out-of-window firing is a no-op, not a refusal to trade later",
+          "outside the trading window — no-op" in rsrc)
     check("stops are verified by reading the venue back, not from our own send",
           "unprotected_positions" in inspect.getsource(execute_plan))
     check("exits are executed before entries",

@@ -12,36 +12,70 @@
         <string>/Users/kaloyanivanov/TradingBotApp/ftmo_runner.sh</string>
     </array>
 
-    <!-- NOT INSTALLED BY DEFAULT. This file is tracked so the schedule is
-         reviewable, but nothing loads it automatically. Install with:
+    <!-- Install with:
              cp com.tradingbotapp.ftmo.plist ~/Library/LaunchAgents/
              launchctl load ~/Library/LaunchAgents/com.tradingbotapp.ftmo.plist
          and remove it with `launchctl unload` on the same path.
 
-         ONE firing per day, at 01:15 local. The agreed FTMO cadence is a
-         DAILY rebalance with multi-day holds, and the signal is a 20-day
-         forecast off daily bars — running it hourly would re-decide a
-         20-day view 24 times a day and pay spread on sampling noise each
-         time. This project has already measured what that costs: Kronos's
-         per-run spread moves top-N membership when names sit close
-         together, and the rotation margin suppresses the churn rather than
-         making the re-decisions meaningful.
+         WAKES HOURLY AT :30, EVERY HOUR, EVERY DAY. This schedule is a
+         deliberate SUPERSET and is NOT the trading window. The window —
+         16:30 to 11:30 the next morning, every day except Sunday, Sofia time
+         (owner decision 2026-08-06) — is enforced by
+         `ftmo_runner.within_trading_window()`, and THAT is authoritative.
 
-         01:15 local (EEST/EET, UTC+3/+2) is 00:15 or 23:15 in Europe/Prague,
-         i.e. shortly after the FTMO day boundary that ftmo_rules uses. That
-         ordering matters: ftmo_runner.advance_state() rolls the day-start
-         balance and the trailing high-water mark off the previous day's
-         CLOSING balance, so firing just after the boundary means the roll
-         happens on settled numbers.
+         Why the rule is not encoded here. The window wraps midnight and
+         excludes one weekday, which in StartCalendarInterval means six
+         Weekday values x twenty Hour values = 120 dict entries that no one
+         will ever re-read correctly. It would also be expressed in whatever
+         the host's local timezone happens to be, whereas the runner resolves
+         `Europe/Sofia` explicitly through zoneinfo and therefore stays right
+         across the EEST/EET switch and across any change to the machine's
+         own timezone. `autotrade_runner.py` splits NYSE hours the same way
+         and for the same reason: the plist only has to be a superset, the
+         code decides.
 
-         It deliberately does NOT avoid FTMO's 23:55-00:05 Moscow maintenance
-         window by construction — 01:15 local is well clear of it, but the
-         venue stays the authority either way: a MARKET_CLOSED rejection is
-         journalled and the run ends without placing anything, which is the
-         correct outcome rather than something to schedule around. -->
+         Out-of-window wakeups are free by construction — the runner checks
+         the window before opening the audit log and long before importing
+         torch, so a wakeup outside 16:30-11:30 costs one settings read.
+         Roughly 20 of the 24 daily wakeups are in-window on Mon-Sat and none
+         are on Sunday.
+
+         The FTMO day boundary (00:00 Europe/Prague) falls at 01:00 Sofia,
+         inside the window, so the 01:30 firing is the first of each new FTMO
+         day and `advance_state()` rolls the day-start balance and trailing
+         high-water mark there, off the previous day's settled closing
+         balance.
+
+         FTMO's 23:55-00:05 Moscow maintenance window is deliberately NOT
+         scheduled around. The venue stays the authority: a MARKET_CLOSED
+         rejection is journalled and the run ends without placing anything,
+         which is the correct outcome rather than something to predict. -->
     <key>StartCalendarInterval</key>
     <array>
-        <dict><key>Hour</key><integer>1</integer><key>Minute</key><integer>15</integer></dict>
+        <dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>1</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>11</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>30</integer></dict>
     </array>
 
     <key>RunAtLoad</key>
