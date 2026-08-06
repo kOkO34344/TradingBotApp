@@ -47,16 +47,26 @@ import {
 
 export function FtmoKronosPanel() {
   const [state, setState] = useState<FtmoAutotradeState | null>(null);
+  const [stateError, setStateError] = useState<string | null>(null);
   const [job, setJob] = useState<Job<FtmoPlanResult> | null>(null);
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
+  // A failed fetch is tracked separately from "not loaded yet". Both leave
+  // `state` null, but they are different claims and the UI must not present
+  // either of them as "disarmed" — see the three-way branch on the button.
   const refresh = useCallback(() => {
     ftmo
       .autotrade()
-      .then(setState)
-      .catch(() => setState(null));
+      .then((s) => {
+        setState(s);
+        setStateError(null);
+      })
+      .catch((err) => {
+        setState(null);
+        setStateError(err instanceof ApiError ? err.message : String(err));
+      });
   }, []);
 
   useEffect(refresh, [refresh]);
@@ -147,7 +157,36 @@ export function FtmoKronosPanel() {
             </span>
           </Button>
 
-          {armed ? (
+          {/* Three states, not two. `state === null` means the arm status has
+              not loaded yet — it is NOT "off". Rendering "Autotrade off"
+              while the runner is armed is rule 1 in web/CLAUDE.md failing in
+              its most dangerous direction: you would read the screen as
+              "nothing is trading" while Kronos is placing orders every night.
+              This is the same distinction the stop-protection column makes
+              between unprotected and UNKNOWN. */}
+          {state === null ? (
+            <Button
+              size="sm"
+              variant="outline"
+              disabled
+              className="text-muted-foreground"
+              onClick={refresh}
+              title={
+                stateError
+                  ? `Could not read the arm status: ${stateError}`
+                  : "Asking the backend whether the runner is armed"
+              }
+            >
+              {stateError ? (
+                <AlertTriangle className="size-4 text-unknown" />
+              ) : (
+                <Loader2 className="size-4 animate-spin" />
+              )}
+              <span className="ml-1.5">
+                {stateError ? "Arm state unknown" : "Checking…"}
+              </span>
+            </Button>
+          ) : armed ? (
             <Button
               size="sm"
               variant="destructive"
@@ -162,14 +201,10 @@ export function FtmoKronosPanel() {
             <Button
               size="sm"
               variant="outline"
-              disabled={busy || state === null}
+              disabled={busy}
               onClick={() => setConfirmOpen(true)}
               className="text-muted-foreground"
-              title={
-                state === null
-                  ? "Waiting for the backend"
-                  : "Arm unattended Kronos trading on FTMO"
-              }
+              title="Arm unattended Kronos trading on FTMO"
             >
               <Power className="size-4" />
               <span className="ml-1.5">Autotrade off</span>
@@ -180,7 +215,9 @@ export function FtmoKronosPanel() {
 
       <p className="text-xs text-muted-foreground">
         {state === null ? (
-          "Waiting for the backend."
+          stateError
+            ? `Could not read whether the runner is armed (${stateError}). This is missing information, not "disarmed" — check ftmo_launchd.log or trader_settings.json.`
+            : "Waiting for the backend."
         ) : (
           <>
             {armed ? (
