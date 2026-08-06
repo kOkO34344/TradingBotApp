@@ -8,7 +8,7 @@ description: How the FTMO venue works in TradingBotApp — the rule engine, equi
 Five modules. `ftmo_rules.py` decides, `ftmo_monitor.py` watches,
 `ftmo_sizing.py` sizes, `ftmo_audit.py` records why, `ftmo_service.py` talks to
 the broker. Each has an offline `--selftest` needing no credentials and no
-network; 426 checks total as of 2026-08-06, across these five plus
+network; 451 checks total as of 2026-08-06, across these five plus
 `ftmo_session`, `ftmo_signal`, `ftmo_runner` and `trade_journal`.
 
 **Rule 9 in `CLAUDE.md` governs this venue and is not restated here — read it
@@ -241,8 +241,16 @@ The FTMO counterpart to `autotrade_runner.py`. Full operational detail is in
 CLAUDE.md's "FTMO autotrade" section; the parts that matter when touching the
 modules in this skill:
 
-- **It is ARMED as of 2026-08-06** and scheduled by `com.tradingbotapp.ftmo`
-  at 01:15 daily. This is no longer a thing that might run — it runs tonight.
+- **It is ARMED as of 2026-08-06** and scheduled by `com.tradingbotapp.ftmo`.
+  This is no longer a thing that might run — it runs.
+- **The launchd schedule is a SUPERSET, not the window.** launchd wakes it
+  hourly at :30 all day; the real window is 16:30-11:30 next morning, every
+  day except Sunday, Europe/Sofia, enforced by
+  `within_trading_window()` — that function is authoritative. The window
+  wraps midnight so it is a UNION (`t >= OPEN or t <= CLOSE`), never a range;
+  "except Sunday" applies to the Sofia calendar day, so Saturday evening runs
+  and Sunday morning does not. Checked before the audit log opens and before
+  torch is imported, so out-of-window wakeups are free.
 - It is armed by `ftmo.autotrade.enabled`, **its own toggle**. IBKR's
   `autotrade.enabled` cannot arm it, and there is a selftest asserting that.
   Disarm from `/ftmo`, or unload the launchd job.

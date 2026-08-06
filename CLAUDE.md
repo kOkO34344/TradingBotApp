@@ -121,9 +121,9 @@ File purposes are documented in each script's own module docstring
   orders, and `ftmo_smoke_order.py` proves the order path with one tiny trade.
   **`ftmo_runner.py` (2026-08-06) is the unattended runner** — the FTMO
   counterpart to `autotrade_runner.py`, armed by its own separate toggle.
-  **426 offline checks, measured 2026-08-06** across the nine modules that
-  carry a `--selftest`: `ftmo_rules` 70, `ftmo_sizing` 72, `ftmo_monitor` 63,
-  `ftmo_audit` 48, `ftmo_service` 43, `ftmo_session` 40, `ftmo_runner` 38,
+  **451 offline checks, measured 2026-08-06** across the nine modules that
+  carry a `--selftest`: `ftmo_sizing` 72, `ftmo_rules` 70, `ftmo_monitor` 63,
+  `ftmo_runner` 63, `ftmo_audit` 48, `ftmo_service` 43, `ftmo_session` 40,
   `ftmo_signal` 26, `trade_journal` 26. (`ftmo_smoke_order.py` has no
   `--selftest` — it is a live one-trade proof, and its dry-run is the check.)
   Note `ftmo_audit`'s selftest deliberately prints `AUDIT WRITE FAILED` to
@@ -667,12 +667,40 @@ from `initial_capital`, which would invent a loss on an account that had
 already traded and could block trading on the spot.
 
 **ARMED AND SCHEDULED since 2026-08-06.** `ftmo.autotrade.enabled` is `true`
-and `com.tradingbotapp.ftmo` is loaded, firing **01:15 local, once per day**
-(`ftmo_launchd.log`). One firing per day and not hourly: the agreed cadence is
-a daily rebalance on a 20-day forecast, and firing hourly would re-decide a
-20-day view 24 times a day and pay spread on sampling noise each time. 01:15
-local sits just after the Europe/Prague day boundary, so `advance_state()`
-rolls on settled numbers.
+and `com.tradingbotapp.ftmo` is loaded (`ftmo_launchd.log`).
+
+**The schedule and the trading window are two different things — do not
+conflate them.** launchd wakes the runner **hourly at :30, all 24 hours, every
+day**. That is a deliberate SUPERSET. The actual window is **16:30 to 11:30 the
+next morning, every day except Sunday, Europe/Sofia** (owner decision
+2026-08-06, revised from a single 01:15 firing), and it is enforced by
+`ftmo_runner.within_trading_window()`, which is authoritative.
+
+The rule is not encoded in the plist because it wraps midnight and excludes one
+weekday — 6 weekdays x 20 hours = 120 `StartCalendarInterval` entries nobody
+will re-read correctly — and because a plist expresses whatever the host's
+local timezone happens to be, while the runner resolves `Europe/Sofia` through
+`zoneinfo` and stays right across the EEST/EET switch. `autotrade_runner.py`
+splits NYSE hours the same way and for the same reason.
+
+Two properties that make this safe at ~20 firings a day:
+
+- **The window is checked before the audit log opens and long before torch is
+  imported**, so an out-of-window wakeup costs one settings read. Selftested.
+- **The window WRAPS midnight, so it is a union, not a range.** `OPEN <= t <=
+  CLOSE` would be empty for every `t` — the obvious way to get this silently
+  wrong. "Except Sunday" applies to the CALENDAR day in Sofia, so Saturday's
+  evening leg runs and Sunday's morning leg does not.
+
+Firing hourly on a 20-day forecast is against the cadence this project
+documented, and it was chosen anyway with that stated: the rotation margin
+suppresses churn between runs, but ~20 re-decisions a day is ~30 min of GPU
+and more chances to pay spread on sampling noise. The daily-rebalance rationale
+has not been disproved — it was overridden.
+
+01:00 Sofia is the Europe/Prague day boundary, so the **01:30 firing is the
+first of each new FTMO day** and `advance_state()` rolls there, off settled
+numbers.
 
 To disarm: the control on `/ftmo`, or set `ftmo.autotrade.enabled` false. To
 stop the schedule:
