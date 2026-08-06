@@ -102,7 +102,16 @@ File purposes are documented in each script's own module docstring
   (streaming quotes, trendbars, orders — `ftmo_service` is one-shot and cannot
   trade), `ftmo_signal.py` turns a Kronos ranking into sized stop-protected
   orders, and `ftmo_smoke_order.py` proves the order path with one tiny trade.
-  **374 offline checks across the eight.**
+  **`ftmo_runner.py` (2026-08-06) is the unattended runner** — the FTMO
+  counterpart to `autotrade_runner.py`, armed by its own separate toggle.
+  **426 offline checks, measured 2026-08-06** across the nine modules that
+  carry a `--selftest`: `ftmo_rules` 70, `ftmo_sizing` 72, `ftmo_monitor` 63,
+  `ftmo_audit` 48, `ftmo_service` 43, `ftmo_session` 40, `ftmo_runner` 38,
+  `ftmo_signal` 26, `trade_journal` 26. (`ftmo_smoke_order.py` has no
+  `--selftest` — it is a live one-trade proof, and its dry-run is the check.)
+  Note `ftmo_audit`'s selftest deliberately prints `AUDIT WRITE FAILED` to
+  stderr while testing an unwritable path; that is a passing test, not a
+  failure — do not let a grep for "FAILED" convince you otherwise.
   **Read the `ftmo` skill before touching any of them** — it carries the agreed
   configuration, the derived dollar limits, and the invariants that are easy to
   break. The one to know without opening anything: every FTMO limit is measured
@@ -128,6 +137,15 @@ File purposes are documented in each script's own module docstring
   **no credential has ever been committed**, and this move was reorganisation,
   not leak cleanup. If one ever does leak, rotate it at the provider — moving
   or rewriting history does not recall a value that reached a commit.
+- **`trade_journal.py` is the SINGLE SOURCE OF TRUTH for the journal's column
+  set** (rule 6), including the `venue` column and its self-healing migration.
+  Extracted from `ibkr_service` on 2026-08-06 because an FTMO order has to be
+  journalled too, and importing the IBKR adapter — and `ib_async` with it — to
+  record a trade on a broker it never talks to is the wrong dependency.
+  `ibkr_service.journal()` keeps its signature and its Telegram alerting and
+  delegates the write, so there is still exactly one writer. Has a
+  `python3 trade_journal.py --selftest` offline check and a `--describe`.
+
 - `indicators.py` is the SINGLE SOURCE OF TRUTH for technical math, shared by
   trader_app charts and research_agent prompts (human and AI see identical
   numbers). It has `--selftest`. Never reimplement indicators elsewhere —
@@ -298,6 +316,15 @@ after testing it properly.
   the margin only stops us paying spread to act on noise, and a genuinely
   beaten incumbent is still dropped. First live check 2026-08-02: gap was
   1.62 pt (wider than the margin), so the proposal was unchanged.
+  **Confirmed again on the FTMO universe, 2026-08-06.** Two runs ~10 minutes
+  apart on the same 14 symbols moved individual predictions materially —
+  SOLUSD +17.64% → +25.15%, LTCUSD +16.12% → +12.05%, NATGAS +24.94% →
+  +25.71% — and reordered ranks 2/3. The selected top-4 SET was identical
+  both times, but only because the rank-4/5 gap was 8.4 then 11.9 points,
+  far wider than the movement. That is the documented behaviour holding on a
+  new asset universe: **top-N is stable when the boundary gap is wide
+  relative to the sampling spread, and a coin flip when it is not.** Read the
+  gap, not the ranking.
 
 ## Current phase status
 
@@ -538,8 +565,10 @@ hole exactly where the unattended closes are.
      `stopLoss 61,784.01 protected: True`, closed, account flat again.
      `ftmo_smoke_order.py --confirm` reruns it. The whole FTMO risk model
      rested on this and it is no longer an assumption.
-   - Migrate `trade_journal.csv` to add the `venue` column — see the gotcha
-     about the header/row misalignment before doing it.
+   - ~~Migrate `trade_journal.csv` to add the `venue` column~~ — DONE
+     2026-08-06, in the writer (`trade_journal.py`) rather than as a one-shot
+     script, so a half-applied migration cannot silently misalign the audit
+     trail. See the gotcha for the mechanism.
    - **IC screens: DONE for indices and FX, both FAILED (2026-08-03).** See the
      screen table under Empirical findings. Neither class may be enabled — and
      note this is now a measured refusal, not a missing-evidence one, so
@@ -550,9 +579,18 @@ hole exactly where the unattended closes are.
      below can still be BUILT, but it has no class it may fire on, and that
      gap must be closed with evidence rather than with a config change.
      Re-run with `./run_notify.sh KronosAI/kronos_ic_assetclass.py`.
-   - Build the signal→order path, then an integration pass driving all five
-     modules together. **The one real bug found so far surfaced that way, not
-     from unit tests** — see the `ftmo` skill.
+   - ~~Build the signal→order path, then an integration pass driving all five
+     modules together~~ — DONE 2026-08-06. `ftmo_runner.py` drives the whole
+     spine and was verified end to end against the live venue in dry-run:
+     14/14 symbols passed the bar/quote scaling cross-check, Kronos forecast in
+     ~90s, the rule engine returned OPEN OK, and the sizer produced four
+     entries totalling **$994.71** of risk — inside the $1,000 daily soft
+     limit, which is the portfolio cap working. **Nothing was placed.**
+     Still true that integration is where the real bugs surface: the 1000x
+     trendbar scaling bug came from a run like this, not from unit tests.
+   - **The unattended path is BUILT but the schedule is NOT installed.**
+     `com.tradingbotapp.ftmo.plist` is tracked and reviewable; loading it is a
+     deliberate act (see the FTMO autotrade section).
 
 ## Autotrade (experimental, unattended) — `autotrade_runner.py`
 
@@ -560,6 +598,64 @@ Unattended hourly rebalancing, off by default. Rule 7 above governs it.
 Operational detail (toggle, schedule, signal, execution, notifications,
 how to disable) lives in the **`autotrade` skill** — read it before touching
 `autotrade_runner.py` or `autotrade_signals.py`.
+
+## FTMO autotrade (unattended) — `ftmo_runner.py`
+
+Kronos deciding and executing on FTMO with no approval step. Rule 9 governs it,
+and it is the **third deliberate exception to rule 5** — flag it that way.
+
+**Armed by its own toggle, deliberately separate from IBKR's.**
+`trader_settings.json` → `ftmo.autotrade.enabled`, or the arm/disarm control on
+the `/ftmo` screen. A missing key reads as OFF, and IBKR's `autotrade.enabled`
+CANNOT arm it — there is a selftest asserting exactly that. The two venues have
+different brokers and different limit models; one switch covering both would
+mean you could not reason about FTMO without also reasoning about a retired
+venue. The FTMO switch is also **not gated on IB Gateway's health**, unlike the
+header kill switch, because a dead Gateway has nothing to do with FTMO and a
+switch you cannot reach when things are going wrong is not a switch.
+
+The cycle, once per invocation: connect → positions and balance → rule engine →
+FTMO's own daily bars → Kronos → rank → plan → **exits, then entries** → verify
+every stop by reading the venue back → journal + audit + text.
+
+Four properties not to regress:
+
+1. **FLATTEN is decided before any forecast runs**, and `flatten_all()` has no
+   rule engine, sizer or limit in front of it. Rule 3: a limit caps NEW
+   exposure, and blocking an exit raises risk. Each close is attempted
+   independently so one failure cannot strand the rest.
+2. **An equity it cannot fully price is not an equity it trades on.** Any
+   position without a quote blocks new entries rather than being marked flat.
+3. **Stops are verified by reading the venue back**, never from the fact that
+   an order was sent. A rejected cTrader order arrives as an event, not an
+   error response — the first live FTMO order was refused while the code
+   reported `{'sent': True}`.
+4. **torch is imported only after the enabled check**, so a disarmed firing is
+   a cheap settings read rather than a 2 GB model load.
+
+**`ftmo_runner_state.json` is why the daily limit works at all.** The FTMO
+daily limit is measured against the balance at 00:00 CE(S)T and the 1-Step
+trailing floor moves off a completed day's CLOSING balance; a one-shot script
+cannot know either without remembering. Without this file the limit would
+evaluate against the current balance every run — a daily loss of 0.00 forever,
+i.e. a limit that can never trip. It is gitignored: it belongs to THIS
+machine's account, and a checkout elsewhere inheriting a day-start balance from
+an account it is not connected to is exactly how the limit would evaluate
+against a fiction. The first run seeds day-start from the **live balance**, not
+from `initial_capital`, which would invent a loss on an account that had
+already traded and could block trading on the spot.
+
+**The schedule is NOT installed.** `com.tradingbotapp.ftmo.plist` is tracked so
+it is reviewable; `cp` it to `~/Library/LaunchAgents/` and `launchctl load` it
+deliberately. One firing per day at 01:15 local — the agreed cadence is a daily
+rebalance on a 20-day forecast, and firing hourly would re-decide a 20-day view
+24 times a day and pay spread on sampling noise each time. 01:15 local sits
+just after the Europe/Prague day boundary, so `advance_state()` rolls on
+settled numbers.
+
+Preview without arming anything: the "Preview plan" button on `/ftmo`, or
+`python3 ftmo_runner.py --force --dry-run`. Both run the identical pipeline and
+place nothing.
 
 ## Phone notifications (TelegramBot/) — use this for anything long-running
 
@@ -679,16 +775,23 @@ sections close to verbatim, so keep those reasonably current.
   `DropdownMenuGroup`. Both shipped in the web UI and were only found by
   opening the menu. After touching any shadcn component, click it in the
   browser — `tsc` clean means very little here. Full list in `web/CLAUDE.md`.
-- **Adding the `venue` column to `trade_journal.csv` needs a deliberate
-  migration — do NOT just extend `JOURNAL_COLUMNS`.** `journal()` writes the
-  header only when the file does not exist, so the live journal keeps its
-  11-column header while new rows would carry 12 values. Every reader uses
-  `csv.DictReader` (`api/journal_api.py`, `daily_digest.py`), which would put
-  the 12th value under the `None` restkey and never surface `venue` at all —
-  silently, with no error. The migration is lossless (every existing row is an
-  IBKR row) but it rewrites an append-only audit file, so it wants a backup and
-  a verified read-back, not a drive-by edit. Not needed until the first FTMO
-  order is journalled. Identified 2026-08-02 while building `ftmo_audit.py`.
+- **The `venue` column migration is DONE (2026-08-06) and lives in the
+  writer.** Kept here because the trap is the reusable part: `journal()` wrote
+  the header only when the file did not exist, so extending `JOURNAL_COLUMNS`
+  alone would have appended 12-value rows under an 11-column header, and every
+  reader is a `csv.DictReader` — which drops the extra value into the `None`
+  restkey and reports NO error. Silent corruption, in the one file rule 6
+  makes the audit trail.
+  `trade_journal.py` now owns the column set and migrates once, in place,
+  before appending. It is self-healing rather than a script you must remember
+  to run first, for the same reason `secrets_store.resolve()` falls back to the
+  legacy paths: both writers are unattended, so a half-applied migration must
+  degrade to "still works". It backs up, verifies the read-back field-by-field
+  BEFORE replacing the original, refuses a header it does not recognise, and is
+  idempotent. Verified against a copy of the real journal: 46 rows identical
+  across all 11 original columns, all backfilled `venue=ibkr`, no restkey leak.
+  `append()` REQUIRES an explicit venue — an unlabelled row cannot be
+  reconciled against either broker later.
 - **cTrader `CH_CLIENT_AUTH_FAILURE: OA client is not in active state` is not a
   credential typo.** It means the Open API application itself is still in
   `Submitted` state at openapi.ctrader.com/apps and has not been approved to

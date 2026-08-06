@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tradingbotapp.ftmo</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>/Users/kaloyanivanov/TradingBotApp/ftmo_runner.sh</string>
+    </array>
+
+    <!-- NOT INSTALLED BY DEFAULT. This file is tracked so the schedule is
+         reviewable, but nothing loads it automatically. Install with:
+             cp com.tradingbotapp.ftmo.plist ~/Library/LaunchAgents/
+             launchctl load ~/Library/LaunchAgents/com.tradingbotapp.ftmo.plist
+         and remove it with `launchctl unload` on the same path.
+
+         ONE firing per day, at 01:15 local. The agreed FTMO cadence is a
+         DAILY rebalance with multi-day holds, and the signal is a 20-day
+         forecast off daily bars — running it hourly would re-decide a
+         20-day view 24 times a day and pay spread on sampling noise each
+         time. This project has already measured what that costs: Kronos's
+         per-run spread moves top-N membership when names sit close
+         together, and the rotation margin suppresses the churn rather than
+         making the re-decisions meaningful.
+
+         01:15 local (EEST/EET, UTC+3/+2) is 00:15 or 23:15 in Europe/Prague,
+         i.e. shortly after the FTMO day boundary that ftmo_rules uses. That
+         ordering matters: ftmo_runner.advance_state() rolls the day-start
+         balance and the trailing high-water mark off the previous day's
+         CLOSING balance, so firing just after the boundary means the roll
+         happens on settled numbers.
+
+         It deliberately does NOT avoid FTMO's 23:55-00:05 Moscow maintenance
+         window by construction — 01:15 local is well clear of it, but the
+         venue stays the authority either way: a MARKET_CLOSED rejection is
+         journalled and the run ends without placing anything, which is the
+         correct outcome rather than something to schedule around. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Hour</key><integer>1</integer><key>Minute</key><integer>15</integer></dict>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/kaloyanivanov/TradingBotApp/ftmo_launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/kaloyanivanov/TradingBotApp/ftmo_launchd.log</string>
+</dict>
+</plist>

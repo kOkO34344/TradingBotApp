@@ -8,7 +8,8 @@ description: How the FTMO venue works in TradingBotApp — the rule engine, equi
 Five modules. `ftmo_rules.py` decides, `ftmo_monitor.py` watches,
 `ftmo_sizing.py` sizes, `ftmo_audit.py` records why, `ftmo_service.py` talks to
 the broker. Each has an offline `--selftest` needing no credentials and no
-network; 259 checks total.
+network; 426 checks total as of 2026-08-06, across these five plus
+`ftmo_session`, `ftmo_signal`, `ftmo_runner` and `trade_journal`.
 
 **Rule 9 in `CLAUDE.md` governs this venue and is not restated here — read it
 first.** Every module's own docstring carries its full rationale; this file is
@@ -222,9 +223,38 @@ asserting no accepted size ever exceeds the budget.
 Note `ProtoOASymbolsListReq` returns only `ProtoOALightSymbol` and carries no
 volume or lot data at all — the specs come from `ProtoOASymbolByIdReq`.
 
-### Still unverified
+### Server-side stops: VERIFIED 2026-08-05
 
-**That server-side stops attach at entry as assumed.** It cannot be checked
-read-only, so it is the first thing the order path must prove. Note also that
-all four asset classes failed their IC screen (rule 9), so the path may be
-built but has nothing it is cleared to fire on.
+This used to be the venue's one load-bearing assumption. It is not an
+assumption any more. `ftmo_smoke_order.py --confirm` placed one real
+minimum-size trade on the live trial (BTCUSD, position 9822997, 0.01 units,
+risk $29.72), read it back as `stopLoss 61,784.01  protected: True`, closed it,
+and left the account flat — $0.40 of spread for the whole proof. Re-run it any
+time the order path changes.
+
+It still remains true that all four asset classes failed their IC screen
+(rule 9), so the path works and has no class with measured edge to fire on.
+
+## The unattended runner — `ftmo_runner.py` (2026-08-06)
+
+The FTMO counterpart to `autotrade_runner.py`. Full operational detail is in
+CLAUDE.md's "FTMO autotrade" section; the parts that matter when touching the
+modules in this skill:
+
+- It is armed by `ftmo.autotrade.enabled`, **its own toggle**. IBKR's
+  `autotrade.enabled` cannot arm it, and there is a selftest asserting that.
+- It calls `ftmo_signal.plan_orders()` — and so does the web preview
+  (`api/ftmo_api.plan`). Keep it that way. The moment the browser computes a
+  rank, a size or a stop of its own, there are two implementations of the risk
+  maths and one will eventually be wrong.
+- `ftmo_runner_state.json` carries the day-start balance and trailing
+  high-water mark between one-shot invocations. **Without it the daily limit
+  evaluates against the current balance every run and can never trip.** If you
+  change `AccountState`'s fields, change `RunnerState` with them.
+- FLATTEN is decided before any forecast runs, and `flatten_all()` has no rule
+  engine, sizer or limit in front of it (rule 3).
+
+Verified end to end against the live venue in dry-run on 2026-08-06: 14/14
+symbols passed `assert_bars_match_quote`, Kronos forecast in ~90s, rule engine
+OPEN OK, four entries sized to $994.71 total risk — inside the $1,000 daily
+soft limit. Nothing was placed.

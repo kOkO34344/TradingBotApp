@@ -710,6 +710,56 @@ async def ftmo_bars(symbol: str, period: str = "D1", count: int = 300):
         raise HTTPException(status_code=502, detail=str(e))
 
 
+class FtmoAutotradeToggle(BaseModel):
+    enabled: bool
+
+
+@app.get("/api/ftmo/autotrade")
+async def ftmo_autotrade_state():
+    """Whether the FTMO runner is armed, and what it would run with."""
+    return await run_in_threadpool(ftmo_api.autotrade_state)
+
+
+@app.post("/api/ftmo/autotrade")
+async def ftmo_set_autotrade(payload: FtmoAutotradeToggle):
+    """Arm or disarm unattended Kronos trading on FTMO.
+
+    Independent of the IBKR kill switch and of IB Gateway's health. Rule 9
+    retired IBKR for new orders, so gating this venue's switch on a dead
+    Gateway would make it impossible to disarm FTMO for a reason that has
+    nothing to do with FTMO — and a switch you cannot reach when things are
+    going wrong is not a switch.
+    """
+    try:
+        return await run_in_threadpool(ftmo_api.set_autotrade, payload.enabled)
+    except Exception as exc:                                  # noqa: BLE001
+        raise HTTPException(status_code=500,
+                            detail=f"Could not change FTMO autotrade: {exc}")
+
+
+@app.post("/api/ftmo/plan")
+async def ftmo_plan(sampleCount: int | None = None):
+    """Start a job computing what Kronos would trade on FTMO right now.
+
+    Read-only: it runs the identical pipeline the unattended runner uses and
+    stops before placing anything. One at a time, for the same reason the
+    Kronos route refuses concurrent runs — two batch inferences on this
+    machine produce results that look comparable but were computed under
+    different load.
+    """
+    existing = jobs.registry.running("ftmo-plan")
+    if existing:
+        raise HTTPException(
+            status_code=409,
+            detail=f"An FTMO plan is already in progress (job {existing[0].id}).")
+    job = jobs.registry.submit(
+        "ftmo-plan",
+        lambda ctx: ftmo_api.plan(ctx, sample_count=sampleCount),
+        params={"sampleCount": sampleCount},
+    )
+    return job.as_dict()
+
+
 @app.websocket("/ws/ftmo")
 async def ftmo_stream(ws: WebSocket):
     """Push the FTMO snapshot on a timer.
