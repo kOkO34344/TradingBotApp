@@ -33,6 +33,8 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from pathlib import Path
 
+import trade_journal as tj
+
 from ib_async import (IB, Stock, Forex, Future, Crypto,
                       MarketOrder, LimitOrder, StopOrder, util)
 
@@ -191,23 +193,33 @@ def market_price(ib: IB, contract) -> float:
 
 # ---------------------------------------------------------------- journal
 
-JOURNAL_COLUMNS = ["timestamp", "event", "symbol", "sec_type", "action", "quantity",
-                   "price", "stop", "target", "status", "detail"]
+# The column set moved to `trade_journal.py` when rule 9 added a second venue:
+# an FTMO order has to be journalled too, and importing this module (and with
+# it ib_async) to record a trade on a broker it never talks to would be the
+# wrong dependency. Re-exported so existing callers and the selftest below keep
+# working against one definition rather than a copy.
+JOURNAL_COLUMNS = tj.JOURNAL_COLUMNS
 
 
 def journal(event: str, contract=None, action: str = "", quantity: float = "",
             price="", stop="", target="", status: str = "", detail: str = "",
-            path: Path = JOURNAL_FILE) -> None:
+            path: Path = JOURNAL_FILE, venue: str = "ibkr") -> None:
     """Append one row to the trade journal. Every attempt, block and fill
-    goes here — if it isn't in the journal, it didn't happen."""
-    new = not path.exists()
-    with open(path, "a", newline="") as f:
-        w = csv.writer(f)
-        if new:
-            w.writerow(JOURNAL_COLUMNS)
-        w.writerow([datetime.now().isoformat(timespec="seconds"), event,
-                    getattr(contract, "symbol", ""), getattr(contract, "secType", ""),
-                    action, quantity, price, stop, target, status, detail])
+    goes here — if it isn't in the journal, it didn't happen.
+
+    `venue` defaults to "ibkr" because every caller of THIS function is an
+    IBKR path; the FTMO side calls `trade_journal.append()` directly. The
+    write itself (including the one-time `venue` column migration) belongs to
+    `trade_journal`, so both venues cannot drift apart on the schema."""
+    tj.append(path, {
+        "timestamp": datetime.now().isoformat(timespec="seconds"),
+        "event": event,
+        "symbol": getattr(contract, "symbol", ""),
+        "sec_type": getattr(contract, "secType", ""),
+        "action": action, "quantity": quantity, "price": price,
+        "stop": stop, "target": target, "status": status, "detail": detail,
+        "venue": venue,
+    })
 
     # Real events (not the --selftest run against a temp journal path) that are
     # exactly the "something needs my attention" case worth a phone alert.
