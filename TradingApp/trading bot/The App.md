@@ -7,6 +7,18 @@ last_synced: 2026-07-21
 
 # Trading Bot Project — Overview
 
+> [!note] 2026-08-06 — the FTMO venue is armed and has a UI
+> Nine FTMO modules now sit alongside the existing app with 426 offline
+> selftests. The `/ftmo` screen gained a **Kronos → orders** panel: an
+> arm/disarm control and a "Preview plan" button that runs the identical
+> pipeline the unattended runner uses and stops before placing anything.
+>
+> The preview calls the same `ftmo_signal.plan_orders()` the runner calls, so
+> the browser and the 01:15 firing cannot propose different orders. Nothing in
+> the frontend ranks, sizes or computes a stop — the moment it did, there would
+> be two implementations of the risk maths and one would eventually be wrong.
+> Same reasoning as the backend being a thin wrapper over `ibkr_service`.
+
 > [!note] 2026-08-02 — FTMO is now the trading venue
 > Five new modules (`ftmo_rules`, `ftmo_monitor`, `ftmo_sizing`, `ftmo_audit`,
 > `ftmo_service`) sit alongside the existing app, with 259 offline selftests.

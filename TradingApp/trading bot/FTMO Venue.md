@@ -1,8 +1,8 @@
 ---
 tags: [ftmo, execution, infrastructure, risk, prop-firm]
-status: "In progress — CONNECTED to the venue 2026-08-05; no asset class cleared to trade (all four failed IC)"
-source: ftmo_rules.py, ftmo_monitor.py, ftmo_sizing.py, ftmo_audit.py, ftmo_service.py
-last_updated: 2026-08-05
+status: "LIVE AND ARMED 2026-08-06 — unattended Kronos trading, launchd 01:15 daily. No asset class passed its IC screen; running anyway is a recorded exception to rule 5."
+source: ftmo_rules.py, ftmo_monitor.py, ftmo_sizing.py, ftmo_audit.py, ftmo_service.py, ftmo_session.py, ftmo_signal.py, ftmo_runner.py, trade_journal.py
+last_updated: 2026-08-06
 ---
 
 # FTMO Venue
@@ -97,10 +97,17 @@ The Challenge account is **simulated**, so this does not breach the
 paper-before-real-money rule. The real exposure is the entry fee. Phase 4 (real
 capital on IBKR) stays locked.
 
-## The five modules
+## The modules
 
-All pure-logic except the last, all with offline `--selftest` needing no
-credentials and no network. **294 checks total.**
+All pure-logic except the transport ones, all with offline `--selftest` needing
+no credentials and no network. **426 checks total** as of 2026-08-06:
+`ftmo_rules` 70, `ftmo_sizing` 72, `ftmo_monitor` 63, `ftmo_audit` 48,
+`ftmo_service` 43, `ftmo_session` 40, `ftmo_runner` 38, `ftmo_signal` 26,
+`trade_journal` 26.
+
+> [!warning] `ftmo_audit`'s selftest prints `AUDIT WRITE FAILED` to stderr on
+> purpose, while testing an unwritable path. That is a **passing** test. Do not
+> let a grep for "FAILED" convince you the suite is broken — it fooled me once.
 
 - **`ftmo_rules.py`** — the decision. Answers three questions that must never
   be conflated: may I OPEN, must I FLATTEN, could this phase PASS. The third is
@@ -113,6 +120,14 @@ credentials and no network. **294 checks total.**
   recording *why* a decision was allowed. `trade_journal.csv` records what was
   done; this records the reasoning behind it.
 - **`ftmo_service.py`** — the broker. cTrader Open API, OAuth, read-only probe.
+  One-shot: it **cannot trade**.
+- **`ftmo_session.py`** — the long-lived connection. Streaming quotes,
+  trendbars, orders. This is the one that can actually place something.
+- **`ftmo_signal.py`** — turns a Kronos ranking into sized, stop-protected
+  orders. The join between the research side and the venue side.
+- **`ftmo_runner.py`** — the unattended runner. See below.
+- **`trade_journal.py`** — the journal's column set and the `venue` column,
+  shared with the IBKR side so both venues cannot drift apart on the schema.
 
 ## Three things worth remembering
 
@@ -185,32 +200,143 @@ Worth noting for anyone reading the code: `ProtoOASymbolsListReq` returns only
 *light* symbols and carries no volume or lot data at all. The numbers that
 matter come from `ProtoOASymbolByIdReq`.
 
-## What the venue is cleared to trade: nothing
+## What the evidence says the venue may trade: nothing
 
 All four asset classes were IC-screened on 2026-08-03 and **all four failed** —
-see [[Kronos Research Agent]] for the table. That is the gate working exactly as
-designed: it refused before an order was placed and before the venue was even
-reachable.
+see [[Kronos Research Agent]] for the table. The matched momentum baseline
+failed all four as well, so this is not Kronos losing to a better alternative:
+nothing works on any of these classes at this cadence.
 
-The signal→order path can still be *built*. It has no class it may fire on, and
-that gap closes with evidence, not with a config change.
+Until 2026-08-06 that gate held and the venue traded nothing. **It is now
+trading anyway**, by explicit owner decision — see the third-exception section
+above. The gate was not overridden by a config change or quietly re-run until
+something passed; it was overridden knowingly, with the evidence stated, and
+that is the honest way to record it.
 
-## Still unverified
+The traded basket is USD-quoted only, 14 symbols across all four classes. On
+the runs so far the selection has been three crypto plus natural gas — a
+concentrated, high-volatility set, which is what ranking a mixed universe by
+predicted return produces when crypto is the volatile end of it.
 
-**That server-side stops attach at entry as assumed.** It cannot be checked
-read-only, so it is the first thing the order path must prove. This matters more
-than usual here: the whole risk model assumes a stop is sitting at the venue,
-and this venue can fail the account on floating P&L alone.
+## Server-side stops: VERIFIED 2026-08-05
+
+This was the venue's one load-bearing assumption and it is now settled.
+`ftmo_smoke_order.py --confirm` placed one real minimum-size trade on the live
+trial and read it back from the venue:
+
+```
+position 9822997  BTCUSD BUY 0.01u
+entry 64,755.88   stopLoss 61,784.01   protected: True
+placed -> read back -> closed -> flat.   cost $0.40 of spread
+```
+
+The whole risk model rested on this. Forty cents was a cheap price for turning
+an assumption into a fact.
+
+## Armed and unattended — 2026-08-06
+
+`ftmo_runner.py` is the unattended path: connect → rule engine → FTMO's own
+daily bars → Kronos → rank → plan → **exits, then entries** → verify every stop
+by reading the venue back → journal + audit + Telegram.
+
+It is **armed** (`ftmo.autotrade.enabled = true`) and scheduled via
+`com.tradingbotapp.ftmo` at **01:15 local, once per day**. Not hourly: the
+cadence is a daily rebalance on a 20-day forecast, and firing hourly would
+re-decide a 20-day view 24 times a day and pay spread on sampling noise each
+time. 01:15 local sits just after the Europe/Prague FTMO day boundary, so the
+day-start balance rolls on settled numbers.
+
+Verified end to end in dry-run before arming, placing nothing: 14/14 symbols
+passed the bar/quote scaling cross-check, Kronos forecast in ~90s, rule engine
+OPEN OK, four entries totalling **$994.71** of risk — inside the $1,000 daily
+soft limit. That is the portfolio cap working, not a coincidence.
+
+Four properties not to regress:
+
+1. **FLATTEN is decided before any forecast runs**, and `flatten_all()` has no
+   rule engine, sizer or limit in front of it. A limit caps NEW exposure;
+   blocking an exit raises risk. This project already made the opposite
+   mistake — see [[Risk Management System]].
+2. **An equity it cannot fully price is not an equity it trades on.** A
+   position with no quote blocks new entries rather than being marked flat.
+3. **Stops are verified by reading the venue back**, never from the fact that
+   an order was sent. A rejected cTrader order arrives as an *event*, not an
+   error response — the first live FTMO order was refused while the code
+   cheerfully reported `{'sent': True}`.
+4. **torch imports only after the enabled check**, so a disarmed firing is a
+   cheap settings read rather than a 2 GB model load.
+
+### `ftmo_runner_state.json` is why the daily limit works at all
+
+The FTMO daily limit is measured against the balance at 00:00 CE(S)T, and the
+1-Step trailing floor moves off a completed day's *closing* balance. A one-shot
+script cannot know either without remembering. Without this file the limit
+would evaluate against the current balance every run — a daily loss of 0.00
+forever, i.e. **a limit that can never trip**.
+
+It is gitignored deliberately: it belongs to *this* machine's account, and a
+checkout elsewhere inheriting a day-start balance from an account it is not
+connected to is exactly how the limit would evaluate against a fiction. The
+first run seeds day-start from the **live balance**, not from
+`initial_capital` — seeding $25,000 onto a $24,300 balance would invent a $700
+loss that never happened and could block trading on the spot.
+
+## This is the THIRD exception to the evidence rule
+
+Rule 5 says autonomy is earned by graded evidence. The exceptions, in order:
+
+1. `autotrade_runner.py` — see [[Autotrade (Experimental)]]
+2. the FTMO path running fully unattended (rule 9)
+3. **Kronos actually firing on FTMO with no class having passed a screen**
+
+All four asset classes were IC-screened on 2026-08-03 and all four failed
+(|t| ≤ 1.55 in every direction); the matched momentum baseline failed all four
+too. The original condition was "Kronos may only trade a class that passed its
+own IC screen". **No class passed, and it is trading anyway**, on the owner's
+explicit instruction of 2026-08-05 given with the evidence stated first.
+
+Record it that way. It is not precedent and it is not a validated strategy.
+What autonomy removes is the human approval step — never a limit.
 
 ## Next steps
 
 1. ~~`--authorize` then `--probe`~~ — done 2026-08-05, both pass.
 2. ~~Bind real symbol specs~~ — done 2026-08-05, see above.
-3. Prove server-side stops attach at entry (needs a real order).
-4. Migrate `trade_journal.csv` to add a `venue` column (there is a header
-   misalignment trap — see the code notes).
-5. Build the signal→order path, then an integration pass across all five
-   modules. **No class may be enabled until one passes a screen.**
+3. ~~Prove server-side stops attach at entry~~ — done 2026-08-05, PASSED.
+4. ~~Migrate `trade_journal.csv` to add a `venue` column~~ — done 2026-08-06;
+   the migration lives in the writer and self-heals, see below.
+5. ~~Build the signal→order path and drive all the modules together~~ — done
+   2026-08-06, `ftmo_runner.py`, verified live in dry-run.
+6. **Watch the first real firings.** Nothing here has ever placed an order
+   unattended. Check `ftmo_launchd.log`, the Telegram messages, and the
+   `venue=ftmo` rows in `trade_journal.csv` after 01:15.
+7. The evidence gap is unchanged and is now the *only* thing outstanding: no
+   class has measured edge. Closing it needs research cycles, not code.
+
+## The `venue` column, and the silent corruption it nearly caused
+
+`trade_journal.csv` had to gain a `venue` column before an FTMO order could be
+recorded at all (rule 6). The trap is worth remembering because nothing would
+have complained:
+
+`journal()` wrote the header **only when the file did not exist**. So extending
+the column list alone would have appended 12-value rows under an 11-column
+header — and every reader is a `csv.DictReader`, which quietly drops the extra
+value into the `None` restkey and **reports no error**. Silent corruption, in
+the one file the project's whole audit trail depends on.
+
+The fix puts the migration in the writer (`trade_journal.py`), running once, in
+place, before appending. Self-healing rather than "remember to run the script
+first" — same reasoning as `secrets_store.resolve()` falling back to the legacy
+paths: both writers are unattended, so a half-applied migration must degrade to
+"still works". It backs up, verifies the read-back field-by-field *before*
+replacing the original, refuses a header it does not recognise, and is
+idempotent.
+
+Run against the live journal 2026-08-06: 46 rows, every one identical across
+all 11 original columns, all backfilled `venue=ibkr`, no restkey leak,
+`api/journal_api.py` still reading it. `append()` now **requires** an explicit
+venue — an unlabelled row cannot be reconciled against either broker later.
 
 ## Credentials
 

@@ -1,13 +1,31 @@
 ---
 tags: [autotrade, risk, experimental, execution]
 source: autotrade_runner.py
-status: "OFF — enabled=false, signal=kronos. Gated on two fixes before re-arming (2026-07-28)"
-last_updated: 2026-07-28
+status: "IBKR autotrade OFF (and staying off). NOTE: a SECOND, separate autotrade now exists for FTMO and it is ARMED — see [[FTMO Venue]]."
+last_updated: 2026-08-06
 ---
 
 # Autotrade (Experimental)
 
-## ⚠️ Current state: OFF — and should stay off for now
+> [!important] There are now TWO autotrade paths, and this note is about the
+> IBKR one.
+>
+> - **`autotrade_runner.py`** (this note) — IBKR, hourly, **OFF**, and the
+>   venue itself is retired for new orders anyway (rule 9).
+> - **`ftmo_runner.py`** — FTMO, daily at 01:15, **ARMED since 2026-08-06**.
+>   See [[FTMO Venue]].
+>
+> They are deliberately **separate scripts with separate toggles**, and
+> `autotrade.enabled` cannot arm FTMO — there is a selftest asserting exactly
+> that. The two talk to different brokers and have different limit models; one
+> switch covering both would mean you could not reason about FTMO without also
+> reasoning about a retired venue.
+>
+> The FTMO switch is also **not gated on IB Gateway's health**, unlike the
+> header kill switch. A dead Gateway has nothing to do with FTMO, and a switch
+> you cannot reach when things are going wrong is not a switch.
+
+## ⚠️ Current state (IBKR): OFF — and should stay off for now
 
 `trader_settings.json`'s `autotrade` block reads
 `{"enabled": false, "signal": "kronos", "allow_momentum": false}`. It was

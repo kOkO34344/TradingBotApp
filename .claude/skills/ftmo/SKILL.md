@@ -241,8 +241,11 @@ The FTMO counterpart to `autotrade_runner.py`. Full operational detail is in
 CLAUDE.md's "FTMO autotrade" section; the parts that matter when touching the
 modules in this skill:
 
+- **It is ARMED as of 2026-08-06** and scheduled by `com.tradingbotapp.ftmo`
+  at 01:15 daily. This is no longer a thing that might run — it runs tonight.
 - It is armed by `ftmo.autotrade.enabled`, **its own toggle**. IBKR's
   `autotrade.enabled` cannot arm it, and there is a selftest asserting that.
+  Disarm from `/ftmo`, or unload the launchd job.
 - It calls `ftmo_signal.plan_orders()` — and so does the web preview
   (`api/ftmo_api.plan`). Keep it that way. The moment the browser computes a
   rank, a size or a stop of its own, there are two implementations of the risk

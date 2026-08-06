@@ -1,7 +1,7 @@
 ---
 tags: [project-management, phases, roadmap]
-status: "FTMO venue CONNECTED 2026-08-05 but cleared to trade nothing (all 4 classes failed IC); first 38 real grades show no detectable skill"
-last_updated: 2026-08-05
+status: "FTMO ARMED and trading unattended from 2026-08-06 despite all 4 classes failing IC; first 38 real grades show no detectable skill"
+last_updated: 2026-08-06
 ---
 
 # Phase Milestones Dashboard
@@ -28,6 +28,27 @@ last_updated: 2026-08-05
 > that is really closer to one observation than to 38.
 >
 > So the machinery is essentially finished and the evidence is still absent.
+
+> [!danger] 2026-08-06 — the bot is now trading unattended
+> `ftmo_runner.py` is **armed** and scheduled at 01:15 daily. Kronos ranks the
+> 14-symbol FTMO universe, sizes four positions at 1% each, attaches a
+> server-side stop to every entry, and places them with no human approval.
+>
+> **This fires on a signal that failed the IC screen on all four asset
+> classes.** It is the third recorded exception to rule 5, taken deliberately
+> with the evidence stated first — not a gate that was quietly re-run until
+> something passed. See [[FTMO Venue]] for the full record.
+>
+> The capital is simulated, so Phase 4 (real money on IBKR) stays locked and
+> this is not a paper-before-real-money breach. What is genuinely new is that
+> **no human approves an order any more.** Every limit still applies: the rule
+> engine, the 1%-per-trade and portfolio caps, the stop attached at entry, and
+> the FLATTEN path that is never gated by any limit.
+>
+> What to watch, in order: did the stops actually attach; does the daily limit
+> evaluate against a real day-start balance (it needs `ftmo_runner_state.json`
+> to persist); and does the selection churn between runs when the rank-4/5 gap
+> narrows.
 > That is not a failure of the build — it is the evidence gates doing exactly
 > what they were put there to do, refusing before an order was placed. The
 > honest summary of this project right now: **it can trade, and it has not

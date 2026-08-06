@@ -6,31 +6,34 @@ last_updated: 2026-08-02
 
 # Next Build Steps — Prioritized Action Queue
 
-> [!important] Reordered 2026-08-05 — the venue is connected, and it may trade nothing
-> The tiers below predate the move to FTMO. Current priorities:
+> [!important] Rewritten 2026-08-06 — the machinery is FINISHED and ARMED
+> Everything mechanical on the list below is now done. The FTMO runner is
+> armed and scheduled at 01:15 daily. What remains is not code.
 >
-> 1. ~~cTrader app reaching `Active`~~ — **DONE 2026-08-05.** The venue is
->    connected end to end: account 48137229, $25,000, FULL_ACCESS, 202 symbols.
->    See [[FTMO Venue]].
-> 2. ~~IC-screen each FTMO asset class~~ — **DONE 2026-08-03, and ALL FOUR
->    FAILED.** Indices, FX, commodities and crypto all returned |t| < 1.55, and
->    the matched momentum baseline failed all four too. **There is now no asset
->    class the FTMO path is cleared to trade.** That is the gate working, not a
->    blocker to route around — see [[Kronos Research Agent]].
-> 3. **The real bottleneck is evidence, and it always was.** The only route
->    forward is more research cycles and more graded calls:
+> 1. ~~cTrader app reaching `Active`~~ — **DONE 2026-08-05.** Account
+>    48137229, $25,000, FULL_ACCESS, 202 symbols. See [[FTMO Venue]].
+> 2. ~~IC-screen each FTMO asset class~~ — **DONE 2026-08-03, ALL FOUR
+>    FAILED.** |t| < 1.55 everywhere, matched momentum baseline failed all four
+>    too — see [[Kronos Research Agent]].
+> 3. ~~Prove server-side stops attach at entry~~ — **DONE 2026-08-05, PASSED.**
+>    One real BTCUSD trade, read back `protected: True`, closed. $0.40.
+> 4. ~~`venue` column in the trade journal~~ — **DONE 2026-08-06.** Migration
+>    lives in the writer and self-heals; 46 live rows migrated losslessly.
+> 5. ~~Signal→order path and an integration pass~~ — **DONE 2026-08-06.**
+>    `ftmo_runner.py`, verified live in dry-run: 14/14 symbols, four entries,
+>    $994.71 total risk, inside the $1,000 soft limit.
+> 6. **NOW: watch the first real unattended firings.** Nothing in this project
+>    has ever placed an order with no human in the loop. After 01:15 check
+>    `ftmo_launchd.log`, the Telegram messages, and the `venue=ftmo` rows in
+>    `trade_journal.csv`. Confirm the stops actually attached.
+> 7. **The bottleneck is evidence, and it always was.** It has not moved:
 >    - Re-run `run_research_agent_watchlist.py` — every note in `research_log/`
->      still dates from **2026-07-25**, so the book has not grown in 11 days.
+>      still dates from **2026-07-25**, so the book has not grown in 12 days.
 >    - Re-run `grade_calls.py --csv` as the 38 calls mature at 21d.
-> 4. **Prove server-side stops attach at entry.** Needs a real order; cannot be
->    checked read-only. The whole FTMO risk model assumes it.
-> 5. Then: `venue` column in the trade journal, the signal→order path, and an
->    **integration pass** — the only real bug found so far surfaced that way,
->    not from unit tests.
 >
-> Note the shape of this list. Everything mechanical is done or nearly done;
-> what remains is waiting for evidence that does not exist yet. Building more
-> machinery does not move it.
+> Note the shape of this list. Everything mechanical is now DONE, and the bot
+> is trading unattended on a signal with no measured edge on any asset class.
+> Building more machinery does not move the thing that matters.
 >
 > Items below about building `paper_trader.py` and IBKR rebalances are DONE or
 > retired; keep them for the reasoning, not as instructions.
