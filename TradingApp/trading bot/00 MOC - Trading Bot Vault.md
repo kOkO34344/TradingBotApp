@@ -1,7 +1,7 @@
 ---
 tags: [moc, index]
-status: "Live — FTMO venue connected 2026-08-05; cleared to trade nothing (all 4 classes failed IC)"
-last_updated: 2026-08-05
+status: "Live — FTMO ARMED 2026-08-06, trading unattended at 01:15 daily on a signal that failed all four IC screens"
+last_updated: 2026-08-06
 ---
 
 # Trading Bot — Map of Contents
@@ -16,28 +16,32 @@ This is the central index for the Trading Bot project. The codebase lives at `/U
 | **Phase 1** (research agent) | 🟡 First 38 grades in — **no detectable skill** | `research_agent.py` → 14 notes (all still 2026-07-25). Graded 2026-08-03: 26% vs a 39% chance base rate, p=0.13. 38 pending at 21d. See [[Graded Calls Tracker]] |
 | **Phase 2** (backtesting)    | ✅ Done, action taken                | SMA rejected (beats 1/10), momentum rotation identified (16.6% CAGR)                                                               |
 | **Phase 3** (paper trading)  | ✅ Built, now RETIRED IN PLACE       | `paper_trader.py`. IBKR places no new orders as of 2026-08-02. Three positions still open and monitored: **JNJ(19) / DIS(52) / AMZN(21)**, all verified GTC-stopped 2026-08-02. |
-| **FTMO venue**               | 🟢 CONNECTED, 🔴 cleared to trade **nothing** | Five modules, 294 offline selftests. Account 48137229, $25,000, FULL_ACCESS, 202 symbols. **All four asset classes failed their IC screen 2026-08-03.** See [[FTMO Venue]] |
+| **FTMO venue**               | 🔴 **ARMED — trading unattended** since 2026-08-06 | Nine modules, 426 offline selftests. Account 48137229, $25,000, FULL_ACCESS, 202 symbols. `ftmo_runner.py` fires 01:15 daily via launchd. **All four asset classes failed their IC screen 2026-08-03 and it trades anyway** — third recorded exception to rule 5. See [[FTMO Venue]] |
 | **Phase 4** (tiny live)      | ⏸ Locked                            | Unchanged — real capital still gated on paper evidence that does not exist yet |
 
-**Most urgent right now (rewritten 2026-08-05):**
+**Most urgent right now (rewritten 2026-08-06):**
 
-The two things that were blocking are both resolved, and both resolved
-*negatively*. The venue connected; the screens failed. What is left is not
-engineering.
+The engineering is finished. The bot is armed and trades unattended from
+tonight. Everything below is about watching it and about the evidence gap,
+which has not moved.
 
-1. **Grow the evidence — this is the only thing that actually unblocks
+1. **Watch the first real unattended firings.** Nothing in this project has
+   ever placed an order with no human in the loop. After 01:15 check
+   `ftmo_launchd.log`, the Telegram messages, and the `venue=ftmo` rows in
+   `trade_journal.csv`. **Confirm the stops actually attached** — read them
+   back from the venue, not from our own log line saying an order was sent.
+2. **Grow the evidence — still the only thing that actually unblocks
    anything.** Every note in `research_log/` is still dated **2026-07-25**, so
-   the book has not grown in 11 days. Re-run
+   the book has not grown in 12 days. Re-run
    `run_research_agent_watchlist.py`, then `grade_calls.py --csv` as the 38
    open calls mature at 21d. See [[Graded Calls Tracker]].
-2. **Nothing may be enabled on FTMO.** All four asset classes failed their IC
-   screen on 2026-08-03 (no |t| above 1.55; the matched momentum baseline
-   failed all four too). A failed screen is not "needs a better
-   configuration" — re-running with different tickers until one passes is the
-   parameter-tuning the honest-backtesting rule forbids. See
-   [[Kronos Research Agent]].
-3. **Prove server-side stops attach at entry on FTMO.** Needs a real order, so
-   it cannot be checked read-only. The entire FTMO risk model assumes it.
+3. **Be precise about what changed on FTMO.** All four asset classes failed
+   their IC screen on 2026-08-03 (no |t| above 1.55; the matched momentum
+   baseline failed all four too), and the venue is trading anyway by explicit
+   owner decision. The gate was **not** re-run with different tickers until
+   something passed — that would be the parameter-tuning the honest-backtesting
+   rule forbids. It was overridden knowingly. Record it that way.
+   See [[Kronos Research Agent]] and [[FTMO Venue]].
 4. The three open IBKR positions stay monitored until they close naturally.
    `reflect_on_trades.py` and its launchd job keep running. **Verify stops are
    GTC, not merely present**, whenever checking.
@@ -58,11 +62,18 @@ engineering.
   Kronos shows no measurable skill (Spearman IC 0.036, 50% hit rate) and scored
   *worse* than momentum on the only head-to-head screen. Being the focus is a
   research direction, not a result. See [[Kronos Research Agent]].
-- **Two deliberate exceptions to the earn-autonomy-with-evidence rule now
-  exist**, and both were made with the evidence stated first:
-  [[Autotrade (Experimental)]] (built 2026-07-24 despite an hourly IC screen
-  showing no edge for either candidate signal; currently OFF) and the
-  fully-unattended [[FTMO Venue]] (2026-08-02). Neither is precedent.
+- **THREE deliberate exceptions to the earn-autonomy-with-evidence rule now
+  exist**, all made with the evidence stated first, none of them precedent:
+  1. [[Autotrade (Experimental)]] — built 2026-07-24 despite an hourly IC
+     screen showing no edge for either candidate signal; currently OFF.
+  2. The fully-unattended [[FTMO Venue]] — 2026-08-02.
+  3. **Kronos actually firing on FTMO with no asset class having passed a
+     screen** — armed 2026-08-06. The original condition was "Kronos may only
+     trade a class that passed its own IC screen". No class passed. It trades
+     anyway.
+  Note the direction of travel: each exception has been larger than the last,
+  and the third one removes the condition that made the second one defensible.
+  That is worth seeing plainly rather than as three separate footnotes.
 - **RiskGuard's daily-loss breaker is a pre-trade gate, not a monitor.** It is
   consulted only when an order is being placed, so it did nothing when GOOGL's
   stop fired on its own. As of 2026-08-02 the *visibility* half is fixed —

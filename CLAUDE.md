@@ -75,9 +75,26 @@ Brokers (paper account first, always).
    position stated first: 0 graded calls, Kronos IC ~0 on the only screens run,
    and no IC screen at all yet for indices, FX or commodities. The rule engine,
    monitor and sizer are enforced regardless of autonomy — autonomy removes the
-   human approval step, never a limit. Kronos may only trade an asset class
-   that has passed its own IC screen (owner's own condition); do not enable a
-   class because it is configured, only because it screened.
+   human approval step, never a limit.
+   **The IC-screen condition has been OVERRIDDEN, and this rule must say so
+   rather than describe a gate that is no longer holding.** The original
+   condition (owner's own, 2026-08-02) was that Kronos may only trade an asset
+   class that has passed its own IC screen. All four classes were screened on
+   2026-08-03 and **all four failed**. On 2026-08-05 the owner instructed the
+   path to run anyway, with that evidence stated first, and it was **armed on
+   2026-08-06** — `ftmo.autotrade.enabled` true, launchd firing 01:15 daily.
+   **That is a THIRD deliberate exception to rule 5.** Flag it exactly like
+   rules 7 and 9's second paragraph; it is not precedent.
+   Two things to keep straight when reading this later. The gate was NOT
+   re-run with different tickers or sample counts until something passed —
+   that is the parameter-tuning rule 4 forbids and it did not happen. It was
+   overridden knowingly, once, in the open. And the override is about the
+   SIGNAL's evidence, not about the limits: the rule engine, the per-trade and
+   portfolio risk caps, the server-side stop attached at entry, and the
+   never-gated FLATTEN path all still apply unchanged.
+   Do not quietly restore the old wording to make this rule read more
+   comfortably, and do not cite the override as licence to skip a screen
+   elsewhere.
    **The Challenge account is simulated, so this does not breach rule 1** — the
    real exposure is the entry fee, not trading capital. Phase 4 (real capital,
    IBKR) stays locked.
@@ -588,9 +605,13 @@ hole exactly where the unattended closes are.
      limit, which is the portfolio cap working. **Nothing was placed.**
      Still true that integration is where the real bugs surface: the 1000x
      trendbar scaling bug came from a run like this, not from unit tests.
-   - **The unattended path is BUILT but the schedule is NOT installed.**
-     `com.tradingbotapp.ftmo.plist` is tracked and reviewable; loading it is a
-     deliberate act (see the FTMO autotrade section).
+   - **ARMED 2026-08-06.** `ftmo.autotrade.enabled` is true and
+     `com.tradingbotapp.ftmo` is loaded, firing 01:15 daily. The live journal
+     was migrated to 12 columns the same day (46 rows, lossless, verified).
+     **Nothing in this project has ever placed an order unattended before**, so
+     the first firings want watching: `ftmo_launchd.log`, the Telegram
+     messages, and the `venue=ftmo` rows in `trade_journal.csv`. Confirm the
+     stops attached by reading them back from the venue.
 
 ## Autotrade (experimental, unattended) — `autotrade_runner.py`
 
@@ -645,13 +666,22 @@ against a fiction. The first run seeds day-start from the **live balance**, not
 from `initial_capital`, which would invent a loss on an account that had
 already traded and could block trading on the spot.
 
-**The schedule is NOT installed.** `com.tradingbotapp.ftmo.plist` is tracked so
-it is reviewable; `cp` it to `~/Library/LaunchAgents/` and `launchctl load` it
-deliberately. One firing per day at 01:15 local — the agreed cadence is a daily
-rebalance on a 20-day forecast, and firing hourly would re-decide a 20-day view
-24 times a day and pay spread on sampling noise each time. 01:15 local sits
-just after the Europe/Prague day boundary, so `advance_state()` rolls on
-settled numbers.
+**ARMED AND SCHEDULED since 2026-08-06.** `ftmo.autotrade.enabled` is `true`
+and `com.tradingbotapp.ftmo` is loaded, firing **01:15 local, once per day**
+(`ftmo_launchd.log`). One firing per day and not hourly: the agreed cadence is
+a daily rebalance on a 20-day forecast, and firing hourly would re-decide a
+20-day view 24 times a day and pay spread on sampling noise each time. 01:15
+local sits just after the Europe/Prague day boundary, so `advance_state()`
+rolls on settled numbers.
+
+To disarm: the control on `/ftmo`, or set `ftmo.autotrade.enabled` false. To
+stop the schedule:
+`launchctl unload ~/Library/LaunchAgents/com.tradingbotapp.ftmo.plist`.
+
+**`trader_settings.json` carries the armed flag and is tracked in git.** If it
+is left modified-but-uncommitted, a stray `git checkout .` silently DISARMS the
+runner. That direction fails safe, but it fails *quietly* — check the flag
+before concluding the bot is running.
 
 Preview without arming anything: the "Preview plan" button on `/ftmo`, or
 `python3 ftmo_runner.py --force --dry-run`. Both run the identical pipeline and
@@ -871,6 +901,23 @@ sections close to verbatim, so keep those reasonably current.
   The account-list response carries only `ctidTraderAccountId`, `isLive`,
   `traderLogin` and two timestamps, so a `getattr(a, "brokerName", "?")` there
   printed `broker=?` forever and looked like the venue withholding data.
+- **`launchctl` from an agent's shell can report a DIFFERENT domain than the
+  owner's login session, and the difference looks exactly like jobs having been
+  unloaded.** Hit 2026-08-06 while installing `com.tradingbotapp.ftmo`.
+  Symptoms: `launchctl list | grep tradingbot` returned all five jobs early in
+  the session and only one or two later; `launchctl load` returned rc=0 and the
+  job was visible in that same shell but gone from the next one;
+  `launchctl print gui/501/<label>` said "Could not find service" for jobs whose
+  logs were provably being written minutes earlier.
+  The cause is the command sandbox, not launchd. Re-running the same commands
+  with the sandbox disabled showed the real state. **Verify launchd changes
+  unsandboxed, with `launchctl print gui/$(id -u)/<label>`, and treat a bare
+  `launchctl list` from a sandboxed shell as unreliable.** Do not conclude a
+  job is dead from it — cross-check whether its log file is still growing,
+  which is the authoritative signal.
+  `launchctl bootstrap` on an already-loaded job returns
+  `Bootstrap failed: 5: Input/output error`, which means "already there", not
+  a failure to install.
 - **GitHub: `gh` is installed manually at `~/.local/bin/gh`** — there is no
   Homebrew on this machine, so upgrades mean re-downloading the release zip
   and `install -m 755` over it. Auth token is in the macOS keyring, config in
