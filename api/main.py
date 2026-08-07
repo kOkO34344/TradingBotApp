@@ -767,6 +767,12 @@ async def ftmo_bars(
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@app.get("/api/ftmo/symbols")
+async def ftmo_symbols():
+    """Every chartable FTMO instrument, not just the traded universe."""
+    return {"symbols": await run_in_threadpool(ftmo_api.all_symbols)}
+
+
 @app.get("/api/ftmo/timeframes")
 async def ftmo_timeframes():
     return {"timeframes": ftmo_api.timeframe_list(),
