@@ -265,6 +265,8 @@ export interface JournalRow {
   target: number | null;
   status: string;
   detail: string;
+  /** "ibkr" | "ftmo", or "" for rows written before the venue column existed. */
+  venue: string;
   superseded: boolean;
   supersededBy: number | null;
   disputed: boolean;
@@ -641,8 +643,70 @@ export interface FtmoPlanResult {
   ranked: FtmoRankRow[];
 }
 
+export interface FtmoUniverseSymbol {
+  symbol: string;
+  assetClass: string;
+  minVolume: number;
+  stepVolume: number;
+  digits: number;
+  quoteAsset: string;
+}
+
+/**
+ * The FTMO chart payload.
+ *
+ * Deliberately NOT `BarsResponse`. That type carries IBKR-only fields —
+ * `duration`, `fromCache`, `ageSeconds`, `stale` — which exist because IBKR
+ * paces historical requests and is asked for a span of time. cTrader is asked
+ * for a bar COUNT and has no such cache, so those fields would be invented
+ * values a component could render as if they meant something.
+ */
+export interface FtmoBarsResponse {
+  symbol: string;
+  /** Same as `symbol` — a CFD's venue name is its label. */
+  label: string;
+  /** Asset class from the traded universe, or "" if not configured. */
+  kind: string;
+  /** Price decimals as the venue states them: 2 for indices, 5 for FX. */
+  digits: number | null;
+  period: string;
+  timeframe: string;
+  bars: Bar[];
+  count: number;
+  venue: "ftmo";
+  delayed: boolean;
+  indicators: IndicatorResult[];
+  levels: Levels | null;
+  markers: TradeMarker[];
+}
+
+export interface FtmoTimeframe {
+  key: string;
+  period: string;
+  count: number;
+}
+
 export const ftmo = {
   autotrade: () => request<FtmoAutotradeState>("/api/ftmo/autotrade"),
+  universe: () => request<{ universe: FtmoUniverseSymbol[] }>("/api/ftmo/universe"),
+  timeframes: () =>
+    request<{ timeframes: FtmoTimeframe[]; default: string }>(
+      "/api/ftmo/timeframes"
+    ),
+  bars: (params: {
+    symbol: string;
+    timeframe?: string;
+    indicators?: string[];
+    levels?: boolean;
+    markers?: boolean;
+  }) => {
+    const q = new URLSearchParams({ symbol: params.symbol });
+    if (params.timeframe) q.set("period", params.timeframe);
+    if (params.indicators?.length) q.set("indicators", params.indicators.join(","));
+    if (params.levels) q.set("levels", "true");
+    if (params.markers === false) q.set("markers", "false");
+    return request<FtmoBarsResponse>(`/api/ftmo/bars?${q.toString()}`);
+  },
   setAutotrade: (enabled: boolean) =>
     post<{ autotrade: FtmoAutotradeState; changed: boolean }>(
       "/api/ftmo/autotrade",

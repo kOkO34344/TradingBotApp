@@ -44,6 +44,17 @@ import ftmo_service as svc       # noqa: E402
 import ftmo_session as fs        # noqa: E402
 import ftmo_signal as sig        # noqa: E402
 
+# Imported both ways on purpose: as a package under uvicorn, and as bare
+# modules when this file is run directly for `--selftest` (sys.path[0] is
+# then `api/`). Without the fallback the offline selftest — the thing that
+# needs no server, no venue and no credentials — is the one path that cannot
+# run.
+try:
+    from . import indicators_api, journal_api  # noqa: E402
+except ImportError:                            # pragma: no cover - script mode
+    import indicators_api                      # type: ignore  # noqa: E402
+    import journal_api                         # type: ignore  # noqa: E402
+
 log = logging.getLogger("api.ftmo")
 
 _session: fs.FTMOSession | None = None
@@ -204,12 +215,139 @@ def quotes() -> list[dict]:
     return sorted(out, key=lambda r: r["symbol"])
 
 
-def bars(symbol: str, period: str = "D1", count: int = 300) -> dict:
+# The chart's timeframe keys mapped to cTrader periods, with how many bars to
+# pull for each. The keys match the IBKR chart's so the switcher, the stored
+# preference and the URL all keep working across venues — only the transport
+# underneath changed.
+#
+# There is no `duration` here and that is the real difference from `api/bars.py`.
+# IBKR is asked for a span of time and decides how many bars that is; cTrader is
+# asked for a bar COUNT. Pretending the two are the same interface would mean
+# inventing a duration string the venue never sees.
+CHART_PERIODS: dict[str, tuple[str, int]] = {
+    "1m":  ("M1",  400),
+    "5m":  ("M5",  400),
+    "15m": ("M15", 400),
+    "30m": ("M30", 400),
+    "1h":  ("H1",  500),
+    "4h":  ("H4",  500),
+    "1d":  ("D1",  500),
+}
+
+DEFAULT_TIMEFRAME = "1d"
+
+
+def _to_chart_bar(bar: dict) -> dict:
+    """Rename `ts` to `time`, which is what the whole chart stack speaks.
+
+    `ftmo_session.trendbars()` emits `ts`, and it is NOT changed to match:
+    Kronos, `ftmo_signal` and the runner all read `ts`, and renaming a key
+    under them to save a translation here would be the tail wagging the dog.
+
+    Doing it at the API boundary also means `indicators_api` keeps working
+    unchanged for both venues — it is written against `time`, so an FTMO bar
+    reaching it as `ts` raised a bare `KeyError: 'time'` that surfaced in the
+    browser as the useless message `{"detail": "'time'"}`.
+    """
+    out = dict(bar)
+    out["time"] = out.pop("ts")
+    return out
+
+
+def asset_class_of(symbol: str) -> str:
+    """This symbol's asset class, or "" when it isn't in the traded universe.
+
+    Returns "" rather than guessing: the class drives what a chart badge
+    claims an instrument IS, and the universe is the only thing that knows.
+    All 202 venue symbols are chartable, but only the configured subset is
+    classified — a chart of an unclassified symbol is fine, a mislabelled one
+    is not.
+    """
+    try:
+        specs = svc.load_symbol_specs()
+        for sym, cls in sig.build_universe(specs, sig.load_universe()):
+            if sym == symbol:
+                return cls
+    except (FileNotFoundError, ValueError):
+        return ""
+    return ""
+
+
+def timeframe_list() -> list[dict]:
+    """What the chart's timeframe switcher may offer for this venue."""
+    return [{"key": k, "period": p, "count": n}
+            for k, (p, n) in CHART_PERIODS.items()]
+
+
+def resolve_period(timeframe: str) -> tuple[str, int]:
+    """Accept a chart key ("1h") or a raw cTrader period ("H1").
+
+    Both spellings are allowed because `bars()` already had callers passing
+    `period="D1"` directly. Refusing one of them to tidy the interface would
+    break a working path for cosmetic reasons.
+    """
+    key = (timeframe or "").strip()
+    if key in CHART_PERIODS:
+        return CHART_PERIODS[key]
+    upper = key.upper()
+    for period, count in CHART_PERIODS.values():
+        if period == upper:
+            return period, count
+    raise ValueError(
+        f"unknown timeframe {timeframe!r}; known: "
+        f"{', '.join(CHART_PERIODS)} (or {', '.join(p for p, _ in CHART_PERIODS.values())})")
+
+
+def bars(symbol: str, period: str = "D1", count: int | None = None,
+         indicators: list[str] | None = None, levels: bool = False,
+         markers: bool = False) -> dict:
+    """Bars plus optional overlays for one FTMO symbol, in one round trip.
+
+    Bundled for the same reason `/api/bars` bundles: separate calls would make
+    the chart paint price before its overlays and flicker.
+
+    The indicator and level math comes from `indicators_api`, which is a thin
+    layer over `indicators.py` — the project's single source of truth for
+    technical math. A CFD chart and a stock chart therefore show the same
+    number for the same series, which is the whole point of that rule.
+
+    Markers are filtered to `venue="ftmo"`. Without that filter an FTMO EURUSD
+    chart could draw IBKR fills for a same-named instrument at different
+    prices, which is a marker asserting something that never happened here.
+    """
     session = get_session()
     if session is None:
         raise RuntimeError("FTMO session is not connected")
-    rows = session.trendbars(symbol, period, count)
-    return {"symbol": symbol, "period": period, "bars": rows}
+    resolved, default_count = resolve_period(period)
+    rows = [_to_chart_bar(b)
+            for b in session.trendbars(symbol, resolved, count or default_count)]
+    spec = session.specs.get(symbol) or {}
+    payload = {
+        "symbol": symbol,
+        # The venue's instrument name IS its label — unlike IBKR there is no
+        # separate contract to resolve one from.
+        "label": symbol,
+        "kind": asset_class_of(symbol),
+        # How many decimals this instrument prices in. The chart needs it
+        # because FTMO spans 2-digit indices and 5-digit FX in one universe,
+        # so a single hardcoded precision would round US30 fine and flatten
+        # every EURUSD candle into a straight line.
+        "digits": spec.get("digits"),
+        "period": resolved,
+        "timeframe": period,
+        "bars": rows,
+        "count": len(rows),
+        "venue": "ftmo",
+        # cTrader streams its own prints; there is no delayed-data
+        # subscription tier in play here the way there is on the IBKR path.
+        "delayed": False,
+    }
+    payload["indicators"] = (indicators_api.compute(rows, indicators)
+                             if indicators else [])
+    payload["levels"] = indicators_api.levels(rows) if levels else None
+    payload["markers"] = (journal_api.markers_for(symbol, venue="ftmo")
+                          if markers else [])
+    return payload
 
 
 def autotrade_state() -> dict:
@@ -408,3 +546,71 @@ def universe() -> list[dict]:
              "stepVolume": specs[s]["step_volume"],
              "digits": specs[s]["digits"],
              "quoteAsset": specs[s]["quote_asset"]} for s, c in pairs]
+
+
+def selftest() -> int:
+    """Offline. No venue, no credentials, no session.
+
+    Covers only the pure chart-payload helpers. Everything else here needs a
+    live cTrader session by definition, and a selftest that mocks a broker
+    mostly tests the mock.
+    """
+    failures = []
+
+    def check(name, cond):
+        print(f"  {'PASS' if cond else 'FAIL'}  {name}")
+        if not cond:
+            failures.append(name)
+
+    print("timeframe resolution accepts both spellings:")
+    check("a chart key resolves", resolve_period("1h")[0] == "H1")
+    check("a raw cTrader period resolves", resolve_period("H1")[0] == "H1")
+    check("the default is a day bar",
+          resolve_period(DEFAULT_TIMEFRAME)[0] == "D1")
+    check("case is not significant for a period", resolve_period("d1")[0] == "D1")
+    check("every advertised timeframe resolves",
+          all(resolve_period(t["key"])[0] == t["period"]
+              for t in timeframe_list()))
+    check("each timeframe asks for a positive bar count",
+          all(t["count"] > 0 for t in timeframe_list()))
+    try:
+        resolve_period("1y")
+        check("an unknown timeframe raises rather than defaulting", False)
+    except ValueError:
+        check("an unknown timeframe raises rather than defaulting", True)
+
+    print("bars are renamed for the chart, not for the venue:")
+    src = {"ts": 1786122000, "open": 1.1, "high": 1.2,
+           "low": 1.0, "close": 1.15, "volume": 42}
+    out = _to_chart_bar(src)
+    check("`ts` becomes `time`", out["time"] == 1786122000)
+    check("`ts` does not survive alongside it", "ts" not in out)
+    check("OHLCV is untouched",
+          (out["open"], out["high"], out["low"], out["close"], out["volume"])
+          == (1.1, 1.2, 1.0, 1.15, 42))
+    check("the caller's row is NOT mutated — ftmo_session's rows are reused "
+          "by Kronos and the runner, which both read `ts`",
+          src.get("ts") == 1786122000 and "time" not in src)
+
+    print("a symbol is not given a class it has not earned:")
+    check("a symbol outside the traded universe reports no class",
+          asset_class_of("NOT_A_REAL_SYMBOL_XYZ") == "")
+
+    print()
+    if failures:
+        print(f"{len(failures)} FAILED: {failures}")
+        return 1
+    print("All ftmo_api offline checks passed.")
+    return 0
+
+
+if __name__ == "__main__":
+    import argparse
+
+    ap = argparse.ArgumentParser(description="FTMO web read surface")
+    ap.add_argument("--selftest", action="store_true",
+                    help="run the offline checks and exit")
+    parsed = ap.parse_args()
+    if parsed.selftest:
+        sys.exit(selftest())
+    ap.print_help()

@@ -63,3 +63,28 @@ changing anything structural.
    deliberately; screens must null it out on error (see `chartData` in
    `app/charts/page.tsx`) or they attribute AAPL's price to whatever you
    just failed to load.
+9. **The charts screen is an FTMO screen** (moved 2026-08-07). It reads
+   `/api/ftmo/bars`, not `/api/bars` — the IBKR path returned
+   `ConnectionRefusedError ... 4002` on every request once Gateway went down,
+   and rule 9 retired that venue, so it was never coming back. `/api/bars`
+   still exists and still works when Gateway is up; nothing was deleted.
+10. **A screen that has moved venue must be removed from the IB Gateway
+    banner's scope.** `app-shell.tsx` keeps an explicit `isFtmoBacked()` list
+    rather than a `startsWith("/ftmo")` test, because the moment a
+    non-`/ftmo` route started reading from FTMO that test silently became the
+    wrong question — the banner claimed "no data will load" over a screen
+    that was loading fine.
+11. **Which venue a journal row belongs to is load-bearing, not decoration.**
+    The journal holds both brokers and they share ticker spellings: an IBKR
+    AAPL share is not an FTMO AAPL CFD. `markers_for()` takes a `venue`
+    filter and the charts screen passes it — without that, one venue's fills
+    are drawn on the other's chart, asserting a trade that never happened
+    there. Rows written before the venue column existed store `""` and are
+    IBKR by construction; they are displayed as `ibkr` but dimmed, because
+    that value was inferred from age rather than recorded.
+12. **Both venues' event vocabularies have to be listed, or one disappears.**
+    IBKR writes `RESULT`/`CLOSE_FILLED` with status `filled`; the FTMO runner
+    writes `RESULT` with status `accepted` and `EXIT` for a rotation close.
+    `journal_api`'s `FILL_EVENTS`/`FILLED_STATUSES` knew only IBKR's until
+    2026-08-07, so every FTMO fill scored zero chart markers — correctly
+    journalled, and undrawable.

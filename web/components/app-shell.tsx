@@ -99,6 +99,20 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
 
+  /**
+   * Screens whose data comes from FTMO, so a dead IB Gateway says nothing
+   * about whether they work.
+   *
+   * `/charts` joined this list on 2026-08-07 when it moved off `/api/bars`.
+   * Kept as an explicit list rather than a `startsWith("/ftmo")` check
+   * precisely because that check silently stopped being the right question
+   * the moment a non-`/ftmo` route started reading from the venue — the
+   * banner would have claimed nothing would load on a screen that was
+   * loading fine.
+   */
+  const isFtmoBacked = (path: string) =>
+    path.startsWith("/ftmo") || path.startsWith("/charts");
+
   const conn = live.connection ?? status?.connection ?? null;
   const backendUp = live.socketOpen || status !== null;
   const gatewayUp = conn?.connected ?? false;
@@ -196,11 +210,11 @@ export function AppShell({ children }: { children: React.ReactNode }) {
           {/* Scope the IBKR banner to IBKR screens.
               Rule 9 retired IBKR for new orders, so a dead Gateway is an
               expected state, not an application fault. Showing it full-width
-              on the FTMO screen — a venue that does not touch Gateway at all —
-              made a working app look broken and buried the one venue that can
-              actually trade. It still shows loudly on every screen that DOES
-              depend on Gateway, because there it is the reason nothing loads. */}
-          {connState !== "live" && !pathname.startsWith("/ftmo") && (
+              on a screen that does not touch Gateway made a working app look
+              broken and buried the one venue that can actually trade. It
+              still shows loudly on every screen that DOES depend on Gateway,
+              because there it is the reason nothing loads. */}
+          {connState !== "live" && !isFtmoBacked(pathname) && (
             <div
               className={cn(
                 "px-4 py-1.5 text-xs border-t",
