@@ -121,9 +121,9 @@ File purposes are documented in each script's own module docstring
   orders, and `ftmo_smoke_order.py` proves the order path with one tiny trade.
   **`ftmo_runner.py` (2026-08-06) is the unattended runner** — the FTMO
   counterpart to `autotrade_runner.py`, armed by its own separate toggle.
-  **451 offline checks, measured 2026-08-06** across the nine modules that
+  **465 offline checks, measured 2026-08-07** across the nine modules that
   carry a `--selftest`: `ftmo_sizing` 72, `ftmo_rules` 70, `ftmo_monitor` 63,
-  `ftmo_runner` 63, `ftmo_audit` 48, `ftmo_service` 43, `ftmo_session` 40,
+  `ftmo_runner` 63, `ftmo_session` 54, `ftmo_audit` 48, `ftmo_service` 43,
   `ftmo_signal` 26, `trade_journal` 26. (`ftmo_smoke_order.py` has no
   `--selftest` — it is a live one-trade proof, and its dry-run is the check.)
   Note `ftmo_audit`'s selftest deliberately prints `AUDIT WRITE FAILED` to
@@ -878,6 +878,29 @@ sections close to verbatim, so keep those reasonably current.
   This is the SAFER form and worth keeping deliberately: the stop is applied
   from the ACTUAL FILL, so the risk distance survives slippage. An absolute
   stop would widen real risk by exactly the slippage.
+- **`relativeStopLoss` must ALSO land on the symbol's precision grid — a
+  multiple of `10**(5 - digits)` — and the whole order dies if it doesn't.**
+  `INVALID_REQUEST: Relative stop loss has invalid precision`. The 1e5 wire
+  scale is necessary and not sufficient: EURUSD (digits 5) steps by 1, but
+  NATGAS.cash (3) steps by 100 and every 2-digit symbol steps by 1,000.
+  Found the hard way on 2026-08-07, on the **first four orders this project
+  ever placed unattended**. All four were sized correctly and inside the
+  budget; three were refused outright (SOLUSD, NATGAS.cash, LTCUSD) because
+  an ATR-derived stop carries as many decimals as the arithmetic gives it.
+  **ETHUSD was accepted only because its ATR happened to land on two
+  decimals** — so a naive reading of that run says "the order path works, 1 of
+  4 filled for market reasons", and it is worth being precise that the one
+  success was luck rather than evidence.
+  Fixed in `ftmo_session.quantize_relative_stop()`, the single choke point
+  through which every order's stop passes. It rounds the distance **DOWN**,
+  never to nearest: a shorter distance is a TIGHTER stop, which can only make
+  the realised loss smaller than the sizer budgeted, whereas rounding up would
+  widen real risk past a per-trade cap that was just proven to hold — a limit
+  breached by the transport layer. A distance below one tick floors to zero
+  and is REFUSED, never rounded up into a stop nobody asked for.
+  The general lesson is the one this venue keeps teaching: **a number the
+  sizer proved correct can still be unsendable**, and the venue reports that
+  as a rejection event rather than a value it silently adjusts.
 - **A streaming quote does NOT mean a tradeable market.** US30.cash and
   BTCUSD both quoted live and both rejected with `MARKET_CLOSED` at 23:55
   Moscow — FTMO's daily ten-minute maintenance window. `trading_mode:

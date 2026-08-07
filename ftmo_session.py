@@ -39,6 +39,7 @@ Offline selftest:  python3 ftmo_session.py --selftest
 from __future__ import annotations
 
 import argparse
+import inspect
 import sys
 import threading
 import time
@@ -64,6 +65,49 @@ SPOT_SCALE = 100_000.0
 # `digits`. See scale_price() — assuming digits here produced a 1000x error on
 # every symbol whose digits is not 5.
 TRENDBAR_SCALE = 100_000.0
+
+# The number of decimals the 1e5 wire scale itself carries. `relativeStopLoss`
+# is expressed on that scale, but the venue only accepts a value that also
+# lands on the SYMBOL's precision grid — a multiple of 10**(5 - digits).
+SPOT_DIGITS = 5
+
+
+def stop_grid_step(digits: int) -> int:
+    """The smallest `relativeStopLoss` increment the venue accepts for `digits`.
+
+    A price of 2 digits moves in steps of 0.01, which is 1,000 units on the
+    1e5 wire scale; 3 digits is 100, and 5 digits is 1. Anything finer is
+    refused with `INVALID_REQUEST: Relative stop loss has invalid precision`.
+
+    Clamped at 1 because the wire scale cannot express anything smaller, and a
+    venue reporting more than 5 digits must not produce a step of zero — that
+    would make the quantiser divide by zero on the one path that must not fail.
+    """
+    return max(1, 10 ** (SPOT_DIGITS - int(digits)))
+
+
+def quantize_relative_stop(distance: float, digits: int) -> int:
+    """Round a stop DISTANCE (in price) down onto the venue's precision grid.
+
+    Returns the integer `relativeStopLoss` in 1/100000 price units.
+
+    Rounds **down**, never to nearest, and the direction is the point. A
+    shorter distance means a tighter stop, which can only make the realised
+    loss SMALLER than the size the sizer budgeted for. Rounding up would widen
+    real risk past the per-trade cap that `ftmo_sizing` just proved the order
+    fits inside — a limit quietly exceeded by the transport layer is exactly
+    the failure this project keeps writing rules against.
+
+    The adjustment is at most one tick, so it never materially moves the stop.
+
+    Learned live on 2026-08-07: the first four unattended FTMO orders were
+    sized correctly and three were refused outright for this, while the fourth
+    was accepted only because its ATR happened to land on two decimals. An
+    unaligned stop is not rejected *approximately* — the whole order dies.
+    """
+    raw = int(round(abs(distance) * SPOT_SCALE))
+    step = stop_grid_step(digits)
+    return (raw // step) * step
 
 
 class SessionError(RuntimeError):
@@ -547,12 +591,16 @@ class FTMOSession:
         # 1/100000 price units; the venue applies it on the correct side from
         # tradeSide, which is why validate_stop() above still has to check the
         # side we were given rather than trusting the number alone.
+        # ...and it must land on the symbol's own precision grid, not merely on
+        # the 1e5 wire scale. See quantize_relative_stop().
         distance = abs(reference_price - stop_price)
-        relative = int(round(distance * SPOT_SCALE))
+        relative = quantize_relative_stop(distance, spec["digits"])
         if relative <= 0:
+            step = stop_grid_step(spec["digits"])
             raise SessionError(
-                f"stop distance rounds to zero at 1e-5 precision "
-                f"({distance!r}) — refusing an order whose stop is its entry")
+                f"stop distance {distance!r} is smaller than one "
+                f"{symbol} tick ({step / SPOT_SCALE:g}) — refusing an order "
+                f"whose stop would collapse onto its entry")
 
         payload = self._send(
             "ProtoOANewOrderReq", timeout_s=timeout_s,
@@ -648,6 +696,43 @@ def selftest() -> int:
     check("scale_price takes no digits argument at all — the whole bug was "
           "believing it should",
           scale_price.__code__.co_argcount == 1)
+
+    print("relativeStopLoss lands on the SYMBOL's grid, not just the 1e5 wire:")
+    check("5 digits steps by 1 (the wire scale itself)", stop_grid_step(5) == 1)
+    check("3 digits steps by 100", stop_grid_step(3) == 100)
+    check("2 digits steps by 1000", stop_grid_step(2) == 1000)
+    check("digits beyond the wire scale clamp to 1, never 0",
+          stop_grid_step(7) == 1)
+    check("a 5-digit FX distance is already aligned and unchanged",
+          quantize_relative_stop(0.00552, 5) == 552)
+    # The three orders the venue actually refused on 2026-08-07, and the one
+    # it accepted. Regression, not illustration.
+    check("SOLUSD 4.50286 @2dp quantises onto the grid (was rejected raw)",
+          quantize_relative_stop(4.50286, 2) == 450_000)
+    check("NATGAS 0.18629 @3dp quantises onto the grid (was rejected raw)",
+          quantize_relative_stop(0.18629, 3) == 18_600)
+    check("LTCUSD 2.53571 @2dp quantises onto the grid (was rejected raw)",
+          quantize_relative_stop(2.53571, 2) == 253_000)
+    check("ETHUSD 118.32 @2dp was already aligned — accepted, and still is",
+          quantize_relative_stop(118.32, 2) == 11_832_000)
+    check("every quantised distance is a multiple of its own step",
+          all(quantize_relative_stop(d, dg) % stop_grid_step(dg) == 0
+              for d, dg in [(4.50286, 2), (0.18629, 3), (2.53571, 2),
+                            (118.32, 2), (0.00552, 5), (1.0 / 3, 4)]))
+    check("quantising never widens the distance, so real risk cannot exceed "
+          "the sized budget",
+          all(quantize_relative_stop(d, dg) <= round(d * SPOT_SCALE)
+              for d, dg in [(4.50286, 2), (0.18629, 3), (2.53571, 2),
+                            (0.00552, 5), (1.0 / 3, 4), (9.99999, 2)]))
+    check("a distance below one tick floors to zero rather than rounding up "
+          "to a stop the caller never asked for",
+          quantize_relative_stop(0.004, 2) == 0)
+    check("a sub-tick stop is refused by place_market_order, not sent naked",
+          "collapse onto its entry" in inspect.getsource(
+              FTMOSession.place_market))
+    check("the order path quantises rather than calling round() itself",
+          "quantize_relative_stop" in inspect.getsource(
+              FTMOSession.place_market))
 
     print("quote marks at the exit side of the spread:")
     q = Quote(symbol_id=1, bid=1.0840, ask=1.0842, ts=time.time())

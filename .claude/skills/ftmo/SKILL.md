@@ -8,7 +8,7 @@ description: How the FTMO venue works in TradingBotApp — the rule engine, equi
 Five modules. `ftmo_rules.py` decides, `ftmo_monitor.py` watches,
 `ftmo_sizing.py` sizes, `ftmo_audit.py` records why, `ftmo_service.py` talks to
 the broker. Each has an offline `--selftest` needing no credentials and no
-network; 451 checks total as of 2026-08-06, across these five plus
+network; 465 checks total as of 2026-08-07, across these five plus
 `ftmo_session`, `ftmo_signal`, `ftmo_runner` and `trade_journal`.
 
 **Rule 9 in `CLAUDE.md` governs this venue and is not restated here — read it
