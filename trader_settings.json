@@ -39,7 +39,7 @@
   "signal": "kronos",
   "ftmo": {
     "autotrade": {
-      "enabled": false,
+      "enabled": true,
       "risk_pct": 1.0,
       "rotation_margin_pct": 1.0,
       "top_n": 4,

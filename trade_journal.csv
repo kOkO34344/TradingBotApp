@@ -1,47 +1,73 @@
-timestamp,event,symbol,sec_type,action,quantity,price,stop,target,status,detail
-2026-07-21T22:44:12,SUBMIT,GOOGL,STK,BUY,14,351.28,327.98,,submitted,bracket order
-2026-07-21T22:44:13,RESULT,GOOGL,STK,BUY,14,351.28,327.98,,Filled,bracket placed (parent status shown)
-2026-07-21T22:44:13,SUBMIT,AAPL,STK,BUY,15,329.6,311.23,,submitted,bracket order
-2026-07-21T22:44:14,RESULT,AAPL,STK,BUY,15,329.6,311.23,,Filled,bracket placed (parent status shown)
-2026-07-21T22:44:14,BLOCKED,JNJ,STK,BUY,20,251.09,236.84,,blocked,"notional $5,022 exceeds limit $5,000"
-2026-07-21T22:46:36,SUBMIT,JNJ,STK,BUY,19,251.15,236.9,,submitted,bracket order
-2026-07-21T22:46:37,RESULT,JNJ,STK,BUY,19,251.15,236.9,,Filled,bracket placed (parent status shown)
-2026-07-21T23:34:32,SUBMIT,GOOGL,STK,SELL,14.0,,326.06,,submitted,re-protect: standalone GTC stop (original DAY stop expired)
-2026-07-21T23:34:32,RESULT,GOOGL,STK,SELL,14.0,,326.06,,PreSubmitted,re-protect stop
-2026-07-21T23:34:34,SUBMIT,JNJ,STK,SELL,19.0,,237.61,,submitted,re-protect: standalone GTC stop (original DAY stop expired)
-2026-07-21T23:34:34,RESULT,JNJ,STK,SELL,19.0,,237.61,,PreSubmitted,re-protect stop
-2026-07-21T23:34:37,SUBMIT,AAPL,STK,SELL,15.0,,309.1,,submitted,re-protect: standalone GTC stop (original DAY stop expired)
-2026-07-21T23:34:37,RESULT,AAPL,STK,SELL,15.0,,309.1,,PreSubmitted,re-protect stop
-2026-07-23T16:30:00,CLOSE_RECONSTRUCTED,GOOGL,STK,SELL,14,321.13,326.06,,Filled (inferred),"RECONSTRUCTED 2026-07-25, not observed live. GTC stop 326.06 GAPPED THROUGH: 2026-07-23 opened 321.13, below the stop, so the fill was at the open, not the stop price. Date/price inferred from daily bars (first bar with Low<=stop; Open<stop => gap). No IBKR execution record exists to confirm — reqExecutions serves only the current session, verified returning 0 rows for a 30-day filter. Est. P&L -422.10 USD vs -353.08 if filled at the stop (-69.02 slippage). Position confirmed flat and no orphaned stop order remains."
-2026-07-25T20:29:38,CLOSE_DETECTED,AAPL,STK,SELL,15.0,,,,detected,"fully closed between 2026-07-25T16:27:14 and detection. No IBKR execution record — reqExecutions serves only the current session, so exit price and realized P&L are UNKNOWN here. Entry avg cost 328.04. Detection time is not the event time: a close over a weekend or overnight is journaled at the next run."
-2026-07-25T20:29:38,CLOSE_DETECTED,JNJ,STK,SELL,19.0,,,,detected,"fully closed between 2026-07-25T16:27:14 and detection. No IBKR execution record — reqExecutions serves only the current session, so exit price and realized P&L are UNKNOWN here. Entry avg cost 249.98. Detection time is not the event time: a close over a weekend or overnight is journaled at the next run."
-2026-07-27T01:51:25,BLOCKED,JNJ,STK,SELL,19.0,263.4,,,blocked,"notional $5,005 exceeds limit $5,000"
-2026-07-27T01:51:29,BLOCKED,AAPL,STK,SELL,15.0,333.8,,,blocked,"notional $5,007 exceeds limit $5,000"
-2026-07-27T01:51:29,SUBMIT,AMZN,STK,BUY,21,232.71,217.74,,submitted,bracket order
-2026-07-27T01:51:30,RESULT,AMZN,STK,BUY,21,232.71,217.74,,Cancelled,bracket placed (parent status shown)
-2026-07-27T01:51:31,SUBMIT,MSFT,STK,BUY,13,383.31,359.0,,submitted,bracket order
-2026-07-27T01:51:32,RESULT,MSFT,STK,BUY,13,383.31,359.0,,Cancelled,bracket placed (parent status shown)
-2026-07-27T01:51:32,SUBMIT,DIS,STK,BUY,52,95.37,90.83,,submitted,bracket order
-2026-07-27T01:51:33,RESULT,DIS,STK,BUY,52,95.37,90.83,,Cancelled,bracket placed (parent status shown)
-2026-07-27T01:51:30,RESULT_CORRECTED,AMZN,STK,BUY,21,232.73,217.74,,Filled (confirmed 2026-07-28),"CORRECTS the RESULT row at 2026-07-27T01:51:30 which recorded 'Cancelled'. That row was WRONG: place_bracket_order journalled trades[0].orderStatus.status after a fixed ib.sleep(1), i.e. a snapshot of the PARENT status one second after submission, and never looked again. The bracket filled afterwards. Verified read-only against IBKR account DUQ903866 on 2026-07-28 (reqPositionsAsync + reqAllOpenOrders). Position AMZN 21 @ avg cost 232.73 is open with a live GTC stop at 217.74 (PreSubmitted) covering the full quantity. Price column is the IBKR avg cost, not the 232.71 limit submitted."
-2026-07-27T01:51:33,RESULT_CORRECTED,DIS,STK,BUY,52,95.39,90.83,,Filled (confirmed 2026-07-28),"CORRECTS the RESULT row at 2026-07-27T01:51:33 which recorded 'Cancelled' — same parent-status snapshot bug as the AMZN row above. Verified read-only against IBKR account DUQ903866 on 2026-07-28 (reqPositionsAsync + reqAllOpenOrders). Position DIS 52 @ avg cost 95.39 is open with a live GTC stop at 90.83 (PreSubmitted) covering the full quantity. Price column is the IBKR avg cost, not the 95.37 limit submitted."
-2026-07-27T01:51:32,NOTE,MSFT,STK,BUY,13,383.31,359.0,,Cancelled (confirmed),"The MSFT 'Cancelled' RESULT row at 2026-07-27T01:51:32 is CORRECT — this leg genuinely died to IBKR error 10349 (Order TIF set to DAY based on order preset). Verified read-only against IBKR account DUQ903866 on 2026-07-28 (reqPositionsAsync + reqAllOpenOrders). No MSFT position and no MSFT order exist. Note the preset cancelled 1 of 3 entries, not all 3: AMZN and DIS filled."
-2026-07-25T20:29:38,NOTE,AAPL,STK,,,,,,phantom — disregard,"The CLOSE_DETECTED row for AAPL 15->0 at this timestamp is FABRICATED. It was produced by the swallowed-positions-timeout bug in reflect_on_trades.py tier 2 (an empty ib.positions() cache read as a flat account), fixed in commit 9a51cb1. AAPL 15 @ 328.04 was open then and is still open now with a live GTC stop at 309.10. Verified read-only against IBKR account DUQ903866 on 2026-07-28 (reqPositionsAsync + reqAllOpenOrders). No AAPL close has ever occurred."
-2026-07-25T20:29:38,NOTE,JNJ,STK,,,,,,phantom — disregard,"The CLOSE_DETECTED row for JNJ 19->0 at this timestamp is FABRICATED — same swallowed-timeout bug as the AAPL note above, fixed in commit 9a51cb1. JNJ 19 @ 249.98 was open then and is still open now with a live GTC stop at 237.61. Verified read-only against IBKR account DUQ903866 on 2026-07-28 (reqPositionsAsync + reqAllOpenOrders). No JNJ close has ever occurred."
-2026-07-28T01:42:42,NOTE,KO,STK,BUY,1,42.03,37.83,,probe,"DIAGNOSTIC PROBE, not a trade. 1 share, BUY limit 50% below the 84.07 last close, placed while the market is closed and cancelled immediately. Sole purpose: determine whether a Gateway Order Preset still forces DAY TIF (IBKR error 10349), which cancelled the MSFT entry on 2026-07-27."
-2026-07-28T01:42:43,SUBMIT,KO,STK,BUY,1,42.03,37.83,,submitted,bracket order
-2026-07-28T01:43:13,RESULT,KO,STK,BUY,1,42.03,37.83,,PreSubmitted,bracket parent: filled 0/1 | IBKR 10349: Order TIF was set to DAY based on order preset.
-2026-07-28T01:44:11,SUBMIT,KO,STK,BUY,1,42.03,37.83,,submitted,bracket order
-2026-07-28T01:44:41,RESULT,KO,STK,BUY,1,42.03,37.83,,PreSubmitted,bracket parent: filled 0/1 | IBKR 10349: Order TIF was set to DAY based on order preset.
-2026-07-28T01:49:17,SUBMIT,KO,STK,BUY,1,42.03,37.83,,submitted,bracket order
-2026-07-28T01:49:47,RESULT,KO,STK,BUY,1,42.03,37.83,,PreSubmitted,bracket parent: filled 0/1
-2026-07-28T01:50:12,NOTE,KO,STK,,,,,,probe resolved,"PROBE CONCLUSION 2026-07-28: IBKR error 10349 was OUR BUG, not a Gateway Order Preset needing a GUI fix. place_bracket_order built the parent LimitOrder with no explicit tif; the preset filled in the blank with DAY and announced it. The error's reqId was always the PARENT's, and the stop leg — which always carried explicit tif=GTC — kept GTC at IBKR throughout (verified via reqAllOpenOrders). Setting the parent to tif=DAY explicitly eliminates 10349 entirely: re-probe returned LMT tif=DAY / STP tif=GTC, both PreSubmitted, no error. All three probe orders cancelled, 0 leftovers, account unchanged at 4 positions."
-2026-08-01T22:26:04,CLOSE_DETECTED,AAPL,STK,SELL,15.0,,,,detected,"fully closed between 2026-07-29T15:22:22 and detection. No IBKR execution record — reqExecutions serves only the current session, so exit price and realized P&L are UNKNOWN here. Entry avg cost 328.04. Detection time is not the event time: a close over a weekend or overnight is journaled at the next run."
-2026-08-01T23:34:37,PROPOSAL,JNJ,STK,SELL,19.0,,,,declined,owner declined rebalance
-2026-08-01T23:34:37,PROPOSAL,AMZN,STK,SELL,21.0,,,,declined,owner declined rebalance
-2026-08-01T23:34:37,PROPOSAL,PG,STK,BUY,344,145.27,137.18,,declined,owner declined rebalance
-2026-08-01T23:34:37,PROPOSAL,NVDA,STK,BUY,250,199.97,183.7,,declined,owner declined rebalance
-2026-08-01T23:41:58,PROPOSAL,JNJ,STK,SELL,19.0,,,,declined,owner declined rebalance
-2026-08-01T23:41:58,PROPOSAL,AMZN,STK,SELL,21.0,,,,declined,owner declined rebalance
-2026-08-01T23:41:58,PROPOSAL,PG,STK,BUY,344,145.27,137.18,,declined,owner declined rebalance
-2026-08-01T23:41:58,PROPOSAL,NVDA,STK,BUY,250,199.97,183.7,,declined,owner declined rebalance
+timestamp,event,symbol,sec_type,action,quantity,price,stop,target,status,detail,venue
+2026-07-21T22:44:12,SUBMIT,GOOGL,STK,BUY,14,351.28,327.98,,submitted,bracket order,ibkr
+2026-07-21T22:44:13,RESULT,GOOGL,STK,BUY,14,351.28,327.98,,Filled,bracket placed (parent status shown),ibkr
+2026-07-21T22:44:13,SUBMIT,AAPL,STK,BUY,15,329.6,311.23,,submitted,bracket order,ibkr
+2026-07-21T22:44:14,RESULT,AAPL,STK,BUY,15,329.6,311.23,,Filled,bracket placed (parent status shown),ibkr
+2026-07-21T22:44:14,BLOCKED,JNJ,STK,BUY,20,251.09,236.84,,blocked,"notional $5,022 exceeds limit $5,000",ibkr
+2026-07-21T22:46:36,SUBMIT,JNJ,STK,BUY,19,251.15,236.9,,submitted,bracket order,ibkr
+2026-07-21T22:46:37,RESULT,JNJ,STK,BUY,19,251.15,236.9,,Filled,bracket placed (parent status shown),ibkr
+2026-07-21T23:34:32,SUBMIT,GOOGL,STK,SELL,14.0,,326.06,,submitted,re-protect: standalone GTC stop (original DAY stop expired),ibkr
+2026-07-21T23:34:32,RESULT,GOOGL,STK,SELL,14.0,,326.06,,PreSubmitted,re-protect stop,ibkr
+2026-07-21T23:34:34,SUBMIT,JNJ,STK,SELL,19.0,,237.61,,submitted,re-protect: standalone GTC stop (original DAY stop expired),ibkr
+2026-07-21T23:34:34,RESULT,JNJ,STK,SELL,19.0,,237.61,,PreSubmitted,re-protect stop,ibkr
+2026-07-21T23:34:37,SUBMIT,AAPL,STK,SELL,15.0,,309.1,,submitted,re-protect: standalone GTC stop (original DAY stop expired),ibkr
+2026-07-21T23:34:37,RESULT,AAPL,STK,SELL,15.0,,309.1,,PreSubmitted,re-protect stop,ibkr
+2026-07-23T16:30:00,CLOSE_RECONSTRUCTED,GOOGL,STK,SELL,14,321.13,326.06,,Filled (inferred),"RECONSTRUCTED 2026-07-25, not observed live. GTC stop 326.06 GAPPED THROUGH: 2026-07-23 opened 321.13, below the stop, so the fill was at the open, not the stop price. Date/price inferred from daily bars (first bar with Low<=stop; Open<stop => gap). No IBKR execution record exists to confirm — reqExecutions serves only the current session, verified returning 0 rows for a 30-day filter. Est. P&L -422.10 USD vs -353.08 if filled at the stop (-69.02 slippage). Position confirmed flat and no orphaned stop order remains.",ibkr
+2026-07-25T20:29:38,CLOSE_DETECTED,AAPL,STK,SELL,15.0,,,,detected,"fully closed between 2026-07-25T16:27:14 and detection. No IBKR execution record — reqExecutions serves only the current session, so exit price and realized P&L are UNKNOWN here. Entry avg cost 328.04. Detection time is not the event time: a close over a weekend or overnight is journaled at the next run.",ibkr
+2026-07-25T20:29:38,CLOSE_DETECTED,JNJ,STK,SELL,19.0,,,,detected,"fully closed between 2026-07-25T16:27:14 and detection. No IBKR execution record — reqExecutions serves only the current session, so exit price and realized P&L are UNKNOWN here. Entry avg cost 249.98. Detection time is not the event time: a close over a weekend or overnight is journaled at the next run.",ibkr
+2026-07-27T01:51:25,BLOCKED,JNJ,STK,SELL,19.0,263.4,,,blocked,"notional $5,005 exceeds limit $5,000",ibkr
+2026-07-27T01:51:29,BLOCKED,AAPL,STK,SELL,15.0,333.8,,,blocked,"notional $5,007 exceeds limit $5,000",ibkr
+2026-07-27T01:51:29,SUBMIT,AMZN,STK,BUY,21,232.71,217.74,,submitted,bracket order,ibkr
+2026-07-27T01:51:30,RESULT,AMZN,STK,BUY,21,232.71,217.74,,Cancelled,bracket placed (parent status shown),ibkr
+2026-07-27T01:51:31,SUBMIT,MSFT,STK,BUY,13,383.31,359.0,,submitted,bracket order,ibkr
+2026-07-27T01:51:32,RESULT,MSFT,STK,BUY,13,383.31,359.0,,Cancelled,bracket placed (parent status shown),ibkr
+2026-07-27T01:51:32,SUBMIT,DIS,STK,BUY,52,95.37,90.83,,submitted,bracket order,ibkr
+2026-07-27T01:51:33,RESULT,DIS,STK,BUY,52,95.37,90.83,,Cancelled,bracket placed (parent status shown),ibkr
+2026-07-27T01:51:30,RESULT_CORRECTED,AMZN,STK,BUY,21,232.73,217.74,,Filled (confirmed 2026-07-28),"CORRECTS the RESULT row at 2026-07-27T01:51:30 which recorded 'Cancelled'. That row was WRONG: place_bracket_order journalled trades[0].orderStatus.status after a fixed ib.sleep(1), i.e. a snapshot of the PARENT status one second after submission, and never looked again. The bracket filled afterwards. Verified read-only against IBKR account DUQ903866 on 2026-07-28 (reqPositionsAsync + reqAllOpenOrders). Position AMZN 21 @ avg cost 232.73 is open with a live GTC stop at 217.74 (PreSubmitted) covering the full quantity. Price column is the IBKR avg cost, not the 232.71 limit submitted.",ibkr
+2026-07-27T01:51:33,RESULT_CORRECTED,DIS,STK,BUY,52,95.39,90.83,,Filled (confirmed 2026-07-28),"CORRECTS the RESULT row at 2026-07-27T01:51:33 which recorded 'Cancelled' — same parent-status snapshot bug as the AMZN row above. Verified read-only against IBKR account DUQ903866 on 2026-07-28 (reqPositionsAsync + reqAllOpenOrders). Position DIS 52 @ avg cost 95.39 is open with a live GTC stop at 90.83 (PreSubmitted) covering the full quantity. Price column is the IBKR avg cost, not the 95.37 limit submitted.",ibkr
+2026-07-27T01:51:32,NOTE,MSFT,STK,BUY,13,383.31,359.0,,Cancelled (confirmed),"The MSFT 'Cancelled' RESULT row at 2026-07-27T01:51:32 is CORRECT — this leg genuinely died to IBKR error 10349 (Order TIF set to DAY based on order preset). Verified read-only against IBKR account DUQ903866 on 2026-07-28 (reqPositionsAsync + reqAllOpenOrders). No MSFT position and no MSFT order exist. Note the preset cancelled 1 of 3 entries, not all 3: AMZN and DIS filled.",ibkr
+2026-07-25T20:29:38,NOTE,AAPL,STK,,,,,,phantom — disregard,"The CLOSE_DETECTED row for AAPL 15->0 at this timestamp is FABRICATED. It was produced by the swallowed-positions-timeout bug in reflect_on_trades.py tier 2 (an empty ib.positions() cache read as a flat account), fixed in commit 9a51cb1. AAPL 15 @ 328.04 was open then and is still open now with a live GTC stop at 309.10. Verified read-only against IBKR account DUQ903866 on 2026-07-28 (reqPositionsAsync + reqAllOpenOrders). No AAPL close has ever occurred.",ibkr
+2026-07-25T20:29:38,NOTE,JNJ,STK,,,,,,phantom — disregard,"The CLOSE_DETECTED row for JNJ 19->0 at this timestamp is FABRICATED — same swallowed-timeout bug as the AAPL note above, fixed in commit 9a51cb1. JNJ 19 @ 249.98 was open then and is still open now with a live GTC stop at 237.61. Verified read-only against IBKR account DUQ903866 on 2026-07-28 (reqPositionsAsync + reqAllOpenOrders). No JNJ close has ever occurred.",ibkr
+2026-07-28T01:42:42,NOTE,KO,STK,BUY,1,42.03,37.83,,probe,"DIAGNOSTIC PROBE, not a trade. 1 share, BUY limit 50% below the 84.07 last close, placed while the market is closed and cancelled immediately. Sole purpose: determine whether a Gateway Order Preset still forces DAY TIF (IBKR error 10349), which cancelled the MSFT entry on 2026-07-27.",ibkr
+2026-07-28T01:42:43,SUBMIT,KO,STK,BUY,1,42.03,37.83,,submitted,bracket order,ibkr
+2026-07-28T01:43:13,RESULT,KO,STK,BUY,1,42.03,37.83,,PreSubmitted,bracket parent: filled 0/1 | IBKR 10349: Order TIF was set to DAY based on order preset.,ibkr
+2026-07-28T01:44:11,SUBMIT,KO,STK,BUY,1,42.03,37.83,,submitted,bracket order,ibkr
+2026-07-28T01:44:41,RESULT,KO,STK,BUY,1,42.03,37.83,,PreSubmitted,bracket parent: filled 0/1 | IBKR 10349: Order TIF was set to DAY based on order preset.,ibkr
+2026-07-28T01:49:17,SUBMIT,KO,STK,BUY,1,42.03,37.83,,submitted,bracket order,ibkr
+2026-07-28T01:49:47,RESULT,KO,STK,BUY,1,42.03,37.83,,PreSubmitted,bracket parent: filled 0/1,ibkr
+2026-07-28T01:50:12,NOTE,KO,STK,,,,,,probe resolved,"PROBE CONCLUSION 2026-07-28: IBKR error 10349 was OUR BUG, not a Gateway Order Preset needing a GUI fix. place_bracket_order built the parent LimitOrder with no explicit tif; the preset filled in the blank with DAY and announced it. The error's reqId was always the PARENT's, and the stop leg — which always carried explicit tif=GTC — kept GTC at IBKR throughout (verified via reqAllOpenOrders). Setting the parent to tif=DAY explicitly eliminates 10349 entirely: re-probe returned LMT tif=DAY / STP tif=GTC, both PreSubmitted, no error. All three probe orders cancelled, 0 leftovers, account unchanged at 4 positions.",ibkr
+2026-08-01T22:26:04,CLOSE_DETECTED,AAPL,STK,SELL,15.0,,,,detected,"fully closed between 2026-07-29T15:22:22 and detection. No IBKR execution record — reqExecutions serves only the current session, so exit price and realized P&L are UNKNOWN here. Entry avg cost 328.04. Detection time is not the event time: a close over a weekend or overnight is journaled at the next run.",ibkr
+2026-08-01T23:34:37,PROPOSAL,JNJ,STK,SELL,19.0,,,,declined,owner declined rebalance,ibkr
+2026-08-01T23:34:37,PROPOSAL,AMZN,STK,SELL,21.0,,,,declined,owner declined rebalance,ibkr
+2026-08-01T23:34:37,PROPOSAL,PG,STK,BUY,344,145.27,137.18,,declined,owner declined rebalance,ibkr
+2026-08-01T23:34:37,PROPOSAL,NVDA,STK,BUY,250,199.97,183.7,,declined,owner declined rebalance,ibkr
+2026-08-01T23:41:58,PROPOSAL,JNJ,STK,SELL,19.0,,,,declined,owner declined rebalance,ibkr
+2026-08-01T23:41:58,PROPOSAL,AMZN,STK,SELL,21.0,,,,declined,owner declined rebalance,ibkr
+2026-08-01T23:41:58,PROPOSAL,PG,STK,BUY,344,145.27,137.18,,declined,owner declined rebalance,ibkr
+2026-08-01T23:41:58,PROPOSAL,NVDA,STK,BUY,250,199.97,183.7,,declined,owner declined rebalance,ibkr
+2026-08-06T22:42:06,NOTE,,cfd,,,,,,autotrade enabled,"FTMO autotrade turned ON from the web UI. Signal: kronos. The rule engine, sizer and stop attachment stay enforced either way.",ftmo
+2026-08-07T21:26:09,SUBMIT,SOLUSD,cfd,BUY,5500,73.49000,68.98714,,sending,crypto; kronos pred +27.99%; risk $247.66,ftmo
+2026-08-07T21:26:10,REJECTED,SOLUSD,cfd,BUY,5500,73.49000,68.98714,,rejected,INVALID_REQUEST: Relative stop loss has invalid precision,ftmo
+2026-08-07T21:26:10,SUBMIT,NATGAS.cash,cfd,BUY,134000,2.69100,2.50471,,sending,commodities; kronos pred +27.40%; risk $249.62,ftmo
+2026-08-07T21:26:11,REJECTED,NATGAS.cash,cfd,BUY,134000,2.69100,2.50471,,rejected,INVALID_REQUEST: Relative stop loss has invalid precision,ftmo
+2026-08-07T21:26:11,SUBMIT,ETHUSD,cfd,BUY,210,1911.77000,1793.45000,,sending,crypto; kronos pred +14.39%; risk $248.47,ftmo
+2026-08-07T21:26:12,RESULT,ETHUSD,cfd,BUY,210,1911.77000,1793.45000,,accepted,venue response ProtoOAExecutionEvent,ftmo
+2026-08-07T21:26:12,SUBMIT,LTCUSD,cfd,BUY,9800,45.49000,42.95429,,sending,crypto; kronos pred +6.63%; risk $248.50,ftmo
+2026-08-07T21:26:13,REJECTED,LTCUSD,cfd,BUY,9800,45.49000,42.95429,,rejected,INVALID_REQUEST: Relative stop loss has invalid precision,ftmo
+2026-08-07T21:32:31,EXIT,ETHUSD,cfd,CLOSE,210,,,,sent,rotated out; position 10163281,ftmo
+2026-08-07T21:32:31,SUBMIT,SOLUSD,cfd,BUY,5500,73.47000,68.96714,,sending,crypto; kronos pred +35.37%; risk $247.66,ftmo
+2026-08-07T21:32:32,REJECTED,SOLUSD,cfd,BUY,5500,73.47000,68.96714,,rejected,INVALID_REQUEST: Relative stop loss has invalid precision,ftmo
+2026-08-07T21:32:32,SUBMIT,NATGAS.cash,cfd,BUY,134000,2.68600,2.49971,,sending,commodities; kronos pred +30.07%; risk $249.62,ftmo
+2026-08-07T21:32:33,REJECTED,NATGAS.cash,cfd,BUY,134000,2.68600,2.49971,,rejected,INVALID_REQUEST: Relative stop loss has invalid precision,ftmo
+2026-08-07T21:32:33,SUBMIT,LTCUSD,cfd,BUY,9800,45.50000,42.96429,,sending,crypto; kronos pred +14.02%; risk $248.50,ftmo
+2026-08-07T21:32:34,REJECTED,LTCUSD,cfd,BUY,9800,45.50000,42.96429,,rejected,INVALID_REQUEST: Relative stop loss has invalid precision,ftmo
+2026-08-07T21:32:34,SUBMIT,EURUSD,cfd,BUY,2200000,1.15627,1.14524,,sending,fx; kronos pred -0.15%; risk $242.69,ftmo
+2026-08-07T21:32:35,RESULT,EURUSD,cfd,BUY,2200000,1.15627,1.14524,,accepted,venue response ProtoOAExecutionEvent,ftmo
+2026-08-07T22:33:02,SUBMIT,NATGAS.cash,cfd,BUY,134000,2.68600,2.49971,,sending,commodities; kronos pred +31.05%; risk $249.62,ftmo
+2026-08-07T22:33:03,REJECTED,NATGAS.cash,cfd,BUY,134000,2.68600,2.49971,,rejected,INVALID_REQUEST: Relative stop loss has invalid precision,ftmo
+2026-08-07T22:33:03,SUBMIT,SOLUSD,cfd,BUY,5500,73.87000,69.36714,,sending,crypto; kronos pred +23.22%; risk $247.66,ftmo
+2026-08-07T22:33:04,REJECTED,SOLUSD,cfd,BUY,5500,73.87000,69.36714,,rejected,INVALID_REQUEST: Relative stop loss has invalid precision,ftmo
+2026-08-07T22:33:04,SUBMIT,ETHUSD,cfd,BUY,210,1917.42000,1799.10000,,sending,crypto; kronos pred +14.58%; risk $248.47,ftmo
+2026-08-07T22:33:05,RESULT,ETHUSD,cfd,BUY,210,1917.42000,1799.10000,,accepted,venue response ProtoOAExecutionEvent,ftmo
+2026-08-07T22:33:05,SUBMIT,LTCUSD,cfd,BUY,9800,45.42000,42.88429,,sending,crypto; kronos pred +9.45%; risk $248.50,ftmo
+2026-08-07T22:33:06,REJECTED,LTCUSD,cfd,BUY,9800,45.42000,42.88429,,rejected,INVALID_REQUEST: Relative stop loss has invalid precision,ftmo
