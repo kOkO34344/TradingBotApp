@@ -94,3 +94,8 @@ trade_journal.csv.bak-*
 # how the daily limit would evaluate against a fiction.
 ftmo_runner_state.json
 ftmo_runner.log
+# The launchd twin. Every other automation here ignores both its own log and
+# its *_launchd.log (autotrade, vault sync, daily digest, trade reflect); this
+# one was missed, so the FTMO runner's launchd output kept showing up as an
+# untracked file asking to be committed.
+ftmo_launchd.log
