@@ -232,17 +232,6 @@ export default function ChartsPage() {
     ? [{ price: held.stopLoss, title: "STOP", durable: true }]
     : [];
 
-  const held = positions.find((p) => p.symbol === symbol);
-
-  // Resolved here rather than inside the chart, because "is this stop
-  // durable?" is a venue question. An FTMO stop is a field on the position
-  // itself and cannot expire, unlike an IBKR DAY stop — so a stop that exists
-  // here IS durable, and one that is missing is drawn as nothing rather than
-  // as false comfort.
-  const stopLines = held?.stopLoss
-    ? [{ price: held.stopLoss, title: "STOP", durable: true }]
-    : [];
-
   const lastBar = chartData?.bars.at(-1);
   const prevBar = chartData?.bars.at(-2);
   const change =
