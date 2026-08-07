@@ -310,6 +310,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
               still shows loudly on every screen that DOES depend on Gateway,
               because there it is the reason nothing loads. */}
           {connState !== "live" && !ibkrDisabled && !isFtmoBacked(pathname) && (
+          {connState !== "live" && !isFtmoBacked(pathname) && (
             <div
               className={cn(
                 "px-4 py-1.5 text-xs border-t",
