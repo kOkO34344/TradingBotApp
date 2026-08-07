@@ -68,6 +68,12 @@ export interface ConnectionState {
   error: string | null;
   attempts: number;
   marketDataType: string;
+  /**
+   * True when the backend was told not to dial IB Gateway at all (rule 9
+   * retired the venue). Distinct from `connected: false`, which means it
+   * tried and failed. Never render this state as a fault.
+   */
+  disabled: boolean;
 }
 
 export interface RiskLimits {
