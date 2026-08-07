@@ -34,7 +34,7 @@ import {
   type Time,
 } from "lightweight-charts";
 
-import type { BarsResponse, Position } from "@/lib/api";
+import type { Bar, IndicatorResult, Levels, TradeMarker } from "@/lib/api";
 
 /**
  * Reads a CSS custom property and returns it as plain `rgb()`.
@@ -85,15 +85,51 @@ function alpha(rgb: string, a: number): string {
 
 const SERIES_COLORS = ["--chart-1", "--chart-2", "--chart-3", "--chart-4", "--chart-5"];
 
+/**
+ * What this chart needs in order to draw, independent of which broker it came
+ * from. `BarsResponse` (IBKR) and `FtmoBarsResponse` both satisfy it.
+ *
+ * Structural rather than a union of the two response types on purpose: the
+ * chart should not be able to reach for `fromCache` or `duration`, which only
+ * one venue has, and adding a third venue should not mean editing this file.
+ */
+export interface ChartPayload {
+  label: string;
+  kind: string;
+  timeframe: string;
+  bars: Bar[];
+  indicators: IndicatorResult[];
+  markers: TradeMarker[];
+  levels: Levels | null;
+  /** Price decimals, when the venue states them. Preferred over guessing. */
+  digits?: number | null;
+}
+
+/**
+ * A horizontal line to draw, already resolved by the caller.
+ *
+ * The caller decides, because "is this stop durable?" is a venue-specific
+ * question: on IBKR it means `tif === "GTC"` (a DAY stop looks like protection
+ * and evaporates at the close), while on FTMO the stop is a field on the
+ * position itself and cannot expire. Encoding either rule in here would make
+ * the chart wrong about the other venue.
+ */
+export interface ChartStopLine {
+  price: number;
+  title: string;
+  /** false draws in the warning colour — looks like protection, isn't durable. */
+  durable: boolean;
+}
+
 export function PriceChart({
   data,
-  positions,
+  stopLines,
   showVolume = true,
   height = 520,
   themeKey,
 }: {
-  data: BarsResponse | null;
-  positions?: Position[];
+  data: ChartPayload | null;
+  stopLines?: ChartStopLine[];
   showVolume?: boolean;
   height?: number;
   /** Changing this forces a rebuild so theme switches repaint the chart. */
@@ -149,6 +185,9 @@ export function PriceChart({
     });
     chartRef.current = chart;
 
+    const digits =
+      data.digits ?? (data.kind === "forex" || data.kind === "fx" ? 5 : 2);
+
     const candles = chart.addSeries(CandlestickSeries, {
       upColor: up,
       downColor: down,
@@ -158,8 +197,12 @@ export function PriceChart({
       wickDownColor: down,
       priceFormat: {
         type: "price",
-        precision: data.kind === "forex" ? 5 : 2,
-        minMove: data.kind === "forex" ? 0.00001 : 0.01,
+        // Prefer the venue's own answer. FTMO alone spans 2-digit indices,
+        // 3-digit gas and 5-digit FX, so a kind-based guess would flatten
+        // every EURUSD candle to a flat line at 2dp. The kind check stays as
+        // the fallback for IBKR, which reports no digits.
+        precision: digits,
+        minMove: 1 / 10 ** digits,
       },
     });
     candles.setData(
@@ -322,23 +365,21 @@ export function PriceChart({
       }
     }
 
-    const position = positions?.find((p) => p.symbol === data.label);
-    for (const stop of position?.stops ?? []) {
+    for (const stop of stopLines ?? []) {
       if (!stop.price) continue; // no trigger price known — draw nothing
-      // A DAY stop is drawn in the warning colour, not the normal stop
-      // colour: it looks like protection and stops being protection at the
-      // session close. That distinction is the whole point of the line.
-      const isGtc = stop.tif === "GTC";
+      // A non-durable stop is drawn in the warning colour, not the normal
+      // stop colour: it looks like protection and stops being protection.
+      // That distinction is the whole point of the line.
       priceLinesRef.current.push(
         candles.createPriceLine({
           price: stop.price,
-          color: isGtc
+          color: stop.durable
             ? cssVar("--loss", "#ef5350")
             : cssVar("--unknown", "#e0a458"),
           lineWidth: 2,
-          lineStyle: isGtc ? 0 : 2,
+          lineStyle: stop.durable ? 0 : 2,
           axisLabelVisible: true,
-          title: `STOP ${stop.tif}${isGtc ? "" : " — expires at close"}`,
+          title: stop.title,
         })
       );
     }
@@ -353,7 +394,7 @@ export function PriceChart({
       chartRef.current = null;
       candleRef.current = null;
     };
-  }, [data, positions, showVolume, height, paneAssignment, themeKey]);
+  }, [data, stopLines, showVolume, height, paneAssignment, themeKey]);
 
   // `autoSize` makes the chart track this element, so the element is sized by
   // the layout (h-full inside a flex-1 parent) rather than a hardcoded pixel

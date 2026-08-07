@@ -41,6 +41,11 @@ const EVENT_STYLES: Record<string, string> = {
   CLOSE_DETECTED: "text-unknown",
   CLOSE_RECONSTRUCTED: "text-unknown",
   NOTE: "text-muted-foreground italic",
+  // The FTMO runner's own vocabulary. Without these its rows rendered
+  // unstyled, so a REJECTED order looked no different from a routine SUBMIT.
+  EXIT: "text-unknown",
+  REJECTED: "text-loss",
+  ERROR: "text-loss font-medium",
 };
 
 export default function JournalPage() {
@@ -70,7 +75,10 @@ export default function JournalPage() {
         r.symbol.toUpperCase().includes(q) ||
         r.event.toUpperCase().includes(q) ||
         r.detail.toUpperCase().includes(q) ||
-        r.status.toUpperCase().includes(q)
+        r.status.toUpperCase().includes(q) ||
+        // Matches the label actually on screen, so typing "IBKR" finds the
+        // pre-migration rows that display as ibkr but store "".
+        (r.venue || "ibkr").toUpperCase().includes(q)
       );
     });
   }, [rows, query, eventFilter, hideNotes]);
@@ -112,7 +120,7 @@ export default function JournalPage() {
           <Input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Filter by symbol, status or detail"
+            placeholder="Filter by symbol, venue, status or detail"
             className="w-72 pl-8"
           />
         </div>
@@ -158,6 +166,7 @@ export default function JournalPage() {
                 <th className="px-3 py-2.5 text-left font-medium">Time</th>
                 <th className="px-3 py-2.5 text-left font-medium">Event</th>
                 <th className="px-3 py-2.5 text-left font-medium">Symbol</th>
+                <th className="px-3 py-2.5 text-left font-medium">Venue</th>
                 <th className="px-3 py-2.5 text-left font-medium">Side</th>
                 <th className="px-3 py-2.5 text-right font-medium">Qty</th>
                 <th className="px-3 py-2.5 text-right font-medium">Price</th>
@@ -170,7 +179,7 @@ export default function JournalPage() {
               {journal.loading && rows.length === 0 && (
                 <tr>
                   <td
-                    colSpan={9}
+                    colSpan={10}
                     className="px-3 py-10 text-center text-muted-foreground"
                   >
                     Reading trade_journal.csv…
@@ -183,7 +192,7 @@ export default function JournalPage() {
               {!journal.loading && filtered.length === 0 && (
                 <tr>
                   <td
-                    colSpan={9}
+                    colSpan={10}
                     className="px-3 py-10 text-center text-muted-foreground"
                   >
                     No rows match this filter.
@@ -253,6 +262,28 @@ function JournalTableRow({ row }: { row: JournalRow }) {
         )}
       >
         {row.symbol || DASH}
+      </td>
+      {/* Which broker this row belongs to. The journal has held both since
+          the 2026-08-06 migration, and the two share ticker spellings — an
+          AAPL row means a different instrument on each. A blank venue is a
+          pre-migration row, which is IBKR by construction; it is labelled
+          that way rather than left empty, but dimmed, because the value was
+          inferred from the row's age rather than recorded at the time. */}
+      <td className="px-3 py-2">
+        <Badge
+          variant="outline"
+          className={cn(
+            "text-[10px] uppercase",
+            !row.venue && "text-muted-foreground/60"
+          )}
+          title={
+            row.venue
+              ? undefined
+              : "Written before the venue column existed — IBKR by construction"
+          }
+        >
+          {row.venue || "ibkr"}
+        </Badge>
       </td>
       <td
         className={cn(

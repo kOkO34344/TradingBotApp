@@ -703,11 +703,35 @@ async def ftmo_universe():
 
 
 @app.get("/api/ftmo/bars")
-async def ftmo_bars(symbol: str, period: str = "D1", count: int = 300):
+async def ftmo_bars(
+    symbol: str,
+    period: str = Query(ftmo_api.DEFAULT_TIMEFRAME,
+                        description="Chart key (1m..1d) or cTrader period (M1..D1)"),
+    count: int | None = Query(None, description="Bars to pull; per-timeframe default"),
+    indicators: str | None = Query(None, description="Comma list, e.g. sma:20,rsi:14"),
+    levels: bool = Query(False, description="Include swing support/resistance"),
+    markers: bool = Query(True, description="Include this symbol's FTMO journal fills"),
+):
+    """Bars + overlays for one FTMO symbol. The venue's own prints, not a proxy.
+
+    `symbol` is an FTMO instrument name (`EURUSD`, `US30.cash`), which is why
+    this does not go through `contracts.resolve()` — that resolver speaks IBKR
+    contracts and knows nothing about CFDs.
+    """
+    specs = [s.strip() for s in (indicators or "").split(",") if s.strip()]
     try:
-        return await run_in_threadpool(ftmo_api.bars, symbol, period, count)
+        return await run_in_threadpool(
+            ftmo_api.bars, symbol, period, count, specs, levels, markers)
+    except ValueError as e:              # an unknown timeframe is the caller's
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:                                    # noqa: BLE001
         raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/ftmo/timeframes")
+async def ftmo_timeframes():
+    return {"timeframes": ftmo_api.timeframe_list(),
+            "default": ftmo_api.DEFAULT_TIMEFRAME}
 
 
 class FtmoAutotradeToggle(BaseModel):

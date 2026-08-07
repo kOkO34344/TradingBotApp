@@ -33,17 +33,35 @@ from pathlib import Path
 BASE_DIR = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(BASE_DIR))
 
-JOURNAL_FILE = BASE_DIR / "trade_journal.csv"
+import trade_journal as tj  # noqa: E402
+
+# Both taken from the writer rather than restated. `trade_journal.py` is the
+# single source of truth for the journal's shape (rule 6), and a reader that
+# keeps its own copy of the path or the legacy default is a reader that can
+# disagree with the file it is reading.
+JOURNAL_FILE = tj.JOURNAL_FILE
+LEGACY_VENUE = tj.LEGACY_VENUE
 
 # Events that represent a position being opened / closed, i.e. the ones worth
 # drawing on a chart. NOTE and BLOCKED never produced a fill by definition.
+# The two venues spell the same three events differently, and this set has to
+# know both or one venue's trades silently never appear.
+#
+# IBKR writes RESULT/CLOSE_FILLED with status "filled"; the FTMO runner writes
+# RESULT with status "accepted" (a ProtoOAExecutionEvent came back) and EXIT
+# for a rotation close. Until 2026-08-07 only the IBKR spellings were listed,
+# so every FTMO fill scored zero markers on every chart — the trades were in
+# the journal, correctly, and simply could not be drawn.
 FILL_EVENTS = {"RESULT", "RESULT_CORRECTED", "CLOSE_FILLED",
-               "CLOSE_DETECTED", "CLOSE_RECONSTRUCTED"}
+               "CLOSE_DETECTED", "CLOSE_RECONSTRUCTED", "EXIT"}
 OPEN_EVENTS = {"SUBMIT", "RESULT", "RESULT_CORRECTED"}
-CLOSE_EVENTS = {"CLOSE_FILLED", "CLOSE_DETECTED", "CLOSE_RECONSTRUCTED"}
+CLOSE_EVENTS = {"CLOSE_FILLED", "CLOSE_DETECTED", "CLOSE_RECONSTRUCTED", "EXIT"}
 
-# Statuses that mean "this order reached the market", as IBKR reports them.
-FILLED_STATUSES = {"filled", "closed"}
+# Statuses that mean "this order reached the market". "filled"/"closed" are
+# IBKR's; "accepted" is the FTMO runner's, written only after the venue
+# returns an execution event — a REJECTED row carries "rejected" and is
+# excluded, which is the distinction that matters here.
+FILLED_STATUSES = {"filled", "closed", "accepted"}
 
 
 def _num(value):
@@ -85,6 +103,11 @@ class JournalRow:
     target: float | None
     status: str
     detail: str
+    # Blank for any row written before the 2026-08-06 migration. Those rows
+    # are all IBKR by construction, but they are reported as "" rather than
+    # backfilled here — `trade_journal.py` owns that migration, and a second
+    # place quietly inventing the same default is how the two drift apart.
+    venue: str
     superseded: bool = False
     superseded_by: int | None = None
     disputed: bool = False
@@ -105,6 +128,7 @@ class JournalRow:
             "target": self.target,
             "status": self.status,
             "detail": self.detail,
+            "venue": self.venue,
             "superseded": self.superseded,
             "supersededBy": self.superseded_by,
             "disputed": self.disputed,
@@ -133,6 +157,7 @@ def load_rows(path: Path = JOURNAL_FILE) -> list[JournalRow]:
                 target=_num(rec.get("target")),
                 status=(rec.get("status") or "").strip(),
                 detail=(rec.get("detail") or "").strip(),
+                venue=(rec.get("venue") or "").strip().lower(),
             ))
     _annotate_corrections(rows)
     return rows
@@ -171,7 +196,8 @@ def _annotate_corrections(rows: list[JournalRow]) -> None:
                     break
 
 
-def markers_for(symbol: str, path: Path = JOURNAL_FILE) -> list[dict]:
+def markers_for(symbol: str, path: Path = JOURNAL_FILE,
+                venue: str | None = None) -> list[dict]:
     """Chart markers for one symbol: entries, exits and stop levels.
 
     Superseded and disputed rows are excluded here — a chart marker is an
@@ -179,11 +205,23 @@ def markers_for(symbol: str, path: Path = JOURNAL_FILE) -> list[dict]:
     point of the correction tracking is that some of those assertions are
     known false. They remain visible on the journal screen, where the
     contradiction is the information.
+
+    `venue` filters to one broker and matters because the two share ticker
+    spellings: an IBKR AAPL share and an FTMO AAPL CFD are different
+    instruments at different prices, and plotting one venue's fills on the
+    other's chart would be a marker asserting something that never happened
+    there. Rows written before the venue column existed are all IBKR, so they
+    match `venue="ibkr"` — otherwise the whole pre-migration history would
+    vanish from every chart. Default `None` keeps every row, which is what a
+    venue-agnostic caller wants.
     """
     symbol = symbol.upper()
+    want = venue.strip().lower() if venue else None
     out: list[dict] = []
     for row in load_rows(path):
         if row.symbol.upper() != symbol or row.epoch is None:
+            continue
+        if want is not None and (row.venue or LEGACY_VENUE) != want:
             continue
         if row.superseded or row.disputed:
             continue
@@ -267,6 +305,19 @@ def _selftest() -> int:
     check("AAPL has an entry marker", any(m["kind"] == "entry" for m in aapl))
     check("markers are time-sorted", all(
         a["time"] <= b["time"] for a, b in zip(aapl, aapl[1:])))
+
+    # The venue filter. The journal holds two brokers that share ticker
+    # spellings, so an unfiltered marker set can assert a fill on a chart of a
+    # different instrument at a different price.
+    check("a pre-migration row reads as IBKR rather than as no venue",
+          len(markers_for("AAPL", venue="ibkr")) == len(aapl))
+    check("AAPL's IBKR fills do NOT appear on the FTMO instrument of the "
+          "same name",
+          markers_for("AAPL", venue="ftmo") == [])
+    check("an unknown venue matches nothing rather than everything",
+          markers_for("AAPL", venue="nosuchbroker") == [])
+    check("no venue filter still returns every row, for venue-agnostic callers",
+          len(markers_for("AAPL")) == len(aapl))
 
     s = summary()
     check("summary counts all rows", s["total"] == len(rows))

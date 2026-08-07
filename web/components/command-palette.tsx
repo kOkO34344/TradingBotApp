@@ -62,7 +62,7 @@ export function CommandPalette() {
   const router = useRouter();
   const [open, setOpen] = useState(false);
   const [q, setQ] = useState("");
-  const [active, setActive] = useState(0);
+  const [rawActive, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement>(null);
 
   const results = useMemo(
@@ -95,9 +95,13 @@ export function CommandPalette() {
 
   // Clamp rather than reset: re-clamping on every keystroke would fight the
   // arrow keys as the result list shrinks under the selection.
-  useEffect(() => {
-    setActive((a) => Math.min(a, Math.max(0, results.length - 1)));
-  }, [results.length]);
+  //
+  // Derived during render, NOT written back with setState in an effect. The
+  // effect version was a cascading render — React would paint one frame with
+  // the stale out-of-range index before the correction landed — and it is the
+  // pattern `set-state-in-effect` exists to catch. Nothing else needs the
+  // clamped value to live in state, so it doesn't.
+  const active = Math.min(rawActive, Math.max(0, results.length - 1));
 
   if (!open) return null;
 

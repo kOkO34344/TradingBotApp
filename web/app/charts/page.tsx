@@ -1,25 +1,31 @@
 "use client";
 
 /**
- * charts/page.tsx — the charting screen.
+ * charts/page.tsx — the charting screen, on the FTMO venue.
  *
- * Symbol box accepts all five asset classes the bot can trade (see
- * api/contracts.py for the accepted spellings). Bars, indicators, levels
- * and trade markers arrive in one request so the chart never renders price
- * before its overlays and flickers, and so a timeframe flip costs IBKR one
- * paced historical request rather than four.
+ * MOVED OFF IBKR 2026-08-07. It used to chart IBKR contracts through
+ * `/api/bars`, which stopped working the moment IB Gateway went down — and
+ * IBKR is retired in place (rule 9), so that was never coming back. Every
+ * request returned `ConnectionRefusedError [Errno 61] ... 4002` and the screen
+ * was a permanent error card. Bars now come from the venue this project
+ * actually trades, through `/api/ftmo/bars`.
  *
- * The data-source strip under the chart is deliberate. This account has no
- * live market-data subscription, so everything here is delayed; the strip
- * says so, names the source, and shows the age of the pull. A trading
- * screen that implies "live" when it isn't is the kind of quiet wrongness
- * this project keeps having to dig out of the journal afterwards.
+ * Charting the traded instrument rather than a proxy is the point, not a
+ * side effect: FTMO's instruments are CFDs (`US30.cash`, `NATGAS.cash`) with
+ * no yfinance or IBKR equivalent, and Kronos forecasts the same series this
+ * draws.
+ *
+ * Bars, indicators, levels and trade markers still arrive in one request so
+ * the chart never paints price before its overlays and flickers.
+ *
+ * Markers are filtered to `venue="ftmo"`. The journal holds both brokers now,
+ * and an IBKR AAPL share is not an FTMO AAPL CFD — drawing one venue's fills
+ * on the other's chart would assert something that never happened there.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
-  Check,
   ChevronDown,
   Clock,
   Loader2,
@@ -30,12 +36,13 @@ import {
 
 import {
   api,
-  type BarsResponse,
+  ftmo as ftmoApi,
+  type FtmoBarsResponse,
   type IndicatorCatalogEntry,
-  type Position,
 } from "@/lib/api";
-import { useFetch, useLive } from "@/lib/use-live";
-import { DASH, fmtAge, fmtPct, fmtPrice, fmtTime, pnlClass } from "@/lib/format";
+import { useFtmoStream } from "@/lib/use-ftmo";
+import { useFetch } from "@/lib/use-live";
+import { DASH, fmtPct, fmtPrice, fmtTime, pnlClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -52,7 +59,7 @@ import {
 import { PriceChart } from "@/components/chart/price-chart";
 import { SymbolSearch } from "@/components/symbol-search";
 
-const TIMEFRAMES = ["1m", "5m", "15m", "1h", "1d"];
+const TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
 const DEFAULT_INDICATORS = ["sma:20", "ema:50"];
 
 const STORAGE_KEY = "tradingbot.charts.v1";
@@ -65,7 +72,10 @@ interface ChartPrefs {
 }
 
 const DEFAULT_PREFS: ChartPrefs = {
-  symbol: "AAPL",
+  // An FTMO instrument name, not an IBKR ticker. EURUSD is the venue's most
+  // liquid symbol and the one whose 5-digit pricing exercises the precision
+  // path that a 2-digit default would hide.
+  symbol: "EURUSD",
   timeframe: "1d",
   indicators: DEFAULT_INDICATORS,
   showLevels: true,
@@ -105,7 +115,7 @@ function readPrefs(): ChartPrefs {
 }
 
 export default function ChartsPage() {
-  const live = useLive();
+  const ftmo = useFtmoStream();
   const [symbolInput, setSymbolInput] = useState(DEFAULT_PREFS.symbol);
   const [symbol, setSymbol] = useState(DEFAULT_PREFS.symbol);
   const [timeframe, setTimeframe] = useState(DEFAULT_PREFS.timeframe);
@@ -141,16 +151,17 @@ export default function ChartsPage() {
     () => api.indicatorCatalog(),
     []
   );
-  const watchlist = useFetch(() => api.watchlist(), []);
-  // Deliberately not swallowed with a `.catch(() => [])`: if this fails, the
-  // chart genuinely does not know whether the symbol is held or where its
-  // stop is, and the header says so instead of silently showing nothing —
-  // which is indistinguishable from "you hold no position here".
-  const positions = useFetch(() => api.positions(), [live.revisions.positions]);
+  // The venue's own tradeable universe replaces the IBKR watchlist. Those
+  // were US stock tickers; none of them exist on this broker.
+  const universe = useFetch(() => ftmoApi.universe(), []);
 
-  const bars = useFetch<BarsResponse>(
+  // Positions ride the same WebSocket the /ftmo screen uses, so the chart and
+  // the venue screen cannot disagree about what is held.
+  const positions = ftmo.snap?.positions ?? [];
+
+  const bars = useFetch<FtmoBarsResponse>(
     () =>
-      api.bars({
+      ftmoApi.bars({
         symbol,
         timeframe,
         indicators,
@@ -171,9 +182,16 @@ export default function ChartsPage() {
   // absent rather than shown under the new symbol's heading.
   const chartData = bars.error ? null : bars.data;
 
-  const held: Position | undefined = positions.data?.positions.find(
-    (p) => p.symbol === chartData?.label
-  );
+  const held = positions.find((p) => p.symbol === symbol);
+
+  // Resolved here rather than inside the chart, because "is this stop
+  // durable?" is a venue question. An FTMO stop is a field on the position
+  // itself and cannot expire, unlike an IBKR DAY stop — so a stop that exists
+  // here IS durable, and one that is missing is drawn as nothing rather than
+  // as false comfort.
+  const stopLines = held?.stopLoss
+    ? [{ price: held.stopLoss, title: "STOP", durable: true }]
+    : [];
 
   const lastBar = chartData?.bars.at(-1);
   const prevBar = chartData?.bars.at(-2);
@@ -231,27 +249,28 @@ export default function ChartsPage() {
           variant="ghost"
           size="icon"
           onClick={() => setReloadNonce((n) => n + 1)}
-          title="Refetch from IBKR (bypasses the bar cache TTL)"
+          title="Refetch trendbars from FTMO"
         >
           <RefreshCw className={cn("size-4", bars.loading && "animate-spin")} />
         </Button>
 
         <div className="ml-auto flex items-center gap-1.5 overflow-x-auto">
-          {(watchlist.data?.tickers ?? []).slice(0, 14).map((t) => (
+          {(universe.data?.universe ?? []).map((u) => (
             <button
-              key={t}
+              key={u.symbol}
               onClick={() => {
-                setSymbol(t);
-                setSymbolInput(t);
+                setSymbol(u.symbol);
+                setSymbolInput(u.symbol);
               }}
+              title={`${u.assetClass} · ${u.digits}dp`}
               className={cn(
-                "rounded px-2 py-1 font-mono text-xs transition-colors",
-                symbol === t
+                "rounded px-2 py-1 font-mono text-xs whitespace-nowrap transition-colors",
+                symbol === u.symbol
                   ? "bg-accent text-accent-foreground"
                   : "text-muted-foreground hover:bg-accent/50 hover:text-foreground"
               )}
             >
-              {t}
+              {u.symbol}
             </button>
           ))}
         </div>
@@ -282,18 +301,26 @@ export default function ChartsPage() {
         {held && (
           <div className="flex items-center gap-2 text-sm">
             <Badge variant="secondary" className="font-mono">
-              HOLDING {held.position}
+              {held.side} {held.units.toLocaleString()}
             </Badge>
-            <StopBadge position={held} />
+            {held.stopLoss ? (
+              <Badge variant="outline" className="border-profit/50 text-profit font-mono">
+                STOP {fmtPrice(held.stopLoss, chartData?.kind)}
+              </Badge>
+            ) : (
+              <Badge variant="outline" className="border-loss/50 text-loss gap-1">
+                <AlertTriangle className="size-3" />
+                UNPROTECTED
+              </Badge>
+            )}
           </div>
         )}
 
-        {positions.error && (
-          <Badge
-            variant="outline"
-            className="border-unknown/50 text-unknown gap-1"
-            title={positions.error.message}
-          >
+        {/* Rule 1: a dropped socket is missing information, not "flat". The
+            last frame is still on screen, so say it may be stale rather than
+            letting an absent position read as no position. */}
+        {!ftmo.live && (
+          <Badge variant="outline" className="border-unknown/50 text-unknown gap-1">
             <AlertTriangle className="size-3" />
             POSITION STATE UNKNOWN
           </Badge>
@@ -303,7 +330,7 @@ export default function ChartsPage() {
           <div className="ml-auto flex items-center gap-3 text-xs text-muted-foreground">
             <span className="flex items-center gap-1">
               <Clock className="size-3" />
-              {chartData.count} bars · {chartData.duration}
+              {chartData.count} bars · {chartData.period}
             </span>
           </div>
         )}
@@ -328,44 +355,35 @@ export default function ChartsPage() {
         {!bars.error && bars.loading && !chartData && (
           <div className="flex h-full items-center justify-center gap-2 text-muted-foreground">
             <Loader2 className="size-4 animate-spin" />
-            Loading bars from IBKR…
+            Loading trendbars from FTMO…
           </div>
         )}
 
-        {chartData && (
-          <PriceChart data={chartData} positions={positions.data?.positions} />
-        )}
+        {chartData && <PriceChart data={chartData} stopLines={stopLines} />}
       </div>
 
       {/* ------------------------------------------------------ source strip */}
       {chartData && (
         <div className="flex flex-wrap items-center gap-x-4 gap-y-1 border-t border-border px-4 py-2 text-xs text-muted-foreground">
           <span>
-            Source <span className="text-foreground">{chartData.source}</span>
+            Source{" "}
+            <span className="text-foreground">FTMO / cTrader {chartData.period}</span>
           </span>
           {chartData.delayed && (
             <Badge
               variant="outline"
               className="border-unknown/40 text-unknown text-[10px]"
-              title="This account has no live market-data subscription; IBKR serves delayed data (reqMarketDataType 3)."
             >
               DELAYED
             </Badge>
           )}
           <span>
-            Fetched {fmtAge(chartData.ageSeconds)}
-            {chartData.fromCache && " (cached)"}
-          </span>
-          <span>
             Last bar{" "}
             <span className="text-foreground">{fmtTime(lastBar?.time)}</span>
           </span>
-          {chartData.stale && (
-            <span className="text-unknown">
-              Stale — IBKR request failed, showing the previous pull:{" "}
-              {chartData.error}
-            </span>
-          )}
+          {/* The FTMO session streams; it has no bar cache to age or go stale,
+              so there is no "fetched N ago (cached)" to report here. Showing a
+              fabricated age would be worse than showing none. */}
           {failedIndicators.map((ind) => (
             <span key={ind.id} className="text-unknown">
               {ind.name}: {ind.error}
@@ -383,38 +401,14 @@ export default function ChartsPage() {
   );
 }
 
-function StopBadge({ position }: { position: Position }) {
-  if (position.protected === null) {
-    return (
-      <Badge
-        variant="outline"
-        className="border-unknown/50 text-unknown gap-1"
-        title={position.protectionReason}
-      >
-        <AlertTriangle className="size-3" />
-        STOP UNKNOWN
-      </Badge>
-    );
-  }
-  if (!position.protected) {
-    return (
-      <Badge variant="destructive" className="gap-1" title={position.protectionReason}>
-        <AlertTriangle className="size-3" />
-        UNPROTECTED
-      </Badge>
-    );
-  }
-  return (
-    <Badge
-      variant="outline"
-      className="border-profit/40 text-profit gap-1"
-      title={position.protectionReason}
-    >
-      <Check className="size-3" />
-      GTC STOP
-    </Badge>
-  );
-}
+/*
+ * The IBKR-shaped `StopBadge` that used to live here is gone. Its three states
+ * existed because IBKR reports a stop as a SEPARATE order that can be missing,
+ * DAY-scoped, or unknowable when `reqAllOpenOrders` wedges. An FTMO stop is a
+ * field on the position itself, returned in the same frame, so "unknown" is
+ * not a state this venue can be in — and rendering an amber UNKNOWN that can
+ * never occur would be inventing doubt rather than reporting it.
+ */
 
 function IndicatorPicker({
   catalog,
