@@ -76,6 +76,11 @@ class ConnectionState:
     error: str | None = None
     attempts: int = 0
     market_data_type: str = "delayed"
+    # True when the backend was told not to dial Gateway at all (rule 9).
+    # "Deliberately not connected" and "should be connected and isn't" look
+    # identical in every other field, and the UI must not render the first as
+    # a fault — that is what made a healthy FTMO dashboard look broken.
+    disabled: bool = False
 
     def as_dict(self) -> dict:
         return {
@@ -89,6 +94,7 @@ class ConnectionState:
             "error": self.error,
             "attempts": self.attempts,
             "marketDataType": self.market_data_type,
+            "disabled": self.disabled,
         }
 
 

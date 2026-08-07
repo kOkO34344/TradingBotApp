@@ -548,6 +548,37 @@ def universe() -> list[dict]:
              "quoteAsset": specs[s]["quote_asset"]} for s, c in pairs]
 
 
+def all_symbols() -> list[dict]:
+    """Every symbol the venue carries, for the chart's symbol search.
+
+    Deliberately wider than `universe()`. That returns the ~14 symbols the
+    RUNNER is configured to trade; all 202 are chartable, and a search box that
+    could only find the ones already being traded would be useless for deciding
+    what to trade next.
+
+    `assetClass` is filled in only for symbols in the configured universe —
+    everything else reports "", because the universe is the only thing that
+    knows, and a guessed label on a chart is worse than no label.
+    """
+    try:
+        specs = svc.load_symbol_specs()
+    except FileNotFoundError:
+        return []
+    classes: dict[str, str] = {}
+    try:
+        classes = dict(sig.build_universe(specs, sig.load_universe()))
+    except ValueError:
+        pass
+    return sorted(
+        ({"symbol": name,
+          "assetClass": classes.get(name, ""),
+          "digits": spec.get("digits"),
+          "quoteAsset": spec.get("quote_asset", "")}
+         for name, spec in specs.items()),
+        key=lambda r: (r["assetClass"] == "", r["symbol"]),
+    )
+
+
 def selftest() -> int:
     """Offline. No venue, no credentials, no session.
 

@@ -38,19 +38,32 @@ export function KillSwitch({
   disabled,
   disabledReason,
   onChanged,
+  venue = "ibkr",
 }: {
   autotradeEnabled: boolean;
   disabled: boolean;
   disabledReason: string;
   onChanged: () => void;
+  /**
+   * Which venue's unattended runner this switch cuts.
+   *
+   * It follows the venue that can actually trade. Once IBKR's web connection
+   * went off by default, the header switch was cutting a runner on a retired
+   * broker while the FTMO runner fired unattended every hour — a kill switch
+   * pointed at the wrong venue is worse than none, because it looks like
+   * cover it does not provide.
+   */
+  venue?: "ibkr" | "ftmo";
 }) {
   const [confirmOpen, setConfirmOpen] = useState(false);
   const [busy, setBusy] = useState(false);
+  const isFtmo = venue === "ftmo";
+  const endpoint = isFtmo ? "/api/ftmo/autotrade" : "/api/autotrade";
 
   const setEnabled = async (enabled: boolean) => {
     setBusy(true);
     try {
-      const res = await fetch(`${API_BASE}/api/autotrade`, {
+      const res = await fetch(`${API_BASE}${endpoint}`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ enabled }),
@@ -58,11 +71,15 @@ export function KillSwitch({
       const body = await res.json();
       if (!res.ok) throw new Error(body?.detail ?? `${res.status}`);
       toast[enabled ? "warning" : "success"](
-        enabled ? "Autotrade ARMED" : "Autotrade disabled",
+        enabled
+          ? `${isFtmo ? "FTMO" : "IBKR"} autotrade ARMED`
+          : `${isFtmo ? "FTMO" : "IBKR"} autotrade disabled`,
         {
           description: enabled
-            ? "The hourly runner will trade unattended from the next firing. RiskGuard stays enforced."
-            : "The hourly runner will place nothing. The launchd job stays installed.",
+            ? isFtmo
+              ? "Kronos will trade FTMO unattended from the next firing. The rule engine, sizer and server-side stop stay enforced."
+              : "The hourly runner will trade unattended from the next firing. RiskGuard stays enforced."
+            : "The runner will place nothing. The launchd job stays installed.",
         }
       );
       onChanged();
@@ -114,26 +131,49 @@ export function KillSwitch({
               Arm unattended trading?
             </DialogTitle>
             <DialogDescription>
-              The hourly runner will place real paper orders with no approval
-              prompt, every hour the NYSE is open.
+              {isFtmo
+                ? "Kronos will place real orders on the FTMO Challenge account with no approval prompt, hourly between 16:30 and 11:30 Sofia time, every day except Sunday."
+                : "The hourly runner will place real paper orders with no approval prompt, every hour the NYSE is open."}
             </DialogDescription>
           </DialogHeader>
 
           <ul className="list-disc space-y-1.5 pl-5 text-sm text-muted-foreground">
-            <li>
-              RiskGuard stays fully enforced — order notional, max positions,
-              daily-loss breaker, stop required.
-            </li>
-            <li>
-              The signal is <span className="font-mono">kronos</span>. Momentum
-              is disabled in code; if it were selected the runner would refuse
-              to fire rather than substitute another signal.
-            </li>
-            <li>
-              Neither eligible signal showed measurable edge at hourly cadence
-              (IC −0.081 / −0.037). This is a live experiment, not a validated
-              strategy.
-            </li>
+            {isFtmo ? (
+              <>
+                <li>
+                  The rule engine, the per-trade and portfolio risk caps and the
+                  server-side stop attached at entry all stay enforced. Autonomy
+                  removes the approval step, never a limit.
+                </li>
+                <li>
+                  All four asset classes <span className="font-medium">failed</span>{" "}
+                  their IC screen in 2026-08-03 (no |t| above 1.55). Running
+                  anyway is a deliberate, recorded override — the third
+                  exception to the evidence rule, not a validated strategy.
+                </li>
+                <li>
+                  Capital is simulated, so this does not breach rule 1. The real
+                  exposure is the entry fee.
+                </li>
+              </>
+            ) : (
+              <>
+                <li>
+                  RiskGuard stays fully enforced — order notional, max positions,
+                  daily-loss breaker, stop required.
+                </li>
+                <li>
+                  The signal is <span className="font-mono">kronos</span>.
+                  Momentum is disabled in code; if it were selected the runner
+                  would refuse to fire rather than substitute another signal.
+                </li>
+                <li>
+                  Neither eligible signal showed measurable edge at hourly
+                  cadence (IC −0.081 / −0.037). This is a live experiment, not a
+                  validated strategy.
+                </li>
+              </>
+            )}
           </ul>
           <DialogFooter>
             <Button variant="ghost" onClick={() => setConfirmOpen(false)}>

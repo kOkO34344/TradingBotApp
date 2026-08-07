@@ -79,13 +79,52 @@ def _settings() -> dict:
     return ta.load_settings()
 
 
+def ibkr_web_enabled(settings: dict | None = None) -> bool:
+    """Whether the web backend should dial IB Gateway at all. OFF by default.
+
+    Rule 9 retired IBKR in place. The hub's reconnect supervisor, however, runs
+    for the life of the process, so a retired venue produced an endless stream
+    of
+
+        ConnectionRefusedError: [Errno 61] Connect call failed ('127.0.0.1', 4002)
+
+    which `/api/status` reported to every screen on every poll — turning a
+    deliberate, expected state into what looked like a broken application, on
+    a dashboard whose actual trading venue was connected and healthy the whole
+    time.
+
+    Default OFF rather than "on if it works", because trying and failing IS the
+    failure mode: each attempt burns a clientId that Gateway then holds, which
+    is the documented way to make the NEXT genuine connection fail.
+
+    **This does NOT stop IBKR's positions being managed.** `reflect_on_trades.py`
+    runs as its own process on its own launchd schedule with its own clientId,
+    and the three open positions and their GTC stops are its job. This flag
+    governs one thing: whether the *browser* keeps a read connection open.
+
+    Set `ibkr.web_enabled` true in trader_settings.json to turn the IBKR
+    screens back on when Gateway is running.
+    """
+    block = (settings if settings is not None else _settings()).get("ibkr") or {}
+    return bool(block.get("web_enabled", False))
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     settings = _settings()
     port = int(settings.get("ibkr_port", ib_svc.PAPER_PORT_GATEWAY))
     hub = IBHub(port=port)
     set_hub(hub)
-    await hub.start()          # never raises; degraded mode if Gateway is down
+    if ibkr_web_enabled(settings):
+        await hub.start()      # never raises; degraded mode if Gateway is down
+    else:
+        hub.state.disabled = True
+        hub.state.error = (
+            "IBKR is retired in place (rule 9) and the web backend is not "
+            "connecting to it. Its open positions are still managed by "
+            "reflect_on_trades.py. Set ibkr.web_enabled true in "
+            "trader_settings.json to re-enable these screens.")
+        log.info("IBKR web connection disabled — FTMO is the active venue")
 
     # The write worker connects lazily on its first order, not here: most
     # sessions never place one, and an idle second connection is a second
@@ -726,6 +765,12 @@ async def ftmo_bars(
         raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:                                    # noqa: BLE001
         raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/ftmo/symbols")
+async def ftmo_symbols():
+    """Every chartable FTMO instrument, not just the traded universe."""
+    return {"symbols": await run_in_threadpool(ftmo_api.all_symbols)}
 
 
 @app.get("/api/ftmo/timeframes")

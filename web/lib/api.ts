@@ -68,6 +68,12 @@ export interface ConnectionState {
   error: string | null;
   attempts: number;
   marketDataType: string;
+  /**
+   * True when the backend was told not to dial IB Gateway at all (rule 9
+   * retired the venue). Distinct from `connected: false`, which means it
+   * tried and failed. Never render this state as a fault.
+   */
+  disabled: boolean;
 }
 
 export interface RiskLimits {
@@ -190,7 +196,7 @@ export interface SymbolSuggestion {
   secType: string;
   exchange: string;
   currency: string;
-  source: "watchlist" | "ibkr";
+  source: "watchlist" | "ibkr" | "ftmo";
 }
 
 export interface ResolvedSymbol {
@@ -643,6 +649,19 @@ export interface FtmoPlanResult {
   ranked: FtmoRankRow[];
 }
 
+/**
+ * A chartable instrument. Narrower than `FtmoUniverseSymbol` on purpose: the
+ * volume fields the sizer needs are only meaningful for symbols the runner is
+ * configured to trade, and this list covers every symbol the venue carries.
+ */
+export interface FtmoSymbol {
+  symbol: string;
+  /** "" when the symbol is outside the configured trading universe. */
+  assetClass: string;
+  digits: number | null;
+  quoteAsset: string;
+}
+
 export interface FtmoUniverseSymbol {
   symbol: string;
   assetClass: string;
@@ -689,6 +708,8 @@ export interface FtmoTimeframe {
 export const ftmo = {
   autotrade: () => request<FtmoAutotradeState>("/api/ftmo/autotrade"),
   universe: () => request<{ universe: FtmoUniverseSymbol[] }>("/api/ftmo/universe"),
+  /** All chartable instruments, not just the traded universe. */
+  symbols: () => request<{ symbols: FtmoSymbol[] }>("/api/ftmo/symbols"),
   timeframes: () =>
     request<{ timeframes: FtmoTimeframe[]; default: string }>(
       "/api/ftmo/timeframes"

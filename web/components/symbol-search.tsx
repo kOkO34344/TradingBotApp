@@ -33,16 +33,30 @@ export function SymbolSearch({
   onChange,
   onSubmit,
   className,
+  suggest,
 }: {
   value: string;
   onChange: (next: string) => void;
   /** Called with the query string to chart. */
   onSubmit: (query: string) => void;
   className?: string;
+  /**
+   * Optional replacement for the built-in IBKR contract search.
+   *
+   * The FTMO chart passes one so this box searches the instruments that venue
+   * actually carries. Without it the box happily suggested `SPY` and `NVDA` —
+   * IBKR contracts that resolve fine and then fail at the venue with
+   * `not in the symbol capture`, which reads as a broken chart rather than as
+   * a symbol that was never available.
+   *
+   * Synchronous because the caller already holds the list; there is no reason
+   * to make a network round trip per keystroke to filter 202 strings.
+   */
+  suggest?: (query: string) => SymbolSuggestion[];
 }) {
   const [open, setOpen] = useState(false);
-  const [results, setResults] = useState<SymbolSuggestion[]>([]);
-  const [note, setNote] = useState<string | null>(null);
+  const [remoteResults, setResults] = useState<SymbolSuggestion[]>([]);
+  const [remoteNote, setNote] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
   const [active, setActive] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
@@ -55,6 +69,21 @@ export function SymbolSearch({
   // commit, which cascades renders (and eslint's react-hooks rule flags it).
   const canSearch = query.length >= MIN_CHARS;
 
+  // With a local suggester the list is a pure function of what is typed, so it
+  // is computed here rather than mirrored into state by an effect. That keeps
+  // one source of truth and avoids the cascading render the effect version
+  // caused. The remote path still needs state, because its answer arrives
+  // later than the keystroke that asked for it.
+  const localResults =
+    suggest && canSearch ? suggest(query) : suggest ? [] : null;
+  const results = localResults ?? remoteResults;
+  const note =
+    localResults === null
+      ? remoteNote
+      : localResults.length === 0 && canSearch
+        ? "No matching FTMO instrument."
+        : null;
+
   useEffect(() => {
     if (suppress.current) {
       // Just picked a row — don't immediately re-search its own text.
@@ -62,6 +91,11 @@ export function SymbolSearch({
       return;
     }
     if (!canSearch) return;
+
+    // A local suggester needs no effect at all — see `results` below, which
+    // derives from it during render. Writing it into state here would be a
+    // cascading render, and the value is already available synchronously.
+    if (suggest) return;
 
     const id = ++requestId.current;
     const timer = setTimeout(() => {
@@ -88,7 +122,7 @@ export function SymbolSearch({
     }, DEBOUNCE_MS);
 
     return () => clearTimeout(timer);
-  }, [query, canSearch]);
+  }, [query, canSearch, suggest]);
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -140,10 +174,16 @@ export function SymbolSearch({
       )}
       <input
         value={value}
-        onChange={(e) => onChange(e.target.value)}
+        onChange={(e) => {
+          onChange(e.target.value);
+          // The local path has no async response to open the list for it.
+          setOpen(true);
+        }}
         onKeyDown={onKeyDown}
         onFocus={() => results.length > 0 && setOpen(true)}
-        placeholder="AAPL · EUR.USD · BTC-USD · ES=F"
+        placeholder={
+          suggest ? "EURUSD · US30.cash · XAUUSD" : "AAPL · EUR.USD · BTC-USD · ES=F"
+        }
         spellCheck={false}
         autoComplete="off"
         aria-label="Symbol"

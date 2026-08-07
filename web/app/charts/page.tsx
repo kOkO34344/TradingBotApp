@@ -23,7 +23,7 @@
  * on the other's chart would assert something that never happened there.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   ChevronDown,
@@ -62,7 +62,13 @@ import { SymbolSearch } from "@/components/symbol-search";
 const TIMEFRAMES = ["1m", "5m", "15m", "30m", "1h", "4h", "1d"];
 const DEFAULT_INDICATORS = ["sma:20", "ema:50"];
 
-const STORAGE_KEY = "tradingbot.charts.v1";
+// v2 because v1 stored an IBKR ticker. A saved "SPY" or "NVDA" is not an FTMO
+// instrument, so restoring it after the venue move greeted you with
+// `'SPY' is not in the symbol capture` and a chart that looked broken — with
+// no clue that the fix was simply to pick a different symbol. Bumping the key
+// retires those saved values instead of trying to translate them; there is no
+// honest mapping from a US share to a CFD universe.
+const STORAGE_KEY = "tradingbot.charts.v2";
 
 interface ChartPrefs {
   symbol: string;
@@ -154,6 +160,32 @@ export default function ChartsPage() {
   // The venue's own tradeable universe replaces the IBKR watchlist. Those
   // were US stock tickers; none of them exist on this broker.
   const universe = useFetch(() => ftmoApi.universe(), []);
+  // Every chartable instrument, for the search box. Wider than the universe:
+  // all 202 can be charted, only ~14 are configured for trading.
+  const allSymbols = useFetch(() => ftmoApi.symbols(), []);
+
+  const suggest = useCallback(
+    (q: string) => {
+      const needle = q.trim().toUpperCase();
+      const rows = allSymbols.data?.symbols ?? [];
+      return rows
+        .filter((s) => s.symbol.toUpperCase().includes(needle))
+        .slice(0, 12)
+        .map((s) => ({
+          query: s.symbol,
+          symbol: s.symbol,
+          label: s.symbol,
+          description: s.assetClass
+            ? `${s.assetClass} · traded universe`
+            : "CFD",
+          secType: "cfd",
+          exchange: "FTMO",
+          currency: s.quoteAsset || "",
+          source: "ftmo" as const,
+        }));
+    },
+    [allSymbols.data]
+  );
 
   // Positions ride the same WebSocket the /ftmo screen uses, so the chart and
   // the venue screen cannot disagree about what is held.
@@ -181,6 +213,24 @@ export default function ChartsPage() {
   // just asked for and failed to load. On error the chart data is treated as
   // absent rather than shown under the new symbol's heading.
   const chartData = bars.error ? null : bars.data;
+
+  // The venue's own words for "I don't carry that", from
+  // `ftmo_session.trendbars`. Matched on the message rather than a status code
+  // because the backend reports every venue refusal as a 502 — this one is the
+  // user's typo, not a broken connection, and the two deserve different help.
+  const notOnVenue = Boolean(
+    bars.error?.message?.includes("not in the symbol capture")
+  );
+  const held = positions.find((p) => p.symbol === symbol);
+
+  // Resolved here rather than inside the chart, because "is this stop
+  // durable?" is a venue question. An FTMO stop is a field on the position
+  // itself and cannot expire, unlike an IBKR DAY stop — so a stop that exists
+  // here IS durable, and one that is missing is drawn as nothing rather than
+  // as false comfort.
+  const stopLines = held?.stopLoss
+    ? [{ price: held.stopLoss, title: "STOP", durable: true }]
+    : [];
 
   const held = positions.find((p) => p.symbol === symbol);
 
@@ -211,6 +261,7 @@ export default function ChartsPage() {
           value={symbolInput}
           onChange={setSymbolInput}
           onSubmit={submit}
+          suggest={suggest}
         />
 
         <div className="flex items-center rounded-md border border-border p-0.5">
@@ -342,11 +393,44 @@ export default function ChartsPage() {
           <Card className="m-4 border-loss/40 bg-loss/5 p-4">
             <div className="flex items-start gap-3">
               <AlertTriangle className="mt-0.5 size-5 shrink-0 text-loss" />
-              <div className="space-y-1">
+              <div className="space-y-2">
                 <p className="font-medium text-loss">Could not load {symbol}</p>
                 <p className="text-sm text-muted-foreground">
                   {bars.error.message}
                 </p>
+                {/* A symbol this venue does not carry is a recoverable mistake,
+                    so the recovery is offered here rather than left as an
+                    error to stare at. IBKR tickers are the likely cause: this
+                    screen used to chart them. */}
+                {notOnVenue && (
+                  <div className="space-y-1.5 pt-1">
+                    <p className="text-sm text-muted-foreground">
+                      <span className="font-medium text-foreground">
+                        {symbol}
+                      </span>{" "}
+                      is not an FTMO instrument. This screen charted IBKR
+                      tickers until 2026-08-07 — the venue trades CFDs like{" "}
+                      <span className="font-mono">EURUSD</span> and{" "}
+                      <span className="font-mono">US30.cash</span>. Pick one:
+                    </p>
+                    <div className="flex flex-wrap gap-1.5">
+                      {(universe.data?.universe ?? []).slice(0, 14).map((u) => (
+                        <Button
+                          key={u.symbol}
+                          size="sm"
+                          variant="outline"
+                          className="h-7 font-mono text-xs"
+                          onClick={() => {
+                            setSymbol(u.symbol);
+                            setSymbolInput(u.symbol);
+                          }}
+                        >
+                          {u.symbol}
+                        </Button>
+                      ))}
+                    </div>
+                  </div>
+                )}
               </div>
             </div>
           </Card>
