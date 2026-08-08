@@ -1094,10 +1094,28 @@ sections close to verbatim, so keep those reasonably current.
   TCP connection that died during suspend, which is why the error lands 8-15s
   after each wake. Longer timeouts make failures slower, not rarer. This is a
   power-management problem: a laptop on battery with a one-minute idle-sleep
-  timer cannot host an unattended process. Unfixed as of 2026-08-08 — the
-  owner was given the options (`caffeinate -i` wrapper in the plist, raising
-  `pmset -b sleep`, or `pmset repeat wakeorpoweron`) and chose to decide
-  separately.
+  timer cannot host an unattended process.
+  **MITIGATED 2026-08-08: `ftmo_runner.sh` now execs the runner under
+  `caffeinate -i`**, which holds a `PreventUserIdleSystemSleep` assertion for
+  the lifetime of the child only — the machine stays up for the ~3 minutes a
+  firing takes and is free to sleep straight after. No system-wide `pmset`
+  setting was changed. NOT `-s`: that only prevents system sleep on AC power
+  and this machine runs on battery, so it would silently do nothing.
+  It lives in the WRAPPER, not the plist, deliberately: the wrapper is tracked
+  in git and re-read on every firing, so changing it needs no `launchctl`
+  reload — worth more than tidiness given the sandbox gotcha above. It
+  degrades to running bare if `caffeinate` is absent.
+  **Verified only at the mechanism level, NOT under the real failure
+  condition**, and the reason matters: **Claude Code's own session holds
+  `caffeinate -i -t 300` assertions while it works**, so the Mac does not
+  sleep during a session at all. That is very likely why the 18:30 firing on
+  2026-08-08 succeeded after 22 failures — the machine was being held awake by
+  the tooling, not by any fix. **Do not read a firing that succeeded during an
+  agent session as evidence this is solved.** The real test is a firing with no
+  session running.
+  A residual race remains: launchd starts the job inside a ~2-second DarkWake,
+  so if sleep lands in the ~1s before `caffeinate` asserts, the firing is still
+  lost. The window is much smaller, not zero.
   The Telegram alert fails at the same moment for the same reason, so this
   failure mode is **silent** — 19 hours passed unnoticed.
 - **GitHub: `gh` is installed manually at `~/.local/bin/gh`** — there is no
