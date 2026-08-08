@@ -71,3 +71,11 @@ timestamp,event,symbol,sec_type,action,quantity,price,stop,target,status,detail,
 2026-08-07T22:33:05,RESULT,ETHUSD,cfd,BUY,210,1917.42000,1799.10000,,accepted,venue response ProtoOAExecutionEvent,ftmo
 2026-08-07T22:33:05,SUBMIT,LTCUSD,cfd,BUY,9800,45.42000,42.88429,,sending,crypto; kronos pred +9.45%; risk $248.50,ftmo
 2026-08-07T22:33:06,REJECTED,LTCUSD,cfd,BUY,9800,45.42000,42.88429,,rejected,INVALID_REQUEST: Relative stop loss has invalid precision,ftmo
+2026-08-08T18:32:38,BLOCKED,,cfd,,,,,,skipped,"EURUSD: refusing — a BUY needs a positive forecast to derive a target from, got -0.12% — no take-profit exists on the profitable side (ranked into the top 4 on a forecast of -0.12%)",ftmo
+2026-08-08T18:32:38,ERROR,ETHUSD,cfd,CLOSE,210,,,,failed,exit failed: SYMBOL_HAS_HOLIDAY: Symbols has a holiday right now,ftmo
+2026-08-08T18:32:38,SUBMIT,SOLUSD,cfd,BUY,5700,74.62000,70.23714,95.30943,sending,"crypto; kronos pred +27.73%; risk $249.82; reward $1,179.30",ftmo
+2026-08-08T18:32:40,REJECTED,SOLUSD,cfd,BUY,5700,74.62000,70.23714,95.30943,rejected,SYMBOL_HAS_HOLIDAY: Symbols has a holiday right now,ftmo
+2026-08-08T18:32:40,SUBMIT,NATGAS.cash,cfd,BUY,135000,2.69900,2.51457,3.40166,sending,commodities; kronos pred +26.03%; risk $248.98; reward $948.59,ftmo
+2026-08-08T18:32:40,REJECTED,NATGAS.cash,cfd,BUY,135000,2.69900,2.51457,3.40166,rejected,MARKET_CLOSED: Trading is not available: Market is closed.,ftmo
+2026-08-08T18:32:40,SUBMIT,LTCUSD,cfd,BUY,10300,45.58000,43.15714,46.52951,sending,crypto; kronos pred +2.08%; risk $249.55; reward $97.80,ftmo
+2026-08-08T18:32:41,REJECTED,LTCUSD,cfd,BUY,10300,45.58000,43.15714,46.52951,rejected,SYMBOL_HAS_HOLIDAY: Symbols has a holiday right now,ftmo

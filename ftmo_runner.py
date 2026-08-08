@@ -72,6 +72,7 @@ BASE_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(BASE_DIR / "TelegramBot"))
 
 import ftmo_audit as fa           # noqa: E402
+import ftmo_closes as fc          # noqa: E402
 import ftmo_rules as fr           # noqa: E402
 import ftmo_service as svc        # noqa: E402
 import ftmo_session as fs         # noqa: E402
@@ -211,6 +212,13 @@ class RunnerState:
     trading_days: int = 0
     daily_profits: list = field(default_factory=list)
     opened_today: bool = False
+    # Which positions were open when this file was last written. This is the
+    # memory close detection runs on: a position the venue stops reporting is
+    # only detectable as closed if something remembered it was there.
+    # `.get`-defaulted so a state file written before 2026-08-08 loads without
+    # a migration — an absent key means "we remember nothing", which degrades
+    # to the old behaviour rather than to a false close.
+    open_positions: dict = field(default_factory=dict)
 
     def to_json(self) -> dict:
         return {"ftmo_day": self.ftmo_day,
@@ -218,7 +226,8 @@ class RunnerState:
                 "highest_eod_balance": self.highest_eod_balance,
                 "trading_days": self.trading_days,
                 "daily_profits": list(self.daily_profits),
-                "opened_today": self.opened_today}
+                "opened_today": self.opened_today,
+                "open_positions": dict(self.open_positions)}
 
     @staticmethod
     def from_json(d: dict) -> "RunnerState":
@@ -228,7 +237,8 @@ class RunnerState:
             highest_eod_balance=float(d["highest_eod_balance"]),
             trading_days=int(d.get("trading_days", 0)),
             daily_profits=list(d.get("daily_profits", [])),
-            opened_today=bool(d.get("opened_today", False)))
+            opened_today=bool(d.get("opened_today", False)),
+            open_positions=dict(d.get("open_positions", {})))
 
 
 def load_state(path: Path = STATE_FILE) -> RunnerState | None:
@@ -350,6 +360,91 @@ def journal_ftmo(event: str, symbol: str = "", action: str = "",
                      "action": action, "quantity": quantity, "price": price,
                      "stop": stop, "target": target, "status": status,
                      "detail": detail, "venue": VENUE})
+
+
+# ----------------------------------------------------- close detection (r6)
+
+def detect_closes(session, state, now, audit=None, dry_run: bool = False,
+                  state_path: Path = STATE_FILE, journal_path: Path = None,
+                  notify=None):
+    """Record every position that closed without the runner placing the exit.
+
+    The rule 6 hole this fills: until 2026-08-08 a stop or take-profit firing
+    between firings left no journal row at all. See `ftmo_closes` for the
+    mechanism and the two incidents that shaped it.
+
+    **Ordering is the load-bearing part.** The journal row is written BEFORE
+    the position is dropped from state. If the process dies in between, the
+    next run re-detects the same close and writes a duplicate row — visible,
+    diagnosable, fixable. The other order loses the event permanently the
+    moment a write fails, and rule 6 says a fill that is not in the journal did
+    not happen. Duplicates are a nuisance; silence is the bug this exists to
+    prevent.
+
+    Returns the list of close records, possibly empty. Never raises for an
+    ordinary "nothing closed" — but a FAILED VENUE READ propagates, because a
+    read that did not happen must not be mistaken for an account that is flat.
+    """
+    journal_path = journal_path or JOURNAL
+    # Injectable so the selftest cannot text the owner a fabricated close.
+    # A test that reaches the outside world is a test nobody dares re-run.
+    notify = notify if notify is not None else send_telegram
+    remembered = fc.load_tracked(state.open_positions)
+    result = fc.reconcile(session, remembered, now)
+
+    if result["unconfirmed"]:
+        log(f"  close detection: {result['note']}")
+        journal_ftmo("NOTE", status="unconfirmed", detail=result["note"],
+                     path=journal_path)
+        return []
+
+    for rec in result["closed"]:
+        line = fc.describe(rec)
+        if dry_run:
+            log(f"  DRY RUN would record close: {line}")
+            continue
+        # Detection time is not event time. The row is stamped with the DEAL's
+        # timestamp when we have one; the detail always carries when we noticed,
+        # so a Sunday close discovered on Monday reads as what it is.
+        detail = (f"closed without the runner ({rec['reason']}); "
+                  f"detected {rec['detected_at']}")
+        if rec.get("note"):
+            detail += f"; {rec['note']}"
+        if rec["priced"]:
+            detail += (f"; gross {rec['gross_profit']:+,.2f} "
+                       f"swap {rec['swap']:+,.2f} comm {rec['commission']:,.2f}")
+        journal_ftmo(
+            "CLOSE_DETECTED", symbol=rec["symbol"],
+            action="SELL" if rec["side"] == "BUY" else "BUY",
+            quantity=rec["volume"],
+            price=(f"{rec['close_price']:.5f}" if rec["priced"] else "UNKNOWN"),
+            stop=(f"{rec['stop_loss']:.5f}" if rec["stop_loss"] else ""),
+            target=(f"{rec['take_profit']:.5f}" if rec["take_profit"] else ""),
+            # Status stays exactly "closed" whether or not we could price it.
+            # `api/journal_api.py` matches on this vocabulary
+            # (FILLED_STATUSES), and inventing a variant here would quietly
+            # drop the row out of the web UI's fill set. The unknown-ness lives
+            # in the price column, where `_num()` already reads it as None.
+            status="closed", detail=detail, path=journal_path)
+        if audit is not None:
+            try:
+                audit.record_event(_evt("CLOSE_DETECTED", rec["symbol"]), now,
+                                   position_id=rec["position_id"])
+            except Exception:                                 # noqa: BLE001
+                pass
+        log(f"  CLOSE DETECTED: {line}")
+        try:
+            notify(f"FTMO position closed itself\n{line}")
+        except Exception:                                 # noqa: BLE001
+            pass    # an alert that fails must not lose the journal row
+
+    # Only now is it safe to forget. Written even when nothing closed, so a
+    # newly opened position is remembered for the next run.
+    if not dry_run:
+        state.open_positions = fc.snapshot(result["live"],
+                                           int(now.timestamp() * 1000))
+        save_state(state, state_path)
+    return result["closed"]
 
 
 # ------------------------------------------------------------------ the run
@@ -574,6 +669,21 @@ def run(force: bool = False, dry_run: bool = False,
         state_obj, notes = advance_state(stored, acct["balance"], now, config)
         for n in notes:
             log(n)
+
+        # ---- Rule 6 before anything else: record what closed while we were
+        # not running. Deliberately BEFORE the rule engine and the forecast —
+        # a position that closed itself has already changed the account, and
+        # the journal should say so even if everything below this line refuses
+        # to trade. A failure here is logged and does not abort the cycle: not
+        # recording a close is bad, but not trading because we could not record
+        # one is worse, and the state file is only advanced on success.
+        try:
+            detect_closes(session, state_obj, now, audit=audit,
+                          dry_run=dry_run, state_path=state_path)
+        except Exception as e:                                # noqa: BLE001
+            log(f"  close detection FAILED: {type(e).__name__}: {e}")
+            journal_ftmo("ERROR", status="unknown",
+                         detail=f"close detection failed: {e}")
 
         account_state, unpriced = build_account_state(session, positions,
                                                       state_obj)
@@ -945,6 +1055,113 @@ def selftest() -> int:
     check("the dry run shows the target it would send",
           "tp {target}" in esrc or "tp {e[" in esrc)
 
+    print("close detection closes the rule 6 hole (2026-08-08):")
+    dsrc = inspect.getsource(detect_closes)
+    check("the journal row is written BEFORE state forgets the position",
+          dsrc.index("CLOSE_DETECTED") < dsrc.index("state.open_positions ="))
+    check("state is only advanced when not dry-running",
+          "if not dry_run:" in dsrc)
+    check("an unconfirmed diff records NOTHING and says so",
+          "unconfirmed" in dsrc and "NOTE" in dsrc)
+    check("detection time is carried separately from event time",
+          "detected {rec['detected_at']}" in dsrc)
+    check("an unpriced close is journalled UNKNOWN, not as a zero price",
+          'else "UNKNOWN"' in dsrc)
+    check("a failed alert cannot lose the journal row",
+          dsrc.index("journal_ftmo(\n") < dsrc.index('notify(f"FTMO'))
+    rsrc2 = inspect.getsource(run)
+    check("closes are recorded BEFORE the rule engine and the forecast",
+          rsrc2.index("detect_closes(") < rsrc2.index("fr.evaluate("))
+    check("a close-detection failure does not abort the trading cycle",
+          "close detection FAILED" in rsrc2)
+    csrc = inspect.getsource(reconcile_only)
+    check("--reconcile ignores the arm toggle (recording is not trading)",
+          'cfg["enabled"]' not in csrc)
+    check("--reconcile ignores the trading window too",
+          "within_trading_window" not in csrc)
+    check("--reconcile loads no model", "import kronos_agent" not in csrc)
+    check("--reconcile places no orders",
+          "place_market" not in csrc and "execute_plan" not in csrc)
+
+    print("end to end: a venue deal becomes a journal row:")
+
+    class _Pos:
+        def __init__(s, pid, sym, side="BUY", vol=210, entry=1917.42,
+                     sl=1799.1, tp=2196.98):
+            s.position_id, s.symbol, s.side, s.volume = pid, sym, side, vol
+            s.entry_price, s.stop_loss, s.take_profit = entry, sl, tp
+
+    e2e_now = datetime(2026, 8, 8, 12, 0, tzinfo=PRAGUE)
+    e2e_ms = int(e2e_now.timestamp() * 1000)
+
+    class _Venue:
+        def refresh_positions(s): return [_Pos(2, "EURUSD")]   # id 1 vanished
+        def deals_for_position(s, pid, a, b):
+            return [{"closed": True, "execution_ms": e2e_ms - 5 * 3600_000,
+                     "execution_price": 2196.98, "closed_volume": 210,
+                     "volume": 210, "gross_profit": 587.0, "swap": -1.5,
+                     "close_commission": 4.0, "commission": 0.0}]
+
+    e2e_j, e2e_s = tmpdir / "e2e.csv", tmpdir / "e2e_state.json"
+    e2e_state = RunnerState("2026-08-08", 25_000.0, 25_000.0,
+                            open_positions=fc.snapshot(
+                                [_Pos(1, "ETHUSD"), _Pos(2, "EURUSD")], e2e_ms))
+    texts = []
+    recs = detect_closes(_Venue(), e2e_state, e2e_now, state_path=e2e_s,
+                         journal_path=e2e_j, notify=texts.append)
+    erow = [r for r in csv.DictReader(open(e2e_j, newline=""))
+            if r["event"] == "CLOSE_DETECTED"][0]
+    check("the vanished position produced exactly one close record",
+          len(recs) == 1 and recs[0]["symbol"] == "ETHUSD")
+    check("the journal row is a CLOSE_DETECTED on the ftmo venue",
+          erow["venue"] == "ftmo")
+    check("the exit action is the OPPOSITE of the position's side",
+          erow["action"] == "SELL")
+    check("the close price is the venue's, not the entry price",
+          erow["price"] == "2196.98000")
+    check("status is exactly 'closed' — journal_api's vocabulary",
+          erow["status"] == "closed")
+    check("net P&L nets swap and commission (587 - 1.5 - 4)",
+          abs(recs[0]["net_pnl"] - 581.5) < 1e-9)
+    check("the detail says it closed WITHOUT the runner",
+          "without the runner" in erow["detail"])
+    check("the detail carries detection time, distinct from the deal time",
+          "detected" in erow["detail"]
+          and recs[0]["closed_at"] != recs[0]["detected_at"])
+    kept = json.loads(e2e_s.read_text())["open_positions"]
+    check("state now remembers only the position still open",
+          list(kept) == ["2"] and kept["2"]["symbol"] == "EURUSD")
+    check("re-running finds nothing to close (no duplicate row)",
+          detect_closes(_Venue(), RunnerState.from_json(json.loads(
+              e2e_s.read_text())), e2e_now, state_path=e2e_s,
+              journal_path=e2e_j, notify=texts.append) == [])
+    check("...and the journal still holds exactly one CLOSE_DETECTED",
+          sum(1 for r in csv.DictReader(open(e2e_j, newline=""))
+              if r["event"] == "CLOSE_DETECTED") == 1)
+    check("detect_closes takes an injectable journal path, so a test can "
+          "never write to the real audit trail",
+          "journal_path" in inspect.signature(detect_closes).parameters)
+    check("...and an injectable notifier, so --selftest cannot text the owner "
+          "a fabricated close",
+          "notify" in inspect.signature(detect_closes).parameters)
+    check("the notification fired for the close, into the test's own sink",
+          len(texts) == 1 and "ETHUSD" in texts[0])
+
+    print("state carries open positions, and old state files still load:")
+    legacy = {"ftmo_day": "2026-08-07", "day_start_balance": 24999.6,
+              "highest_eod_balance": 24999.6}
+    check("a pre-2026-08-08 state file loads without migration",
+          RunnerState.from_json(legacy).open_positions == {})
+    rt = RunnerState.from_json(json.loads(json.dumps(
+        RunnerState("2026-08-08", 25000.0, 25000.0,
+                    open_positions={"1": {"position_id": 1, "symbol": "ETHUSD",
+                                          "side": "BUY", "volume": 210,
+                                          "entry_price": 1917.42}}).to_json())))
+    check("open positions survive the state round trip",
+          rt.open_positions["1"]["symbol"] == "ETHUSD")
+    check("an absent memory means 'remember nothing', never 'all closed'",
+          fc.diff_positions(fc.load_tracked({}), [1, 2, 3])[0] == [])
+
     print("the take-profit is journalled, in the column that already exists:")
     jp2 = tmpdir / "journal_tp.csv"
     journal_ftmo("SUBMIT", symbol="ETHUSD", action="BUY", quantity=210,
@@ -965,6 +1182,43 @@ def selftest() -> int:
     return 1 if failures else 0
 
 
+def reconcile_only(dry_run: bool = False, settings_path: Path = SETTINGS,
+                   state_path: Path = STATE_FILE) -> int:
+    """Record self-closed positions and nothing else.
+
+    **Deliberately ignores both the arm toggle and the trading window.**
+    Recording what the account did is not trading, and the two must not share
+    a switch: a disarmed runner still holds positions with live stops and
+    targets, and rule 9 keeps IBKR monitoring after retirement for exactly this
+    reason — code that stops watching a position that still exists is how a
+    close goes unrecorded forever.
+
+    Loads no model. The torch import in `run()` costs ~2 GB and is pointless
+    here, which is what makes this cheap enough to schedule on its own.
+    """
+    now = datetime.now(PRAGUE)
+    settings = load_settings(settings_path)
+    cfg = autotrade_config(settings)
+    config = config_from(cfg)
+
+    specs = fs._load_specs_quietly()
+    session = fs.FTMOSession(specs=specs)
+    session.start()
+    try:
+        log(f"reconcile: connected, account {session.account_id}")
+        stored = load_state(state_path)
+        acct = session.account()
+        state_obj, notes = advance_state(stored, acct["balance"], now, config)
+        for n in notes:
+            log(n)
+        closed = detect_closes(session, state_obj, now, audit=None,
+                               dry_run=dry_run, state_path=state_path)
+        log(f"reconcile: {len(closed)} self-closed position(s) recorded")
+        return 0
+    finally:
+        session.stop()
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(
         description="Unattended Kronos trading on the FTMO venue.")
@@ -974,10 +1228,20 @@ def main() -> int:
                     help="Live data, full plan, places NOTHING.")
     ap.add_argument("--force", action="store_true",
                     help="Run even if the toggle is off.")
+    ap.add_argument("--reconcile", action="store_true",
+                    help="Record self-closed positions and exit. Places no "
+                         "orders, loads no model, ignores the arm toggle.")
     args = ap.parse_args()
 
     if args.selftest:
         return selftest()
+    if args.reconcile:
+        try:
+            return reconcile_only(dry_run=args.dry_run)
+        except Exception as e:                                # noqa: BLE001
+            log(f"ERROR: {type(e).__name__}: {e}")
+            send_telegram(f"⚠ FTMO reconcile error\n{type(e).__name__}: {e}")
+            return 1
     try:
         return run(force=args.force, dry_run=args.dry_run)
     except Exception as e:                                    # noqa: BLE001

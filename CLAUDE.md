@@ -121,10 +121,14 @@ File purposes are documented in each script's own module docstring
   orders, and `ftmo_smoke_order.py` proves the order path with one tiny trade.
   **`ftmo_runner.py` (2026-08-06) is the unattended runner** — the FTMO
   counterpart to `autotrade_runner.py`, armed by its own separate toggle.
-  **507 offline checks, measured 2026-08-08** across the nine modules that
-  carry a `--selftest`: `ftmo_sizing` 81, `ftmo_rules` 70, `ftmo_runner` 71,
+  `ftmo_closes.py` (2026-08-08) detects positions that closed WITHOUT the
+  runner — see the close-detection section below; it is the FTMO counterpart
+  to `reflect_on_trades.py`.
+  **579 offline checks, measured 2026-08-08** across the ten modules that
+  carry a `--selftest`: `ftmo_runner` 100, `ftmo_sizing` 81, `ftmo_rules` 70,
   `ftmo_session` 70, `ftmo_monitor` 63, `ftmo_audit` 48, `ftmo_service` 43,
-  `ftmo_signal` 35, `trade_journal` 26. (`ftmo_smoke_order.py` has no
+  `ftmo_closes` 43, `ftmo_signal` 35, `trade_journal` 26.
+  (`ftmo_smoke_order.py` has no
   `--selftest` — it is a live one-trade proof, and its dry-run is the check.)
   Note `ftmo_audit`'s selftest deliberately prints `AUDIT WRITE FAILED` to
   stderr while testing an unwritable path; that is a passing test, not a
@@ -676,18 +680,67 @@ hypothetical — it would have blocked the 2026-08-07 21:32 EURUSD entry
 (predicted **-0.15%**), the same trade the inverted rotation margin caused.
 Before 2026-08-08 that candidate produced an order.
 
-Two consequences to keep in view, neither of them solved:
+One consequence to keep in view:
 
-- **A take-profit is a second way for a position to close with the runner not
-  involved, and FTMO still has no close detection.** The runner journals only
-  exits it places itself. A target firing on its own leaves no journal row, no
-  alert and no reflection — the GOOGL-close shape, pointed at the outcomes you
-  most want recorded. This gap got more consequential on 2026-08-08, not less.
 - **The target inherits the forecast's noise.** CLAUDE.md already records the
   same symbol re-forecast ten minutes later moving +17.64% -> +25.15%. The stop
   is ATR-derived and stable; the target is not, so two runs can size a position
   identically and target it differently. That is a property of the chosen rule,
   not a defect. The TP is fixed at fill, so it does not drift mid-position.
+
+## FTMO close detection — `ftmo_closes.py`
+
+**Closed 2026-08-08.** Until then the FTMO runner journalled only the exits it
+PLACED, so a stop or take-profit firing between firings left no journal row, no
+alert and no reflection — rule 6 broken on the venue that trades unattended.
+Adding a take-profit the same day made it worse, because a target fires on
+exactly the outcomes most worth recording.
+
+Tier 1 is the live `ProtoOAExecutionEvent` stream (nearly free, catches almost
+nothing — the runner's session lives ~2 minutes an hour). **Tier 2 does the
+work**: `ftmo_runner_state.json` now carries `open_positions`, and each run
+diffs what it remembers against what the venue reports. Anything remembered but
+absent closed on its own.
+
+Better positioned than its IBKR sibling in one specific way: cTrader returns
+the actual closing DEAL via `ProtoOADealListByPositionIdReq`, so a detected
+close carries the venue's own price, gross profit, swap and commission.
+`reflect_on_trades.py` tier 2 writes no reflection because it has no realized
+P&L to build one from; here there is one.
+
+Five properties not to regress:
+
+1. **A read that FAILED is not an account that is flat.** Every "vanished"
+   conclusion needs a successful read — `reconcile()` propagates the exception
+   rather than returning an empty result. And a diff that would close
+   EVERYTHING is re-read before anything is written, because that is the shape
+   of the 2026-07-25 phantom liquidation. One position vanishing is ordinary
+   and is not double-checked.
+2. **Journal FIRST, then forget.** The state file is advanced only after the
+   row is written. A crash in between costs a duplicate row on the next run —
+   visible and fixable. The other order loses the event permanently, and rule 6
+   says a fill not in the journal did not happen.
+3. **Detection time is not event time.** The row is stamped with the DEAL's
+   `executionTimestamp`; when we noticed goes in the detail. The runner fires
+   only in-window, so a Sunday close really is discovered on Monday.
+4. **A close we cannot price is recorded as a close with an UNKNOWN price**,
+   never at zero and never at the entry price. Status stays exactly `closed`
+   so `api/journal_api.py`'s `FILLED_STATUSES` still matches it; `_num()`
+   already reads `UNKNOWN` as None.
+5. **`classify_close()` compares SIDES, not distances.** A stop that gaps
+   through fills BEYOND its level — GOOGL's 326.06 stop filled at the 321.13
+   open, 1.5% away — so nearest-level matching calls the single most important
+   case "neither". A long closing at or below its stop is a stop-out at any
+   distance. The percentage tolerance applies only BETWEEN the two levels.
+   The classification is a GUESS and is labelled one everywhere: cTrader tells
+   you the price, not the intent.
+
+`python3 ftmo_runner.py --reconcile` runs detection alone — no orders, no
+torch, and it **deliberately ignores both the arm toggle and the trading
+window**, because recording what the account did is not trading. Same reasoning
+as rule 9 keeping IBKR monitoring after retirement. **It has no launchd job
+yet**, so between runner firings nothing is watching; wiring one is the
+remaining step.
 
 `amend_stop()` takes the SL/TP pair, so amending a stop while omitting the
 target would silently CLEAR it. It now reads the existing target back and

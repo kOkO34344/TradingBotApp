@@ -498,6 +498,56 @@ class FTMOSession:
             self.positions_cache = out
         return list(out.values())
 
+    def deals_for_position(self, position_id: int, from_ms: int,
+                           to_ms: int) -> list[dict]:
+        """Every deal the venue recorded against one position.
+
+        This is how a close that nobody here placed gets a REAL price and a
+        REAL P&L instead of an inferred one. A stop or take-profit firing on
+        its own produces a closing deal carrying `closePositionDetail`, with
+        the gross profit, swap and commission the account was actually charged.
+
+        Money fields are scaled by the deal's own `moneyDigits`, NOT by the
+        1e5 wire scale that prices use — two different scalings in one message,
+        and mixing them up misstates a P&L by 1000x. `executionPrice` is a
+        plain double and is not scaled at all.
+
+        The window is required rather than defaulted because cTrader caps how
+        far back one request may reach; callers ask about a position they know
+        the age of.
+        """
+        payload = self._send("ProtoOADealListByPositionIdReq",
+                             positionId=int(position_id),
+                             fromTimestamp=int(from_ms), toTimestamp=int(to_ms))
+        out = []
+        for d in getattr(payload, "deal", []):
+            money_scale = float(10 ** (getattr(d, "moneyDigits", 2) or 2))
+            row = {
+                "deal_id": d.dealId,
+                "position_id": d.positionId,
+                "volume": d.volume,
+                "filled_volume": getattr(d, "filledVolume", 0),
+                "side": "BUY" if d.tradeSide == 1 else "SELL",
+                "execution_price": getattr(d, "executionPrice", 0.0) or 0.0,
+                "execution_ms": getattr(d, "executionTimestamp", 0) or 0,
+                "commission": (getattr(d, "commission", 0) or 0) / money_scale,
+                "closed": False,
+            }
+            detail = getattr(d, "closePositionDetail", None)
+            if detail is not None and d.HasField("closePositionDetail"):
+                ds = float(10 ** (getattr(detail, "moneyDigits", 2) or 2))
+                row.update({
+                    "closed": True,
+                    "entry_price": getattr(detail, "entryPrice", 0.0) or 0.0,
+                    "gross_profit": (getattr(detail, "grossProfit", 0) or 0) / ds,
+                    "swap": (getattr(detail, "swap", 0) or 0) / ds,
+                    "close_commission": (getattr(detail, "commission", 0) or 0) / ds,
+                    "balance_after": (getattr(detail, "balance", 0) or 0) / ds,
+                    "closed_volume": getattr(detail, "closedVolume", 0) or 0,
+                })
+            out.append(row)
+        return sorted(out, key=lambda r: r["execution_ms"])
+
     def unprotected_positions(self) -> list[Position]:
         """Open positions with no server-side stop. Should always be empty.
 
