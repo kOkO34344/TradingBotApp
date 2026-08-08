@@ -156,3 +156,33 @@ ASSET CLASS: crypto  (10 instruments)
     [19/24] 2026-01-10
     [20/24] 2026-02-10
     [21/24] 2026-03-13
+    [22/24] 2026-04-13
+    [23/24] 2026-05-14
+    [24/24] 2026-06-14
+
+--- crypto: Kronos ---
+  pooled pairs        240  (across 24 dates — NOT independent)
+  pooled Spearman IC  -0.006
+  directional hit     50.8%   (chance 50%)
+  mean date-wise IC   +0.103   t=+1.45 over 24 dates
+  -> no skill detected
+
+--- crypto: momentum baseline (matched horizon) ---
+  pooled pairs        240  (across 24 dates — NOT independent)
+  pooled Spearman IC  -0.117
+  directional hit     42.1%   (chance 50%)
+  mean date-wise IC   +0.045   t=+0.62 over 24 dates
+  -> no skill detected
+
+==============================================================
+SUMMARY — rule 9 gate
+==============================================================
+class           Kronos IC      t     hit   momo IC  verdict
+indices            +0.052  +0.61   49.6%    +0.069  no skill detected
+fx                 -0.064  -0.69   54.7%    -0.051  no skill detected
+commodities        -0.017  -0.21   50.4%    +0.090  no skill detected
+crypto             +0.103  +1.45   50.8%    +0.045  no skill detected
+
+Rule 9: a class may be enabled only if it PASSED its own screen.
+'no skill detected' is a fail, not a maybe. Do not enable on a
+configured-but-unscreened class, and do not enable on UNRELIABLE.

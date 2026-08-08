@@ -244,6 +244,37 @@ File purposes are documented in each script's own module docstring
   | commodities | -0.053 | -0.63 | 49.6% | +0.070 | **FAILED** |
   | crypto | +0.103 | +1.34 | 50.4% | -0.013 | **FAILED** |
 
+  **RE-SCREENED AT A 5-DAY HORIZON, 2026-08-08 — ALL FOUR FAILED AGAIN.**
+  Run because `PRED_LEN` changed 20 -> 5 (owner decision), which is a different
+  cadence and therefore a legitimate re-screen under the rule below, NOT
+  parameter-hunting: same cached price data, same seed (42), same 24
+  checkpoints, same matched baseline. Only the horizon moved.
+  `KronosAI/kronos_ic_5d.log` is the raw output.
+
+  | class | Kronos IC | t | hit | momentum IC | verdict |
+  |---|---|---|---|---|---|
+  | indices | +0.052 | +0.61 | 49.6% | +0.069 | **FAILED** |
+  | FX (CME futures) | -0.064 | -0.69 | 54.7% | -0.051 | **FAILED** |
+  | commodities | -0.017 | -0.21 | 50.4% | +0.090 | **FAILED** |
+  | crypto | +0.103 | +1.45 | 50.8% | +0.045 | **FAILED** |
+
+  Max |t| is 1.45. **Shortening the horizon did not help: every IC moved
+  TOWARD zero or stayed put** (indices +0.068 -> +0.052, FX -0.138 -> -0.064,
+  commodities -0.053 -> -0.017, crypto unchanged). The matched momentum
+  baseline failed all four here too. The horizon change bought nothing
+  measurable in either direction; the owner's decision on 2026-08-08 was to
+  **stay at 5**, with that stated.
+
+  **The DIRECTIONAL HIT RATE is the number that matters for the hybrid**, and
+  it is 49.6% / 54.7% / 50.4% / 50.8% against a 50% chance rate — a coin flip.
+  FX's 54.7% is the best of them, sits at ~1.3 sigma on pooled pairs that are
+  not independent, and comes with a NEGATIVE IC. This is why
+  `ftmo_signal.apply_kronos_veto` is built and selftested but **deliberately
+  NOT wired into `plan_orders`**: the AND gate uses Kronos purely as a sign
+  filter, so on a coin-flip hit rate it would delete momentum picks at random
+  and make the hybrid strictly worse than momentum alone. Do not wire it on
+  this evidence. It is not a filter; it is a subtraction.
+
   **ALL FOUR CLASSES ARE SCREENED AND ALL FOUR FAILED. Nothing may be enabled;
   the FTMO path is cleared to trade nothing at all.** No |t| exceeded 1.55 in
   either direction — this is not "close", it is four independent nulls. The
@@ -293,6 +324,15 @@ after testing it properly.
   matters beyond the screen, because a rotation strategy ranks rather than
   predicts sign, so a biased-but-ordered forecast would be less useless than a
   39.6% hit rate suggests.
+  **EVIDENCE AGAINST, 2026-08-08: it did not reproduce at a 5-day horizon.**
+  The same class, same data, same dates, same seed returned a hit rate of
+  **49.6%** — an ordinary coin flip, not the sub-chance rate a systematic
+  directional bias would produce. A real long bias should show up at both
+  horizons; showing up only at 20 days is what a one-screen artifact looks
+  like. This does not formally kill the hypothesis (the proper test named
+  above — mean predicted vs mean realized per class — still has not been run),
+  but it is the first independent look and it points the other way. Do not
+  cite the 39.6% figure without this alongside it.
 
 - **Kronos may be an expensive momentum proxy.** Its 2026-07-27 daily forecast
   ranking correlated **Spearman 0.916** (Pearson 0.825) with the hourly
