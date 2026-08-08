@@ -333,17 +333,22 @@ def build_account_state(session, positions, state: RunnerState
 # ----------------------------------------------------------------- recording
 
 def journal_ftmo(event: str, symbol: str = "", action: str = "",
-                 quantity="", price="", stop="", status: str = "",
+                 quantity="", price="", stop="", target="", status: str = "",
                  detail: str = "", path: Path = JOURNAL) -> None:
     """One journal row for the FTMO venue (rule 6).
 
     `sec_type` carries the asset class rather than an IBKR contract type —
     there is no `Contract` object on this venue, and "cfd" alone would throw
     away the one distinction that matters when reading the book back.
+
+    `target` is the take-profit. It reuses the column IBKR's bracket path
+    already writes, so recording FTMO targets needed no schema change — worth
+    noting because extending `JOURNAL_COLUMNS` is the operation that silently
+    corrupts this file if the header is not migrated with it.
     """
     tj.append(path, {"event": event, "symbol": symbol, "sec_type": "cfd",
                      "action": action, "quantity": quantity, "price": price,
-                     "stop": stop, "target": "", "status": status,
+                     "stop": stop, "target": target, "status": status,
                      "detail": detail, "venue": VENUE})
 
 
@@ -437,31 +442,39 @@ def execute_plan(session, plan: dict, positions, audit, now,
 
     for e in plan["entries"]:
         sym = e["symbol"]
+        target = f"{e['take_profit_price']:.5f}"
         if dry_run:
             log(f"  DRY RUN would BUY {sym} volume {e['volume']} "
-                f"stop {e['stop_price']:.5f} risk ${e['risk_at_stop']:,.2f}")
+                f"stop {e['stop_price']:.5f} tp {target} "
+                f"risk ${e['risk_at_stop']:,.2f}")
             continue
         journal_ftmo("SUBMIT", symbol=sym, action="BUY", quantity=e["volume"],
                      price=f"{e['entry_price']:.5f}",
-                     stop=f"{e['stop_price']:.5f}", status="sending",
+                     stop=f"{e['stop_price']:.5f}", target=target,
+                     status="sending",
                      detail=(f"{e['asset_class']}; kronos pred "
                              f"{e['predicted_return_pct']:+.2f}%; "
-                             f"risk ${e['risk_at_stop']:,.2f}"))
+                             f"risk ${e['risk_at_stop']:,.2f}; "
+                             f"reward ${e['reward_at_target']:,.2f}"))
         try:
             res = session.place_market(
                 symbol=sym, side="BUY", volume=e["volume"],
                 stop_price=e["stop_price"], reference_price=e["entry_price"],
+                take_profit_price=e["take_profit_price"],
                 label="kronos")
             journal_ftmo("RESULT", symbol=sym, action="BUY",
                          quantity=e["volume"], price=f"{e['entry_price']:.5f}",
-                         stop=f"{e['stop_price']:.5f}", status="accepted",
+                         stop=f"{e['stop_price']:.5f}", target=target,
+                         status="accepted",
                          detail=f"venue response {res.get('response')}")
             done["opened"].append(sym)
-            log(f"  BOUGHT {sym} volume {e['volume']} stop {e['stop_price']:.5f}")
+            log(f"  BOUGHT {sym} volume {e['volume']} "
+                f"stop {e['stop_price']:.5f} tp {target}")
         except Exception as ex:                               # noqa: BLE001
             journal_ftmo("REJECTED", symbol=sym, action="BUY",
                          quantity=e["volume"], price=f"{e['entry_price']:.5f}",
-                         stop=f"{e['stop_price']:.5f}", status="rejected",
+                         stop=f"{e['stop_price']:.5f}", target=target,
+                         status="rejected",
                          detail=str(ex))
             done["failed"].append({"symbol": sym, "stage": "entry",
                                    "error": str(ex)})
@@ -489,6 +502,24 @@ def execute_plan(session, plan: dict, positions, audit, now,
             log(f"  could not verify stop protection: {e}")
             journal_ftmo("ERROR", status="unknown",
                          detail=f"stop verification failed: {e}")
+
+        # Targets are read back from the venue too, for the same reason and
+        # with the same distrust of {'sent': True}. Deliberately a separate,
+        # quieter finding than UNPROTECTED: a position without a target is
+        # still fully stop-protected, so this records the gap without
+        # implying the account is at risk.
+        try:
+            for p in session.untargeted_positions():
+                done.setdefault("untargeted", []).append(p.symbol)
+                journal_ftmo("NO_TARGET", symbol=p.symbol, action="",
+                             quantity=p.volume, status="no take-profit",
+                             detail=(f"position {p.position_id} has NO "
+                                     f"server-side take-profit — stop is "
+                                     f"unaffected"))
+                log(f"  NO TARGET: {p.symbol} position {p.position_id} "
+                    f"(stop still in place)")
+        except Exception as e:                                # noqa: BLE001
+            log(f"  could not verify take-profit attachment: {e}")
     return done
 
 
@@ -900,6 +931,33 @@ def selftest() -> int:
     check("exits are executed before entries",
           inspect.getsource(execute_plan).index('plan["exits"]')
           < inspect.getsource(execute_plan).index('plan["entries"]'))
+
+    print("every entry carries a take-profit (owner decision 2026-08-08):")
+    esrc = inspect.getsource(execute_plan)
+    check("the target is sent with the order, not attached afterwards",
+          "take_profit_price=e[" in esrc)
+    check("targets are verified by reading the venue back, like stops",
+          "untargeted_positions" in esrc)
+    check("a missing target is reported SEPARATELY from a missing stop, so a "
+          "naked stop cannot hide inside a routine warning",
+          "NO_TARGET" in esrc and "UNPROTECTED" in esrc
+          and esrc.index("UNPROTECTED") < esrc.index("NO_TARGET"))
+    check("the dry run shows the target it would send",
+          "tp {target}" in esrc or "tp {e[" in esrc)
+
+    print("the take-profit is journalled, in the column that already exists:")
+    jp2 = tmpdir / "journal_tp.csv"
+    journal_ftmo("SUBMIT", symbol="ETHUSD", action="BUY", quantity=210,
+                 price="1917.42000", stop="1799.10000", target="2196.98000",
+                 path=jp2)
+    trow = list(csv.DictReader(open(jp2, newline="")))[0]
+    check("the target lands in the `target` column", trow["target"] == "2196.98000")
+    check("...and the stop is still in its own column",
+          trow["stop"] == "1799.10000")
+    check("the header still has exactly 12 columns — no migration was needed",
+          tj.read_header(jp2) == tj.JOURNAL_COLUMNS)
+    check("a row written without a target is still valid (smoke/exit rows)",
+          journal_ftmo("EXIT", symbol="ETHUSD", path=jp2) is None)
 
     shutil.rmtree(tmpdir, ignore_errors=True)
     print("\nFAILED" if failures else

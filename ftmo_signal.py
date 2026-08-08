@@ -264,6 +264,21 @@ def plan_orders(session, config: fr.FTMOConfig, state: fr.AccountState,
                 f"{sym}: refusing — {e} (ATR {cand.atr:g} vs price {entry:g}; "
                 f"suspect bad bar data, not a market move)")
             continue
+        # Every entry carries a target as well as a stop (owner decision,
+        # 2026-08-08), and the target is Kronos's own predicted return. An
+        # entry WITHOUT a derivable target is dropped rather than sent naked:
+        # the only way the derivation fails is a forecast pointing against the
+        # trade, and buying something the model expects to fall is not a
+        # position this path should open regardless of the target question.
+        try:
+            take_profit = fz.take_profit_from_prediction(
+                entry, cand.predicted_return_pct, "BUY")
+            fs.validate_take_profit("BUY", entry, take_profit)
+        except (ValueError, fs.SessionError) as e:
+            out["skipped"].append(
+                f"{sym}: refusing — {e} (ranked into the top {top_n} on a "
+                f"forecast of {cand.predicted_return_pct:+.2f}%)")
+            continue
         result = fz.size_position(spec, state.equity, risk_pct, entry, stop,
                                   quote_to_account_rate=1.0,
                                   budget_remaining=budget)
@@ -275,7 +290,10 @@ def plan_orders(session, config: fr.FTMOConfig, state: fr.AccountState,
             "symbol": sym, "asset_class": cand.asset_class, "side": "BUY",
             "volume": result.volume, "units": result.units,
             "entry_price": entry, "stop_price": stop,
+            "take_profit_price": take_profit,
             "risk_at_stop": result.risk_at_stop,
+            "reward_at_target": result.risk_at_stop * (
+                (take_profit - entry) / (entry - stop)) if entry > stop else 0.0,
             "predicted_return_pct": cand.predicted_return_pct,
             "atr": cand.atr,
         })
@@ -306,12 +324,19 @@ def format_plan(plan: dict) -> str:
     if plan["entries"]:
         lines.append("proposed entries:")
         for e in plan["entries"]:
+            rr = ((e["take_profit_price"] - e["entry_price"])
+                  / (e["entry_price"] - e["stop_price"])
+                  if e["entry_price"] > e["stop_price"] else float("nan"))
             lines.append(f"  BUY {e['symbol']:<12} vol={e['volume']:<10} "
                          f"entry={e['entry_price']:<12.5f} "
                          f"stop={e['stop_price']:<12.5f} "
-                         f"risk=${e['risk_at_stop']:,.2f}")
+                         f"tp={e['take_profit_price']:<12.5f} "
+                         f"risk=${e['risk_at_stop']:,.2f} "
+                         f"({rr:.1f}R)")
         lines.append(f"  total risk at stop: "
                      f"${sum(e['risk_at_stop'] for e in plan['entries']):,.2f}")
+        lines.append(f"  total reward at target: "
+                     f"${sum(e['reward_at_target'] for e in plan['entries']):,.2f}")
     else:
         lines.append("proposed entries: NONE")
     for s in plan["skipped"]:
@@ -493,6 +518,38 @@ def selftest() -> int:
               e["volume"] % 100000 == 0)
         check("the stop would pass ftmo_session's own validation",
               fs.validate_stop("BUY", e["entry_price"], e["stop_price"]) is None)
+        check("the entry carries a take-profit above entry (long)",
+              e["take_profit_price"] > e["entry_price"])
+        check("the target is the forecast, not an R multiple",
+              abs(e["take_profit_price"]
+                  - e["entry_price"] * 1.03) < 1e-9)
+        check("the target would pass ftmo_session's own validation",
+              fs.validate_take_profit("BUY", e["entry_price"],
+                                      e["take_profit_price"]) is None)
+        check("stop and target straddle the entry",
+              e["stop_price"] < e["entry_price"] < e["take_profit_price"])
+        check("reward at target is reported alongside risk",
+              e["reward_at_target"] > 0)
+
+    print("every entry carries a target — one without is not an entry:")
+    check("no planned entry may lack a take-profit",
+          all("take_profit_price" in e and e["take_profit_price"] > 0
+              for e in p2["entries"]))
+
+    print("a forecast pointing the WRONG way is dropped (2026-08-07 EURUSD):")
+    # EURUSD ranked into the top 4 on a predicted -0.15% and was bought. There
+    # is no take-profit on the profitable side of that trade, and rather than
+    # send it without one the entry is dropped. This is a BEHAVIOUR CHANGE:
+    # before 2026-08-08 this candidate produced an order.
+    negative = [Candidate("EURUSD", "fx", -0.15, 1.0850, 0.0050)]
+    p4 = plan_orders(_S(), cfg, healthy, negative, [])
+    check("a negatively-forecast candidate proposes no entry",
+          p4["entries"] == [])
+    check("...and the skip names the forecast that caused it",
+          any("-0.15%" in s for s in p4["skipped"]))
+    zero = [Candidate("EURUSD", "fx", 0.0, 1.0850, 0.0050)]
+    check("a zero forecast is dropped too, not treated as flat-but-fine",
+          plan_orders(_S(), cfg, healthy, zero, [])["entries"] == [])
 
     print("a nonsensical stop is refused, not sized (2026-08-05 regression):")
     # ATR wildly larger than price is what a mis-scaled bar series looks like.

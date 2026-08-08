@@ -156,6 +156,47 @@ def stop_price_from_atr(entry_price: float, atr: float, side: str,
     return entry_price - mult * atr if side == "BUY" else entry_price + mult * atr
 
 
+def take_profit_from_prediction(entry_price: float, predicted_return_pct: float,
+                                side: str) -> float:
+    """The price at which Kronos's own forecast would have come true.
+
+    TP = entry x (1 + predicted_return_pct/100). Chosen over an R multiple
+    deliberately (owner decision, 2026-08-08): the target is the strategy's
+    own thesis, so the position exits when the forecast is realised rather
+    than at a level picked independently of it.
+
+    Two properties of this input to keep in view, neither of which this
+    function can fix:
+
+    1. **The forecast must point the trade's way or there is no target.** A
+       top-N candidate can carry a NEGATIVE prediction — EURUSD was entered at
+       -0.15% on 2026-08-07 — and `entry x (1 + -0.0015)` is BELOW entry on a
+       long. That is not a conservative target, it is an instruction to close
+       at a loss on fill. Raises instead, and the caller drops the entry.
+    2. **The prediction is noisy at exactly this resolution.** Documented in
+       CLAUDE.md: the same symbol re-forecast ten minutes later moved from
+       +17.64% to +25.15%. The stop is ATR-derived and stable; the target is
+       not, so two runs can size identically and target differently. That is a
+       property of the chosen rule, not a defect in this arithmetic.
+    """
+    side = side.upper()
+    if side not in ("BUY", "SELL"):
+        raise ValueError(f"side must be BUY or SELL, got {side!r}")
+    if entry_price <= 0:
+        raise ValueError(f"entry_price must be positive, got {entry_price!r}")
+    if side == "BUY" and predicted_return_pct <= 0:
+        raise ValueError(
+            f"a BUY needs a positive forecast to derive a target from, got "
+            f"{predicted_return_pct:+.2f}% — no take-profit exists on the "
+            f"profitable side")
+    if side == "SELL" and predicted_return_pct >= 0:
+        raise ValueError(
+            f"a SELL needs a negative forecast to derive a target from, got "
+            f"{predicted_return_pct:+.2f}% — no take-profit exists on the "
+            f"profitable side")
+    return entry_price * (1.0 + predicted_return_pct / 100.0)
+
+
 def floor_to_step(volume: float, spec: SymbolSpec) -> int:
     """Floor a raw centi-unit volume onto the symbol's step grid.
 
@@ -320,6 +361,31 @@ def selftest() -> int:
           _raises(lambda: stop_price_from_atr(100.0, 0.0, "BUY")))
     check("a bad side is refused, not guessed",
           _raises(lambda: stop_price_from_atr(100.0, 2.0, "HOLD")))
+
+    print("take-profit from Kronos's own forecast (owner decision 2026-08-08):")
+    check("a +14.58% forecast targets entry x 1.1458",
+          approx(take_profit_from_prediction(1917.42, 14.58, "BUY"),
+                 1917.42 * 1.1458))
+    check("the target sits above entry on a long",
+          take_profit_from_prediction(100.0, 5.0, "BUY") > 100.0)
+    check("the target sits below entry on a short",
+          take_profit_from_prediction(100.0, -5.0, "SELL") < 100.0)
+    # The live case: a top-N candidate whose forecast points the WRONG way.
+    # EURUSD was entered at -0.15% on 2026-08-07; entry x (1 - 0.0015) is a
+    # "target" below entry on a long, i.e. an instruction to close at a loss.
+    check("a NEGATIVE forecast yields no BUY target — it raises",
+          _raises(lambda: take_profit_from_prediction(1.16, -0.15, "BUY")))
+    check("a zero forecast yields no BUY target either",
+          _raises(lambda: take_profit_from_prediction(100.0, 0.0, "BUY")))
+    check("a POSITIVE forecast yields no SELL target",
+          _raises(lambda: take_profit_from_prediction(100.0, 5.0, "SELL")))
+    check("a bad side is refused, not guessed",
+          _raises(lambda: take_profit_from_prediction(100.0, 5.0, "HOLD")))
+    check("a non-positive entry is refused",
+          _raises(lambda: take_profit_from_prediction(0.0, 5.0, "BUY")))
+    check("stop and target straddle entry, so R is positive and finite",
+          (take_profit_from_prediction(100.0, 6.0, "BUY") - 100.0)
+          / (100.0 - stop_price_from_atr(100.0, 2.0, "BUY")) > 0)
 
     print("floor_to_step never rounds up:")
     check("below minimum -> zero, not the minimum", floor_to_step(50, fx) == 0)

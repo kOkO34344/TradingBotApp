@@ -121,10 +121,10 @@ File purposes are documented in each script's own module docstring
   orders, and `ftmo_smoke_order.py` proves the order path with one tiny trade.
   **`ftmo_runner.py` (2026-08-06) is the unattended runner** — the FTMO
   counterpart to `autotrade_runner.py`, armed by its own separate toggle.
-  **465 offline checks, measured 2026-08-07** across the nine modules that
-  carry a `--selftest`: `ftmo_sizing` 72, `ftmo_rules` 70, `ftmo_monitor` 63,
-  `ftmo_runner` 63, `ftmo_session` 54, `ftmo_audit` 48, `ftmo_service` 43,
-  `ftmo_signal` 26, `trade_journal` 26. (`ftmo_smoke_order.py` has no
+  **507 offline checks, measured 2026-08-08** across the nine modules that
+  carry a `--selftest`: `ftmo_sizing` 81, `ftmo_rules` 70, `ftmo_runner` 71,
+  `ftmo_session` 70, `ftmo_monitor` 63, `ftmo_audit` 48, `ftmo_service` 43,
+  `ftmo_signal` 35, `trade_journal` 26. (`ftmo_smoke_order.py` has no
   `--selftest` — it is a live one-trade proof, and its dry-run is the check.)
   Note `ftmo_audit`'s selftest deliberately prints `AUDIT WRITE FAILED` to
   stderr while testing an unwritable path; that is a passing test, not a
@@ -654,6 +654,47 @@ Four properties not to regress:
 4. **torch is imported only after the enabled check**, so a disarmed firing is
    a cheap settings read rather than a 2 GB model load.
 
+**Every entry carries a TAKE-PROFIT as well as a stop, and the target is
+Kronos's own predicted return** (owner decision, 2026-08-08). TP = entry x
+(1 + predicted_return_pct/100), computed by
+`ftmo_sizing.take_profit_from_prediction()`. Chosen over an R multiple
+deliberately: the target is the strategy's own thesis, so a position exits when
+the forecast is realised rather than at a level picked independently of it.
+
+`relativeTakeProfit` rides the SAME request, the SAME 1e5 wire scale and the
+SAME precision grid as `relativeStopLoss` — `quantize_relative_take_profit()`
+delegates to the stop's quantiser rather than reimplementing it, so the
+2026-08-07 rejection cannot recur on one of them but not the other. The target
+is atomic with the entry for the same reason the stop is.
+
+**A candidate whose forecast points the WRONG way is now DROPPED, not traded,
+and that is a live behaviour change — flag it, don't discover it.** A negative
+prediction has no take-profit on the profitable side: `entry x (1 - 0.0015)`
+sits BELOW entry on a long, which the venue would read as an immediate exit at
+a loss. `plan_orders` therefore skips the entry and records why. This is not
+hypothetical — it would have blocked the 2026-08-07 21:32 EURUSD entry
+(predicted **-0.15%**), the same trade the inverted rotation margin caused.
+Before 2026-08-08 that candidate produced an order.
+
+Two consequences to keep in view, neither of them solved:
+
+- **A take-profit is a second way for a position to close with the runner not
+  involved, and FTMO still has no close detection.** The runner journals only
+  exits it places itself. A target firing on its own leaves no journal row, no
+  alert and no reflection — the GOOGL-close shape, pointed at the outcomes you
+  most want recorded. This gap got more consequential on 2026-08-08, not less.
+- **The target inherits the forecast's noise.** CLAUDE.md already records the
+  same symbol re-forecast ten minutes later moving +17.64% -> +25.15%. The stop
+  is ATR-derived and stable; the target is not, so two runs can size a position
+  identically and target it differently. That is a property of the chosen rule,
+  not a defect. The TP is fixed at fill, so it does not drift mid-position.
+
+`amend_stop()` takes the SL/TP pair, so amending a stop while omitting the
+target would silently CLEAR it. It now reads the existing target back and
+re-sends it. Nothing calls it yet — it was written that way now because the
+failure would be invisible: the amend succeeds, the stop is right, the target
+is just gone.
+
 **`ftmo_runner_state.json` is why the daily limit works at all.** The FTMO
 daily limit is measured against the balance at 00:00 CE(S)T and the 1-Step
 trailing floor moves off a completed day's CLOSING balance; a one-shot script
@@ -901,6 +942,10 @@ sections close to verbatim, so keep those reasonably current.
   The general lesson is the one this venue keeps teaching: **a number the
   sizer proved correct can still be unsendable**, and the venue reports that
   as a rejection event rather than a value it silently adjusts.
+  **`relativeTakeProfit` rides the identical grid** and fails the identical
+  way. Since 2026-08-08 every entry carries one, so this trap now has two
+  fields to catch, not one — `quantize_relative_take_profit()` delegates to
+  `quantize_relative_stop()` so a fix to either is a fix to both.
 - **A streaming quote does NOT mean a tradeable market.** US30.cash and
   BTCUSD both quoted live and both rejected with `MARKET_CLOSED` at 23:55
   Moscow — FTMO's daily ten-minute maintenance window. `trading_mode:
@@ -969,6 +1014,39 @@ sections close to verbatim, so keep those reasonably current.
   `launchctl bootstrap` on an already-loaded job returns
   `Bootstrap failed: 5: Input/output error`, which means "already there", not
   a failure to install.
+- **The Mac sleeping mid-run is the single biggest cause of FTMO runner
+  failures, and it wears TWO different error messages.** Diagnosed 2026-08-08
+  after 22 consecutive failures. `pmset -b sleep` is **1** — idle system sleep
+  after one minute, on battery — so launchd fires the runner inside a
+  ~2-second DarkWake, the process opens a socket, and the machine suspends
+  underneath it. Proven by lining `pmset -g log` up against
+  `ftmo_launchd.log`: at 16:37:36 DarkWake, 16:37:37 "trading window",
+  16:37:38 Sleep, and the error at 17:07:59 — thirty minutes of wall clock in
+  which the process barely ran.
+  The two messages are the SAME event and differ only by which clock wins the
+  race on wake. Twisted's timeouts run on the WALL clock
+  (`reactor.seconds()` -> `time.time()`), so on wake the SDK's
+  `responseTimeoutInSeconds=5` default has long since expired and fires
+  instantly. `threading.Event.wait()` effectively counts AWAKE time only —
+  this build has `HAVE_PTHREAD_CONDATTR_SETCLOCK=0` and
+  `HAVE_SEM_TIMEDWAIT=0`, so CPython takes the condvar path whose deadline is
+  re-derived from the monotonic clock, and macOS's monotonic clock does not
+  tick during sleep. So: sleep lands BEFORE connect and nothing ever calls
+  `_ready.set()` -> **"did not become ready within 45.0s"**; sleep lands AFTER
+  connect during auth -> the timeouts fire on wake and you get **"failed to
+  start: TimeoutError: (5, 'Deferred')"**. Neither names sleep, which is why
+  the second one reads like a new bug.
+  **Do not "fix" this in the session code.** The 3-attempt retry in
+  `_on_connected` cannot help — on wake it burns attempts 2 and 3 against a
+  TCP connection that died during suspend, which is why the error lands 8-15s
+  after each wake. Longer timeouts make failures slower, not rarer. This is a
+  power-management problem: a laptop on battery with a one-minute idle-sleep
+  timer cannot host an unattended process. Unfixed as of 2026-08-08 — the
+  owner was given the options (`caffeinate -i` wrapper in the plist, raising
+  `pmset -b sleep`, or `pmset repeat wakeorpoweron`) and chose to decide
+  separately.
+  The Telegram alert fails at the same moment for the same reason, so this
+  failure mode is **silent** — 19 hours passed unnoticed.
 - **GitHub: `gh` is installed manually at `~/.local/bin/gh`** — there is no
   Homebrew on this machine, so upgrades mean re-downloading the release zip
   and `install -m 755` over it. Auth token is in the macOS keyring, config in
