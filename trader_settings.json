@@ -40,12 +40,12 @@
   "ftmo": {
     "autotrade": {
       "enabled": true,
-      "risk_pct": 1.0,
+      "risk_pct": 3.0,
       "rotation_margin_pct": 1.0,
       "top_n": 4,
       "sample_count": 10,
       "product": "2step",
-      "buffer_pct": 0.2,
+      "buffer_pct": 0.05,
       "initial_capital": 25000.0
     }
   }
