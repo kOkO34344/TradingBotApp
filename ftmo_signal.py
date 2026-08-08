@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -87,9 +88,17 @@ CATEGORY_13_INDICES = {"US30.cash", "US500.cash", "US100.cash", "US2000.cash"}
 # the quantity does NOT mean inheriting the result.
 MOMENTUM_LOOKBACK_BARS = 252
 
-TOP_N = 4               # matches ftmo_sizing's max positions and the 1% budget
+TOP_N = 4               # candidate slots; the portfolio budget truncates them
 ATR_PERIOD = 14
 BARS_NEEDED = 420       # Kronos LOOKBACK is 400; a little slack for gaps
+
+# MUST equal kronos_agent.PRED_LEN. Duplicated rather than imported because
+# `import kronos_agent` pulls torch (~2 GB), and ftmo_runner's selftests assert
+# that nothing loads the model before the arm check and the trading window —
+# importing it here to read one integer would defeat both. The selftest reads
+# kronos_agent's SOURCE and fails if the two drift apart, so this is a checked
+# copy rather than a remembered one.
+FORECAST_HORIZON_BARS = 5
 
 
 @dataclass(frozen=True)
@@ -371,7 +380,8 @@ def apply_rotation_margin(held: list[str], ranked: list[Candidate],
 def plan_orders(session, config: fr.FTMOConfig, state: fr.AccountState,
                 ranked: list[Candidate], held: list[str],
                 risk_pct: float = 1.0, margin_pct: float = 1.0,
-                top_n: int = TOP_N) -> dict:
+                top_n: int = TOP_N,
+                horizon_bars: int = FORECAST_HORIZON_BARS) -> dict:
     """Turn a ranking into concrete sized orders, or into a stated refusal.
 
     Asks the rule engine BEFORE sizing anything, so a blocked account produces
@@ -400,6 +410,13 @@ def plan_orders(session, config: fr.FTMOConfig, state: fr.AccountState,
 
     by_symbol = {c.symbol: c for c in ranked}
     open_risk = 0.0
+    # One multiple for the whole plan: the stop has to be sized against the
+    # horizon the TARGET is drawn from, and every candidate in this plan came
+    # out of the same forecast. Computing it per symbol would invite a future
+    # edit to vary it per instrument, which is where curve-fitting starts.
+    stop_mult = fz.stop_atr_mult_for_horizon(horizon_bars)
+    out["stop_atr_mult"] = stop_mult
+    out["horizon_bars"] = horizon_bars
     for sym in target:
         if sym in held:
             continue
@@ -408,7 +425,7 @@ def plan_orders(session, config: fr.FTMOConfig, state: fr.AccountState,
         budget = fr.max_position_risk_usd(config, state, open_risk_usd=open_risk)
         quote = session.quote(sym)
         entry = (quote.ask if quote and quote.ask else cand.last_close)
-        stop = fz.stop_price_from_atr(entry, cand.atr, "BUY")
+        stop = fz.stop_price_from_atr(entry, cand.atr, "BUY", mult=stop_mult)
         # Validate the stop HERE, not only at the venue. On 2026-08-05 a
         # mis-scaled ATR produced a stop of -17.29 on an instrument trading at
         # 2.69, and the sizer happily costed it at $199.86 of "risk" and
@@ -481,6 +498,11 @@ def format_plan(plan: dict) -> str:
         lines.append(f"exits:  {', '.join(plan['exits'])}")
     lines.append("")
     if plan["entries"]:
+        mult = plan.get("stop_atr_mult")
+        horizon = plan.get("horizon_bars")
+        if mult is not None and horizon is not None:
+            lines.append(f"stop geometry: {mult:.2f} x ATR, scaled to the "
+                         f"{horizon}-bar forecast horizon")
         lines.append("proposed entries:")
         for e in plan["entries"]:
             rr = ((e["take_profit_price"] - e["entry_price"])
@@ -814,6 +836,41 @@ def selftest() -> int:
     check("no entry is proposed from a negative stop", p3["entries"] == [])
     check("...and the skip says it is suspected bad data, not a market move",
           any("bad bar data" in s for s in p3["skipped"]))
+
+    print("the stop is scaled to the forecast horizon (2026-08-09):")
+    # Read the source rather than importing it: `import kronos_agent` pulls
+    # torch, and ftmo_runner's selftests assert the model is not loaded before
+    # the arm check. A duplicated constant that nothing verifies is exactly the
+    # kind of drift that makes a stop silently wrong, so it is verified here.
+    ka_src = (BASE_DIR / "KronosAI" / "kronos_agent.py").read_text()
+    m = re.search(r"^PRED_LEN\s*=\s*(\d+)", ka_src, re.M)
+    check("kronos_agent.PRED_LEN is still parseable from source", m is not None)
+    check(f"FORECAST_HORIZON_BARS ({FORECAST_HORIZON_BARS}) still matches "
+          f"kronos_agent.PRED_LEN ({m.group(1) if m else '?'})",
+          m is not None and int(m.group(1)) == FORECAST_HORIZON_BARS)
+    check("...and no torch was imported to check it", "torch" not in sys.modules)
+
+    p4 = plan_orders(_S(), cfg, healthy, ranked3, [], horizon_bars=5)
+    p20 = plan_orders(_S(), cfg, healthy, ranked3, [], horizon_bars=20)
+    check("the plan reports the multiple it used",
+          abs(p4["stop_atr_mult"] - 1.0) < 1e-9
+          and abs(p20["stop_atr_mult"] - 2.0) < 1e-9)
+    check("the 20-bar plan reproduces the pre-2026-08-09 stop exactly",
+          abs(p20["entries"][0]["stop_price"]
+              - (1.0850 - 2.0 * 0.0050)) < 1e-9)
+    check("a shorter horizon stops nearer entry on identical candidates",
+          p4["entries"][0]["stop_price"] > p20["entries"][0]["stop_price"])
+    check("...and the target is untouched by the horizon — only the stop moved",
+          abs(p4["entries"][0]["take_profit_price"]
+              - p20["entries"][0]["take_profit_price"]) < 1e-9)
+    check("...so the reward-to-risk ratio improves",
+          (p4["entries"][0]["reward_at_target"] / p4["entries"][0]["risk_at_stop"])
+          > (p20["entries"][0]["reward_at_target"] / p20["entries"][0]["risk_at_stop"]))
+    check("a nearer stop still never risks more than the per-trade cap — "
+          "tightening buys SIZE, not extra risk",
+          p4["entries"][0]["risk_at_stop"] <= 250.0 + 1e-6)
+    check("...and it does buy size: half the distance, twice the volume",
+          p4["entries"][0]["volume"] > p20["entries"][0]["volume"])
 
     print("\nFAILED" if failures else "\nAll ftmo_signal offline selftests passed.")
     return 1 if failures else 0

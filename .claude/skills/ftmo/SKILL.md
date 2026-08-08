@@ -151,6 +151,55 @@ full-size position and one truncated one. A `capped by portfolio budget` reason
 on entry 2 and a `no portfolio risk budget left today` refusal on entry 3 are
 now the NORMAL output — do not read either as a defect.
 
+### The stop multiple scales to the forecast horizon (2026-08-09)
+
+`STOP_ATR_MULT = 2.0` was calibrated when Kronos forecast **20** bars ahead.
+`PRED_LEN` moved to **5** on 2026-08-08 and the stop did not move with it, so
+the target shrank while the stop stayed put. The 2026-08-09 dry run is what
+that looks like in production: entries at **0.3R, 0.2R and 0.1R**, needing a
+77-91% hit rate to break even against a measured ~50%.
+
+`stop_atr_mult_for_horizon()` now derives the multiple:
+
+```
+mult = max(MIN_STOP_ATR_MULT, STOP_ATR_MULT x sqrt(horizon / 20))
+     = 1.0 at the live 5-bar horizon,  2.0 at the 20-bar reference
+```
+
+- **sqrt, not linear.** Dispersion grows with sqrt(time), so a 5-bar hold
+  expects half a 20-bar excursion, not a quarter. Linear would give 0.5 x ATR
+  — inside one bar's range, a stop that fires before the forecast has had a
+  bar to be right.
+- **`MIN_STOP_ATR_MULT = 1.0` is a floor, not a tuning knob.** Tightening a
+  stop always improves R on paper by shrinking the denominator; it is the
+  cheapest way to make a plan look better while performing worse. The floor is
+  what stops that from running away.
+- **Not a retune.** `stop_atr_mult_for_horizon(20) == STOP_ATR_MULT` exactly,
+  and there is a selftest asserting the 20-bar plan reproduces the old stop to
+  1e-9. Nothing was fitted to a return series — rule 4.
+- **`ftmo_signal.FORECAST_HORIZON_BARS` is a CHECKED copy of
+  `kronos_agent.PRED_LEN`.** Importing the real constant pulls torch and would
+  break the runner's "no model load before the arm check" selftests, so the
+  selftest reads kronos_agent's SOURCE and fails on drift. The live path does
+  not use the copy at all — `ftmo_runner` passes `ka.PRED_LEN` directly.
+
+**What it fixed and what it did not.** It roughly doubles R for a given
+forecast, and that is all it can do. It cannot make a forecast bigger than the
+noise it sits in: on 2026-08-09 Kronos predicted **+1.12%** on NATGAS.cash
+whose daily ATR is **3.4% of price**, so even at a 1 x ATR stop the trade is
+0.3R. **At a 5-bar horizon these forecasts are structurally smaller than the
+instruments' 5-bar dispersion, so no stop placement produces a >1R book** —
+getting above 1R would need the stop inside the floor, which is the move the
+floor exists to prevent. Read the R improvement as geometry corrected, never as
+edge created.
+
+One side effect to keep in view: **halving the stop distance doubles the
+position for the same dollar risk** (NATGAS 406,000 -> 813,000 units). Dollar
+risk at the stop is unchanged, which is what the FTMO limits measure — but a
+GAP through the stop now costs about twice as much, and at `buffer_pct` 0.05
+there is only $31.25 of reserve under the daily cliff. The two changes of
+2026-08-09 interact in that one specific place.
+
 Not a copy of `paper_trader.size_position()` — a "unit" means something
 different per instrument (100,000 base units per FX lot, an ounce of gold, a
 share of a stock CFD, an index point), and the quote currency is frequently not

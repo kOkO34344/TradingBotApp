@@ -753,10 +753,15 @@ def run(force: bool = False, dry_run: bool = False,
 
         ranked = sig.rank_candidates(pred_dfs, bars_by_symbol, classes)
         held = [p.symbol for p in positions]
+        # The horizon comes from the model that produced the forecast, not
+        # from a copy of the number: the stop is scaled to protect exactly the
+        # hold the TARGET was drawn over, so if PRED_LEN moves again the stop
+        # follows it without a second edit here.
         plan = sig.plan_orders(session, config, account_state, ranked, held,
                                risk_pct=cfg["risk_pct"],
                                margin_pct=cfg["margin_pct"],
-                               top_n=cfg["top_n"])
+                               top_n=cfg["top_n"],
+                               horizon_bars=ka.PRED_LEN)
         print(sig.format_plan(plan))
 
         gap = plan.get("rank_gap")
