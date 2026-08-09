@@ -1,11 +1,23 @@
 ---
 tags: [trading-bot, project-overview]
-status: "Phase 3 live: 4 open paper positions (AAPL/JNJ/DIS/AMZN), all GTC-stopped. Signal is KRONOS as of 2026-07-28; momentum validated but disabled in code. Launch with ./trader_app.sh. Research grading: 0 real graded calls so far, first ones ~2026-07-29."
+status: "FTMO is the only venue and is ARMED, trading unattended. IBKR removed 2026-08-09. Signal is Kronos; momentum disabled in code. Launch the terminal app with ./trader_app.sh, the web UI with ./run_web.sh."
 source: /Users/kaloyanivanov/TradingBotApp
-last_synced: 2026-07-21
+last_synced: 2026-08-09
 ---
 
 # Trading Bot Project — Overview
+
+> [!important] Current as of 2026-08-09
+> **FTMO is the only venue.** IBKR was retired 2026-08-02 and its code removed
+> 2026-08-09 — see [[IBKR Integration]] for what that cost and why the note is
+> kept. There are no open paper positions being managed by this project any
+> more; the three that existed were presumed open at removal and could not be
+> verified.
+>
+> Two front ends: the terminal app (`./trader_app.sh`) and a local web watch
+> station (`./run_web.sh`, `http://localhost:3000`). Neither places orders —
+> `ftmo_runner.py` is the only order path.
+
 
 > [!note] 2026-08-06 — the FTMO venue is armed and has a UI
 > Nine FTMO modules now sit alongside the existing app with 426 offline

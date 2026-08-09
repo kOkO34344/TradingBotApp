@@ -1,11 +1,26 @@
 ---
 tags: [ftmo, execution, infrastructure, risk, prop-firm]
-status: "LIVE AND ARMED 2026-08-06 — unattended Kronos trading, launchd 01:15 daily. No asset class passed its IC screen; running anyway is a recorded exception to rule 5."
+status: "LIVE AND ARMED — the ONLY venue since 2026-08-09. Hourly at :30 inside a 16:30-11:30 Sofia window, not Sundays. No asset class passed its IC screen; running anyway is a recorded exception."
 source: ftmo_rules.py, ftmo_monitor.py, ftmo_sizing.py, ftmo_audit.py, ftmo_service.py, ftmo_session.py, ftmo_signal.py, ftmo_runner.py, trade_journal.py
-last_updated: 2026-08-06
+last_updated: 2026-08-09
 ---
 
 # FTMO Venue
+
+> [!important] The only venue, as of 2026-08-09
+> IBKR was removed entirely. Ten modules carry **579 offline selftests** and
+> none of them need credentials or a connection.
+>
+> **Schedule vs window are different things.** launchd wakes the runner hourly
+> at :30, all 24 hours, every day — a deliberate superset. The real window is
+> 16:30–11:30 Europe/Sofia, every day except Sunday, enforced by
+> `within_trading_window()`, which is authoritative.
+>
+> **The screens were re-run at a 5-day horizon on 2026-08-08 and all four
+> failed again** (indices +0.052, FX −0.064, commodities −0.017, crypto +0.103;
+> max |t| 1.45). Shortening the horizon moved every IC toward zero or left it
+> put.
+
 
 **Owner decision, 2026-08-02: FTMO becomes the trading venue and IBKR is
 retired in place.** IBKR places no new orders but keeps monitoring its three

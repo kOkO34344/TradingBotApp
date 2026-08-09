@@ -1,190 +1,162 @@
 ---
 tags: [moc, index]
-status: "Live — FTMO ARMED 2026-08-06, trading unattended at 01:15 daily on a signal that failed all four IC screens"
-last_updated: 2026-08-06
+status: "Live — FTMO is the ONLY venue and is ARMED; IBKR removed entirely 2026-08-09"
+last_updated: 2026-08-09
 ---
 
 # Trading Bot — Map of Contents
 
-This is the central index for the Trading Bot project. The codebase lives at `/Users/kaloyanivanov/TradingBotApp`; this vault is a synced knowledge base.
+Central index for the Trading Bot project. The codebase lives at
+`/Users/kaloyanivanov/TradingBotApp`; this vault is a synced knowledge base.
+
+> [!important] IBKR was REMOVED on 2026-08-09
+> The venue was retired in place on 2026-08-02 and its code deleted a week
+> later at the owner's instruction: `ibkr_service.py`, `paper_trader.py`,
+> `reflect_on_trades.py`, `autotrade_runner.py`, six `api/` modules, three web
+> screens and two launchd jobs. FTMO is the only venue.
+>
+> **Three IBKR positions were presumed OPEN at removal and could not be
+> verified** — JNJ(19), DIS(52), AMZN(21), last confirmed 2026-08-02. Gateway
+> had been refusing connections for about a week, so the monitor that was
+> supposed to protect them had been failing every 30 minutes and watching
+> nothing. Their stops live at the broker. What was given up is the RECORD: if
+> one closes, nothing will journal it. Accepted knowingly on a paper account.
+> **Do not describe this as a clean wind-down.** They were not closed first.
 
 ## Quick Status
 
-| Phase                        | Status                              | Key Files                                                                                                                          |
-| ---------------------------- | ----------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------- |
-| **Phase 0** (setup)          | ✅ Done                              | Python 3.13, Claude Code, IBKR account live                                                                                        |
-| **Phase 1** (research agent) | 🟡 First 38 grades in — **no detectable skill** | `research_agent.py` → 14 notes (all still 2026-07-25). Graded 2026-08-03: 26% vs a 39% chance base rate, p=0.13. 38 pending at 21d. See [[Graded Calls Tracker]] |
-| **Phase 2** (backtesting)    | ✅ Done, action taken                | SMA rejected (beats 1/10), momentum rotation identified (16.6% CAGR)                                                               |
-| **Phase 3** (paper trading)  | ✅ Built, now RETIRED IN PLACE       | `paper_trader.py`. IBKR places no new orders as of 2026-08-02. Three positions still open and monitored: **JNJ(19) / DIS(52) / AMZN(21)**, all verified GTC-stopped 2026-08-02. |
-| **FTMO venue**               | 🔴 **ARMED — trading unattended** since 2026-08-06 | Nine modules, 426 offline selftests. Account 48137229, $25,000, FULL_ACCESS, 202 symbols. `ftmo_runner.py` fires 01:15 daily via launchd. **All four asset classes failed their IC screen 2026-08-03 and it trades anyway** — third recorded exception to rule 5. See [[FTMO Venue]] |
-| **Phase 4** (tiny live)      | ⏸ Locked                            | Unchanged — real capital still gated on paper evidence that does not exist yet |
+| Phase | Status | Key files |
+| --- | --- | --- |
+| **Phase 0** (setup) | ✅ Done | Python 3.13, Claude Code |
+| **Phase 1** (research agent) | 🟡 38 grades in — **no detectable skill** | `research_agent.py` → 14 notes (all still 2026-07-25). Graded 2026-08-03: 26% vs a 39% chance base rate, p=0.13. 38 pending at 21d. See [[Graded Calls Tracker]] |
+| **Phase 2** (backtesting) | ✅ Done, action taken | SMA rejected (beat B&H 1/10), momentum rotation identified (~18.5% CAGR) |
+| **Phase 3** (unattended trading, simulated capital) | 🔴 **LIVE on FTMO** since 2026-08-06 | `ftmo_runner.py`, hourly at :30 inside a 16:30–11:30 Sofia window, not Sundays. Ten modules, **579 offline selftests**. Account 48137229, $25,000 simulated, 202 symbols. See [[FTMO Venue]] |
+| **Phase 4** (real capital) | ⏸ Locked | Not reachable from any code path that currently exists |
 
-**Most urgent right now (rewritten 2026-08-06):**
+**Most urgent right now (rewritten 2026-08-09):**
 
-The engineering is finished. The bot is armed and trades unattended from
-tonight. Everything below is about watching it and about the evidence gap,
-which has not moved.
-
-1. **Watch the first real unattended firings.** Nothing in this project has
-   ever placed an order with no human in the loop. After 01:15 check
-   `ftmo_launchd.log`, the Telegram messages, and the `venue=ftmo` rows in
-   `trade_journal.csv`. **Confirm the stops actually attached** — read them
-   back from the venue, not from our own log line saying an order was sent.
-2. **Grow the evidence — still the only thing that actually unblocks
-   anything.** Every note in `research_log/` is still dated **2026-07-25**, so
-   the book has not grown in 12 days. Re-run
+1. **The runner has been failing to fire.** The night band on the web UI shows
+   last session as 1 forced + 7 closed + **12 missed** — twelve scheduled
+   firings that left no audit record. Root cause is documented: the Mac sleeps
+   on battery mid-run. `ftmo_runner.sh` now wraps the run in `caffeinate -i`,
+   but that fix has **never been verified under the real failure condition**,
+   because Claude Code's own session holds the machine awake while it works.
+   A firing that succeeds during an agent session proves nothing.
+2. **Grow the evidence — still the only thing that unblocks anything.** Every
+   note in `research_log/` is dated **2026-07-25**. Re-run
    `run_research_agent_watchlist.py`, then `grade_calls.py --csv` as the 38
    open calls mature at 21d. See [[Graded Calls Tracker]].
-3. **Be precise about what changed on FTMO.** All four asset classes failed
-   their IC screen on 2026-08-03 (no |t| above 1.55; the matched momentum
-   baseline failed all four too), and the venue is trading anyway by explicit
-   owner decision. The gate was **not** re-run with different tickers until
-   something passed — that would be the parameter-tuning the honest-backtesting
-   rule forbids. It was overridden knowingly. Record it that way.
-   See [[Kronos Research Agent]] and [[FTMO Venue]].
-4. The three open IBKR positions stay monitored until they close naturally.
-   `reflect_on_trades.py` and its launchd job keep running. **Verify stops are
-   GTC, not merely present**, whenever checking.
-5. Momentum rotation still has no portfolio-level walk-forward validation, and
-   the broad-universe test written on 2026-07-23 has still never been run.
-   Worth remembering that momentum is the *only* strategy family that ever
-   earned Phase 3, and it is currently gated off.
-
+3. **Be precise about the FTMO override.** All four asset classes failed their
+   IC screen twice — 2026-08-03 at a 20-day horizon, 2026-08-08 at 5 days, no
+   |t| above 1.55 either time — and the venue trades anyway by explicit owner
+   decision. The gate was **not** re-run with different tickers until something
+   passed; that would be the parameter-tuning the honest-backtesting rule
+   forbids. It was overridden knowingly, once, in the open.
+4. Momentum rotation still has no portfolio-level walk-forward validation, and
+   the broad-universe test written 2026-07-23 has still never been run. It
+   remains the *only* strategy family that ever earned Phase 3, and it is
+   gated off in code.
 
 **Standing context (durable, not a to-do list):**
 
-- **The project has ZERO real graded calls and never has had any.** The four
-  that existed until 2026-07-28 came from *synthetic test notes* that had been
-  deleted, and were reported daily as a track record. See
-  [[Call Grading System]].
-- **Kronos is the main signal and momentum is disabled in code** (owner
-  decision 2026-07-28, `signal_policy.py`). The evidence has not changed:
-  Kronos shows no measurable skill (Spearman IC 0.036, 50% hit rate) and scored
-  *worse* than momentum on the only head-to-head screen. Being the focus is a
-  research direction, not a result. See [[Kronos Research Agent]].
-- **THREE deliberate exceptions to the earn-autonomy-with-evidence rule now
+- **The project had ZERO real graded calls until 2026-08-03**, and the four it
+  appeared to have before then came from *synthetic test notes* that had been
+  deleted — reported daily as a track record. See [[Call Grading System]].
+- **Kronos is the main signal and momentum is disabled in code**
+  (`signal_policy.py`). Kronos shows no measurable skill (Spearman IC 0.036,
+  50% hit rate) and scored *worse* than momentum on the only head-to-head
+  screen. Being the focus is a research direction, not a result. See
+  [[Kronos Research Agent]].
+- **THREE deliberate exceptions to the earn-autonomy-with-evidence rule
   exist**, all made with the evidence stated first, none of them precedent:
-  1. [[Autotrade (Experimental)]] — built 2026-07-24 despite an hourly IC
-     screen showing no edge for either candidate signal; currently OFF.
+  1. The retired IBKR hourly runner — built 2026-07-24 despite an hourly IC
+     screen showing no edge for either candidate signal. Removed with its
+     venue; see [[Autotrade (Experimental)]] for the history.
   2. The fully-unattended [[FTMO Venue]] — 2026-08-02.
-  3. **Kronos actually firing on FTMO with no asset class having passed a
-     screen** — armed 2026-08-06. The original condition was "Kronos may only
-     trade a class that passed its own IC screen". No class passed. It trades
-     anyway.
-  Note the direction of travel: each exception has been larger than the last,
-  and the third one removes the condition that made the second one defensible.
-  That is worth seeing plainly rather than as three separate footnotes.
-- **RiskGuard's daily-loss breaker is a pre-trade gate, not a monitor.** It is
-  consulted only when an order is being placed, so it did nothing when GOOGL's
-  stop fired on its own. As of 2026-08-02 the *visibility* half is fixed —
-  `reflect_on_trades.py` now evaluates the breach condition every 30 minutes
-  and alerts — but enforcement is unchanged. This is exactly why the FTMO
-  venue uses a continuous equity monitor instead. See
-  [[Risk Management System]].
-- The watchlist is named groups with validated symbols, edited via
-  `trader_app.py` menu 9 — not a raw string. See [[Watchlist Context]].
+  3. **Kronos firing on FTMO with no asset class having passed a screen** —
+     armed 2026-08-06. The original condition was "Kronos may only trade a
+     class that passed its own IC screen". No class passed. It trades anyway.
+
+  Note the direction of travel: each exception was larger than the last, and
+  the third removes the condition that made the second defensible. Worth
+  seeing plainly rather than as three separate footnotes.
+- **Every FTMO limit is measured on equity INCLUDING floating P&L**, so the
+  account can breach with no order placed. That is why this venue has a
+  continuous monitor and not a pre-trade gate. The retired IBKR guard was a
+  pre-trade gate and provably could not see that failure — GOOGL's stop fired
+  overnight, moved the account $422, and the breaker was simply never
+  evaluated. See [[Risk Management System]].
+- The watchlist is the **research** universe, not the traded one. FTMO trades
+  its own CFD universe derived from the venue's symbol capture. See
+  [[Watchlist Context]].
 
 ## The Vault by topic
 
-### 🎯 **Strategy & Evidence**
-- [[Strategy Decisions - SMA Crossover]] — why it was tested, why it lost (1/10 beat B&H)
-- [[Strategy Decisions - Momentum Rotation]] — the winning strategy family; monthly rebalance, top-3 selection
-- [[Strategy Decisions - Opening Range Breakout]] — day-trading research; the ORB paper's 33% claim vs. real 60-day test (-12.6%)
-- [[Backtest Results & Findings]] — full numbers, all strategies, why day trading isn't the lane
+### 🎯 Strategy & Evidence
+- [[Strategy Decisions - SMA Crossover]] — why it was tested, why it lost
+- [[Strategy Decisions - Momentum Rotation]] — the only family that earned Phase 3
+- [[Strategy Decisions - Opening Range Breakout]] — the paper's 33% claim vs a real 60-day test (−12.6%)
+- [[Backtest Results & Findings]] — full numbers, all strategies
 
-### 🔧 **Risk & Execution**
-- [[Risk Management System]] — RiskGuard code enforcement ($5k notional limit, 5 positions, $300 daily loss circuit breaker, stop required)
-- [[FTMO Venue]] — **the trading venue as of 2026-08-02**; cTrader Open API, Challenge rule engine, continuous equity monitor, unattended
-- [[IBKR Integration]] — paper account (port 4002, DUQ903866); RETIRED IN PLACE 2026-08-02, still monitoring three open positions
-- [[Trade Journal Structure]] — what goes in `trade_journal.csv` every order attempt/fill/block
-- [[Autotrade (Experimental)]] — unattended hourly rebalancing toggle, built 2026-07-24 despite no measurable edge at that cadence; OFF by default, the one documented exception to human-approval-gated execution
+### 🔧 Risk & Execution
+- [[FTMO Venue]] — **the only venue**; cTrader Open API, Challenge rule engine, continuous equity monitor, unattended
+- [[Risk Management System]] — how limits are enforced now, and the incidents that shaped them
+- [[IBKR Integration]] — 🗄️ **HISTORICAL.** The venue and its code are gone; kept for the incidents that produced most of the project's rules
+- [[Autotrade (Experimental)]] — 🗄️ **HISTORICAL.** The IBKR hourly runner, removed 2026-08-09
 
-### 🧠 **Research & Grading**
-- [[Research Agent Workflow]] — how `research_agent.py` works, what it outputs, where the notes live
-- [[Kronos Research Agent]] — the project's second research agent (quantitative forecast, foundation model); integrated into the app and `paper_trader.py`; backtested 2026-07-23, no measurable edge found
-- [[Call Grading System]] — how `grade_calls.py` scores calls (long > +0.5%, short < -0.5%, no-edge ±2%), calibration rules
-- [[Graded Calls Tracker]] — running log of research notes graded; accuracy by confidence bucket
+### 🧠 Research & Grading
+- [[Research Agent Workflow]] — how `research_agent.py` works and where notes live
+- [[Kronos Research Agent]] — the forecast model; backtested 2026-07-23, no measurable edge found
+- [[Call Grading System]] — how `grade_calls.py` scores calls, and why the band is now 0.5× realized sigma
+- [[Graded Calls Tracker]] — running log, accuracy by confidence bucket
 
-### 📊 **Reference & Definitions**
-- [[Indicators Reference]] — RSI, ATR, SMA, EMA, MACD, VWAP, Bollinger Bands (math + implementation notes)
-- [[Watchlist Context]] — the 14-ticker watchlist, now stored as named groups (`watchlist.py`) with validated symbols; not synced from IBKR (no API for that)
-- [[Market Regimes]] — how to identify bull/bear/sideways; implications for signal reliability
+### 📊 Reference
+- [[Watchlist Context]] — the 14-ticker **research** universe, stored as named groups
 
-### 🏗️ **Architecture & Decisions**
-- [[ADR - IBKR vs Alpaca]] — why the project uses Interactive Brokers instead of the originally recommended Alpaca
-- [[ADR - Momentum over SMA]] — why momentum rotation earned the right to Phase 3 (evidence), SMA didn't
-- [[ADR - Python Rules, Not Model Predictions]] — why order execution uses hard-coded risk limits, not agent self-regulation
-- [[ADR - Paper Trading Gate]] — why full autonomy on real money is a v3+ goal, not v1
+### 🏗️ Architecture & Decisions
+- [[ADR - IBKR vs Alpaca]] — 🗄️ **HISTORICAL.** Both options are moot; the project trades FTMO
+- [[ADR - Python Rules, Not Model Predictions]] — why execution uses hard-coded limits, not agent judgment
 
-### 📋 **Project Management**
-- [[Phase Milestones Dashboard]] — what's done/in-progress/blocked/next by phase, with deadlines
-- [[Next Build Steps]] — prioritized work queue (grade calls, build `paper_trader.py`, validate momentum)
+### 📋 Project Management
+- [[Phase Milestones Dashboard]] — done / in progress / blocked, by phase
+- [[Next Build Steps]] — prioritized work queue
 - [[Plan]] — original 5-phase plan with status updates
 - [[The App]] — project overview and current snapshot
-- [[README_trader_app]] — how to run the terminal app, menu reference
+- [[README_trader_app]] — terminal app menu reference
 
----
+## The web UI
 
-## File structure (for sync)
+A local watch station at `http://localhost:3000`, started with `./run_web.sh`.
+**Local only — never deployed.** Four screens since 2026-08-09:
 
-```
-/Users/kaloyanivanov/TradingBotApp/
-├── TradingApp/
-│   └── trading bot/               ← You are here (Obsidian vault root)
-│       ├── .obsidian/             ← Vault config (git-ignored normally)
-│       ├── 00 MOC - Trading Bot Vault.md  ← This file
-│       ├── Plan.md
-│       ├── The App.md
-│       ├── Backtest Results & Findings.md
-│       ├── README_trader_app.md
-│       └── [NEW] All the topic notes created below
-├── backtest_results.csv
-├── graded_calls.csv
-├── orb_trades.csv
-├── trader_app.py
-├── research_agent.py
-├── ibkr_service.py
-├── sma_crossover_backtest.py
-├── strategy_shootout.py
-├── grade_calls.py
-└── [research_log/]  ← 12 real research notes, one per ticker
-```
+| Route | What it shows |
+| --- | --- |
+| `/watch` | Equity / balance / floating, the **night band**, the three limit meters, open positions |
+| `/signal` | Kronos ranking and sampling spread; the FTMO plan it would produce |
+| `/market` | Candles and indicators from the venue's own bars |
+| `/ledger` | The trade journal (both venues) and recorded backtests |
 
----
+**The night band** is the thing worth knowing about: it reconstructs a full
+session (16:30 → 11:30 Sofia) from `ftmo_audit/*.jsonl` and draws one cell per
+hourly wakeup. **A firing that was due and did not happen is drawn, not
+omitted** — that is how the twelve missed firings above are visible at a
+glance. It reads the audit files off disk with no venue session, so it still
+answers when the broker is unreachable.
 
-## How to use this vault
-
-**Typical workflow:**
-
-1. **Before trading:** Check [[Phase Milestones Dashboard]] and [[Next Build Steps]] for what's due
-2. **Research decision:** Read the relevant [[Strategy Decisions - *]] note + [[Backtest Results & Findings]]
-3. **Risk check:** Review [[Risk Management System]] before proposing or approving a trade
-4. **After execution:** Log it in [[Trade Journal Structure]] (automated by `trade_journal.csv` in code) and verify it's in [[Graded Calls Tracker]]
-5. **Weekly:** Run `grade_calls.py --csv`, update [[Graded Calls Tracker]] with latest calibration
-
-**Wikilinks:** Click any [[double-bracketed note]] to navigate. Backlinks (bottom of each note) show what references it.
-
----
+The UI **places no orders**. Its only write is arming or disarming the runner.
 
 ## Key decisions baked into this project
 
-- **No day trading as the primary lane** — the evidence (97% failure rate, even the best-published strategy has losing months) argues for swing/position trading instead
-- **Rules-based execution, human-in-the-loop approval** — the agent proposes, you approve, code executes; full autonomy only after months of paper evidence
-- **Evidence-driven over intuition** — all strategy claims are backtested in/out-of-sample; all research agent calls are graded against actual price action
-- **Risk is in code** — RiskGuard limits, daily-loss circuit breaker, stop-required rule are all enforced in `ibkr_service.py`, not left to model judgment
-- **Paper trading is mandatory** — Phase 3 lasts 2–3 months minimum before any real capital is risked
-
----
-
-## Current open questions / decisions pending
-
-1. **Grade the research notes once they're old enough** (~2026-07-25+) — `grade_calls.py --csv`, weekly from there
-2. **Momentum rotation at portfolio level** — should it get the same walk-forward rigor the SMA got, even though it's already live on paper?
-3. **research_agent.py vs trading_agent_service.py** — which research backend to commit to? (Lower priority — focus on grading first)
-4. **Web UI** — items 1-2 are done and real fills now exist, so it's *legitimately* unblocked (not just deferred). Still lower priority than more research/trading cycles, which is the evidence this project is actually gated on.
-
----
+- **No day trading as the primary lane** — the evidence argues for swing/position trading
+- **Rules-based execution** — the agent proposes, code executes; an LLM is never in the intraday firing loop
+- **Evidence-driven over intuition** — in/out-of-sample backtests, graded calls, negative results reported not massaged
+- **Risk is in code** — limits, thresholds and the stop-required rule live in `ftmo_rules.py` / `ftmo_sizing.py`, not in prompts or model judgment
+- **Simulated capital only** — the FTMO Challenge account is simulated; real capital stays locked
 
 ## Maintenance
 
-This vault is manually synced with the codebase. If you change code structure or add files, update this MOC. If you update strategy parameters or add tickers, update [[Watchlist Context]]. If you run `grade_calls.py`, update [[Graded Calls Tracker]].
+This vault is synced with the codebase — partly by a daily launchd job
+(`daily_vault_sync.sh`, 22:00, scoped to this folder only) and partly by hand.
+If you change code structure, update this MOC. If you change the watchlist,
+update [[Watchlist Context]]. If you run `grade_calls.py`, update
+[[Graded Calls Tracker]].

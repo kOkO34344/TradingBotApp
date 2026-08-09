@@ -1,11 +1,25 @@
 ---
 tags: [risk, execution, infrastructure]
-status: "live in code"
-source: ibkr_service.py, ftmo_rules.py, ftmo_monitor.py
-last_updated: 2026-08-02
+status: "live in code — FTMO only; the IBKR RiskGuard was removed 2026-08-09"
+source: ftmo_rules.py, ftmo_monitor.py, ftmo_sizing.py
+last_updated: 2026-08-09
 ---
 
 # Risk Management System
+
+> [!important] RiskGuard is gone; the LESSON it taught is the design here
+> `ibkr_service.RiskGuard` was removed with its venue on 2026-08-09. It was a
+> **pre-trade gate** — consulted only when an order was being placed — and it
+> provably could not see the failure that matters: GOOGL's stop fired
+> overnight, moved the account $422, and the breaker was simply never
+> evaluated because nothing tried to trade that day.
+>
+> **Every FTMO limit is measured on equity INCLUDING floating P&L**, so the
+> account can breach with no order placed. That is why this venue has a
+> continuous monitor (`ftmo_monitor.py`) rather than a gate, and why
+> `flatten_all()` has no limit in front of it at all — a cap on new exposure is
+> risk control, but blocking an exit raises risk.
+
 
 > [!warning] There are now THREE risk layers, not two
 > A third was added 2026-08-02 for the FTMO venue, and it works on a different

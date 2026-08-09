@@ -1,11 +1,24 @@
 ---
 tags: [autotrade, risk, experimental, execution]
 source: autotrade_runner.py
-status: "IBKR autotrade OFF (and staying off). NOTE: a SECOND, separate autotrade now exists for FTMO and it is ARMED — see [[FTMO Venue]]."
-last_updated: 2026-08-06
+status: "HISTORICAL — the IBKR runner was removed 2026-08-09; FTMO's is live, see [[FTMO Venue]]"
+last_updated: 2026-08-09
 ---
 
 # Autotrade (Experimental)
+
+> [!danger] HISTORICAL — `autotrade_runner.py` was REMOVED on 2026-08-09
+> This note describes the IBKR hourly runner, which no longer exists. Its
+> `autotrade` block is also gone from `trader_settings.json`.
+>
+> It matters as the FIRST of three deliberate exceptions to the
+> earn-autonomy-with-evidence rule: built 2026-07-24 at the owner's
+> twice-confirmed request despite both candidate signals showing no measurable
+> edge at that cadence (momentum-hourly IC −0.037 / 48.5%, Kronos-hourly
+> −0.081 / 46.4%).
+>
+> The live unattended path is now `ftmo_runner.py`. See [[FTMO Venue]].
+
 
 > [!important] There are now TWO autotrade paths, and this note is about the
 > IBKR one.

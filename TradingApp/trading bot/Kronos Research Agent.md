@@ -1,11 +1,21 @@
 ---
 tags: [research, kronos, agent, workflow]
 source: KronosAI/kronos_agent.py
-status: "THE project signal (owner decision 2026-07-28) — no measured edge on ANY asset class (all four screened + failed 2026-08-03)"
-last_updated: 2026-08-05
+status: "Live — the project's focus signal by decision, not by measured edge"
+last_updated: 2026-08-09
 ---
 
 # Kronos Research Agent
+
+> [!note] Where Kronos runs now (2026-08-09)
+> `paper_trader.py` is gone. Kronos feeds `ftmo_runner.py`, which ranks FTMO's
+> own CFD universe — not the yfinance watchlist this note describes. The
+> research/backtest paths still use the watchlist.
+>
+> **The horizon changed from 20 days to 5** (owner decision 2026-08-08), and
+> all four asset classes were re-screened at the new horizon. All four failed
+> again; every IC moved toward zero or stayed put. See [[FTMO Venue]].
+
 
 > [!important] Kronos is now the project's main signal (2026-07-28)
 > Owner decision. It is the default everywhere — `paper_trader.py` with no

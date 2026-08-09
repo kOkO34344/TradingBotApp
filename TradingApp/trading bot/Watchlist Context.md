@@ -1,11 +1,26 @@
 ---
-tags: [watchlist, infrastructure, ibkr]
+tags: [watchlist, infrastructure, research]
 source: watchlist.py
-status: "Live — named groups, validated symbols"
-last_updated: 2026-07-25
+status: "Live — the RESEARCH universe, not the traded one"
+last_updated: 2026-08-09
 ---
 
 # Watchlist Context
+
+> [!important] This is the RESEARCH universe, not the traded one (2026-08-09)
+> It was both until IBKR was removed. **FTMO trades a different set entirely** —
+> CFDs named `EURUSD`, `US30.cash`, `NATGAS.cash` — derived from the venue's own
+> symbol capture by `ftmo_signal.build_universe`, not from anything here.
+>
+> Symbol validation still drops FX, crypto, futures and foreign listings, but
+> the REASON changed with the venue: it was "the order path trades US stocks
+> only", it is now "yfinance reports volume as identically zero for spot FX and
+> Kronos conditions on volume". Same symbols dropped, an honest reason.
+>
+> The old guard against removing a ticker you held a position in is also gone,
+> deliberately: nothing filters positions by this list any more. If any
+> consumer ever starts doing that again, put the guard back.
+
 
 ## What it is now
 
