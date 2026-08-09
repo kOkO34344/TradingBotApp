@@ -134,11 +134,14 @@ changing anything structural.
     a heartbeat, and a rail of pulsing lamps would be noise. The boot sequence
     runs once per browser SESSION, never per navigation, and never blocks: it
     is `pointer-events: none` over a fully interactive screen.
-17. **Numbers never scramble.** The text-scramble effect is scoped away from
-    prices, equity, stops and P&L. A stop price is read once, fast, often at
-    2am; 300ms of noise on it is 300ms you cannot act. `/ws/ftmo` also pushes a
-    snapshot every second, so a 300ms scramble would leave the equity readout
-    mid-effect roughly a third of the time it is on screen.
+17. **There is no text-scramble effect, and that was a decision.** It was on
+    the table with the rest of the cyberpunk set and cut on 2026-08-09. Two
+    reasons, recorded so it does not get re-proposed as an obvious win: a stop
+    price is read once, fast, often at 2am, and 300ms of noise on it is 300ms
+    you cannot act; and `/ws/ftmo` pushes a snapshot every second, so a 300ms
+    scramble would leave the equity readout mid-effect roughly a third of the
+    time it is on screen. If it ever does get built, scope it to status WORDS
+    only — never to a number.
 18. **Tab selection lives in the URL** (`components/url-tabs.tsx`). Six of the
     old eight routes are tabs now, and `/backtests` has to keep landing on the
     backtests table. It also means every panel is reachable over HTTP, which
