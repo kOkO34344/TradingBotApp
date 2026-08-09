@@ -102,15 +102,23 @@ changing anything structural.
     `journal_api`'s `FILL_EVENTS`/`FILLED_STATUSES` knew only IBKR's until
     2026-08-07, so every FTMO fill scored zero chart markers — correctly
     journalled, and undrawable.
-13. **A `bg-*` utility on a `.plate` is INVISIBLE, and that is structural.**
-    Chamfered plates are built from two negative-z pseudo-elements rather than
-    a border, because `clip-path` clips a border away at exactly the corners
-    the chamfer creates. The element's own background paints below negative-z
-    descendants, so `::after` covers it completely. Tint a child, or use a
-    plain bordered box — a coloured callout is not a panel and does not need to
-    be one. Same reason anything that must escape a plate's bounds has to be
-    portalled: `clip-path` clips descendants.
-14. **A firing that did not happen must be drawn, not omitted.** The night
+13. **The neons are MEANING, not chrome, and that is the whole palette.**
+    Neon green IS profit, neon pink IS loss, and the interactive colour is
+    orange — a hue no value ever takes. Never paint a button, tab or focus ring
+    green or pink: a green button beside a green P&L is the exact confusion
+    rule 2 exists to prevent.
+    **UNKNOWN is violet and it is the thin one.** Violet (~295°) is only ~55°
+    from loss-pink (~350°), the tightest gap in the palette, separating the two
+    states that must never blur. Hue alone is not carrying it — violet is also
+    darker and less saturated, and every place it appears carries a text label
+    as a second channel. Keep the label.
+14. **`--glass-blur` is a token so it can be switched off.** Panels use
+    `backdrop-filter`, which is real GPU work, and this page streams a snapshot
+    every second. If it ever costs frames, set `--glass-blur: 0px` in `.dark`
+    and every panel degrades to a flat tint with no other change. Six panels
+    render on `/watch`; light mode already runs at 0 because frosting a white
+    panel over a white page buys nothing.
+15. **A firing that did not happen must be drawn, not omitted.** The night
     band's `missed` cells are hours the trading window was open and the runner
     left no audit record — the Mac asleep on battery. 22 consecutive silent
     failures went unnoticed for 19 hours on this project, so a band that
@@ -119,7 +127,19 @@ changing anything structural.
     inside a CLOSED slot came from `--force`, `--reconcile` or a dashboard
     preview, and drawing it as a scheduled firing would make the band evidence
     for something that never happened.
-15. **Tab selection lives in the URL** (`components/url-tabs.tsx`). Six of the
+16. **Every animation sits inside the `prefers-reduced-motion` guard, and
+    nothing carries information that is lost when it stops.** State is always
+    in a colour AND a label as well as in motion. The ARMED lamp is the only
+    thing that breathes — "the robot is live right now" is the one state worth
+    a heartbeat, and a rail of pulsing lamps would be noise. The boot sequence
+    runs once per browser SESSION, never per navigation, and never blocks: it
+    is `pointer-events: none` over a fully interactive screen.
+17. **Numbers never scramble.** The text-scramble effect is scoped away from
+    prices, equity, stops and P&L. A stop price is read once, fast, often at
+    2am; 300ms of noise on it is 300ms you cannot act. `/ws/ftmo` also pushes a
+    snapshot every second, so a 300ms scramble would leave the equity readout
+    mid-effect roughly a third of the time it is on screen.
+18. **Tab selection lives in the URL** (`components/url-tabs.tsx`). Six of the
     old eight routes are tabs now, and `/backtests` has to keep landing on the
     backtests table. It also means every panel is reachable over HTTP, which
     is the only way to exercise a Base UI panel without a browser — see the

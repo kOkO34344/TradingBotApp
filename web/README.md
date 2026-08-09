@@ -54,6 +54,29 @@ tabs carry `?tab=` so a bookmark lands where it used to.
 | `/market` | Candles for stocks, ETFs, forex, crypto and futures. 1m–1d, indicators.py overlays and sub-panes, journal trade markers, live stop lines. Symbol box has typeahead, searchable by company name. |
 | `/ledger` | `?tab=journal` trade_journal.csv with corrections and phantom rows marked · `?tab=backtests` recorded results, in-sample and out-of-sample kept apart, quoted findings marked as quoted. |
 
+### Look and motion
+
+Cyberpunk register, set by tokens in `app/globals.css`:
+
+| slot | dark | meaning |
+|---|---|---|
+| profit | `#2bfb87` neon green | money made |
+| loss | `#ff4285` neon pink | money lost, limit breached |
+| signal | `#ff9843` neon orange | interaction only — no value ever takes it |
+| unknown | `#9264ef` violet | we did not hear; never "no" |
+| ground | `#07090e` | near-black, cool. Not `#000` — pure black under saturated neon causes halation |
+
+Three typefaces, each with one job: **Orbitron** for headings and silkscreen
+labels (text you scan), **Chakra Petch** for body, buttons and cells, **Spline
+Sans Mono** for every number. Orbitron is ~40% wider than Chakra Petch, which
+is why `.silkscreen` tracks at 0.08em rather than 0.20em.
+
+Panels are `.glass` — translucent, `backdrop-filter` blurred, with a gradient
+top edge. Motion is scoped: hover bloom and neon focus rings on controls, a
+sheen crossing the night band, the ARMED lamp breathing, panels rising in, a
+CRT boot sequence once per browser session, and a 1px RGB split on nav hover.
+Every one of them sits inside `prefers-reduced-motion`.
+
 ### The night band
 
 The signature instrument on `/watch`. One session — 16:30 Sofia through 11:30
@@ -107,10 +130,10 @@ state, never as "disarmed". The rule was learned on stop protection: on
 open-orders request timed out, and conflating "did not answer" with "no stop"
 would have shown four naked positions that were fully protected the whole time.
 
-Unknown is **magenta**, deliberately outside the warm family. The signal colour
-is burnt orange, which sits between loss-red and the amber this used to be —
-too close for a distinction this load-bearing. Magenta takes a moment to learn
-and is unmistakable once you have.
+Unknown is **violet**, and it is the tightest pair in the palette — only ~55°
+from loss-pink. Hue alone is not carrying that distinction: violet is also
+darker and less saturated, and every place it appears carries a text label as a
+second channel. Keep the label if you restyle one of those components.
 
 **2. A pending request never renders as a fact.**
 Tiles show `—` until the venue has actually answered. An in-flight positions

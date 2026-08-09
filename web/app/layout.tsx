@@ -1,9 +1,22 @@
 import type { Metadata } from "next";
-import { Chakra_Petch, Spline_Sans_Mono } from "next/font/google";
+import { Chakra_Petch, Orbitron, Spline_Sans_Mono } from "next/font/google";
 import "./globals.css";
 import { AppShell } from "@/components/app-shell";
 import { Toaster } from "@/components/ui/sonner";
 import { CommandPalette } from "@/components/command-palette";
+import { BootSequence } from "@/components/boot-sequence";
+
+// Orbitron carries HEADINGS AND LABELS ONLY — text you scan, never text you
+// read. It is a display face: wide, geometric, and tiring in running copy.
+// Roughly 40% wider than Chakra Petch, which is why `.silkscreen` drops its
+// tracking from 0.20em to 0.08em; raising that back would push table headers
+// out of the columns they have.
+const orbitron = Orbitron({
+  variable: "--font-orbitron",
+  subsets: ["latin"],
+  weight: ["500", "600", "700"],
+  display: "swap",
+});
 
 // Chakra Petch has CHAMFERED stems — every corner is cut rather than
 // rounded — which is why the plates in globals.css are cut the same way. Type
@@ -56,12 +69,13 @@ export default function RootLayout({
     // the chosen default, and the theme toggle in the header flips this class.
     <html
       lang="en"
-      className={`dark ${chakraPetch.variable} ${splineSansMono.variable} h-full antialiased`}
+      className={`dark ${orbitron.variable} ${chakraPetch.variable} ${splineSansMono.variable} h-full antialiased`}
       suppressHydrationWarning
     >
       <body className="min-h-full flex flex-col bg-background text-foreground">
         <AppShell>{children}</AppShell>
         <CommandPalette />
+        <BootSequence />
         <Toaster richColors position="bottom-right" />
       </body>
     </html>

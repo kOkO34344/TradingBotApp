@@ -175,7 +175,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
                     href={href}
                     title={hint}
                     className={cn(
-                      "flex items-center gap-1.5 whitespace-nowrap rounded-sm px-2.5 py-1.5 text-sm transition-colors",
+                      "rgb-split flex items-center gap-1.5 whitespace-nowrap rounded-sm px-2.5 py-1.5 text-sm",
                       active
                         ? "bg-accent text-accent-foreground"
                         : "text-muted-foreground hover:bg-accent/40 hover:text-foreground"
@@ -304,6 +304,7 @@ function AnnunciatorRail({
       />
       <Lamp
         state={armed === null ? "caution" : armed ? "ok" : "off"}
+        breathe={armed === true}
         label={armed === false ? "disarmed" : "armed"}
         detail={
           armed === null
@@ -402,10 +403,14 @@ function Lamp({
   state,
   label,
   detail,
+  breathe = false,
 }: {
   state: LampState;
   label: string;
   detail: string;
+  /** Pulse the dot. Reserved for ARMED — "the robot is live right now" is the
+   *  one state worth a heartbeat; a rail of pulsing lamps would be noise. */
+  breathe?: boolean;
 }) {
   return (
     <span
@@ -413,6 +418,7 @@ function Lamp({
       className={cn(
         "silkscreen flex items-center gap-1.5 rounded-sm px-1.5 py-0.5",
         state !== "off" && "annunciator-lit",
+        state !== "off" && "neon",
         state === "ok" && "bg-profit/10 text-profit",
         state === "caution" && "bg-unknown/10 text-unknown",
         state === "warn" && "bg-loss/15 text-loss",
@@ -422,6 +428,7 @@ function Lamp({
       <span
         className={cn(
           "size-1.5 rounded-full",
+          breathe && state !== "off" && "lamp-breathe",
           state === "ok" && "bg-profit",
           state === "caution" && "bg-unknown",
           state === "warn" && "bg-loss",

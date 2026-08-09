@@ -169,7 +169,7 @@ function Readout({
   emphasis?: boolean;
 }) {
   return (
-    <div className="plate plate-sm px-4 py-3" title={hint}>
+    <div className="glass glass-interactive rise px-4 py-3" title={hint}>
       <div className="flex items-baseline justify-between">
         <span className="silkscreen">{label}</span>
         {note && (
@@ -217,7 +217,7 @@ function Meter({
         : "bg-primary";
 
   return (
-    <div className="plate plate-sm space-y-2 px-3 py-3">
+    <div className="glass glass-interactive rise space-y-2 px-3 py-3">
       <div className="flex items-baseline justify-between">
         <span className="silkscreen">{title}</span>
         <span className="tabular text-sm">
@@ -260,7 +260,7 @@ function Tick({ at, title }: { at: number; title: string }) {
 
 function PositionsTable({ rows }: { rows: FtmoPosition[] }) {
   return (
-    <div className="plate overflow-x-auto">
+    <div className="glass overflow-x-auto">
       <table className="w-full min-w-[820px] text-sm">
         <thead>
           <tr className="border-b hairline border-border">
@@ -346,7 +346,7 @@ function Td({
 
 function Empty({ children }: { children: React.ReactNode }) {
   return (
-    <p className="plate px-3 py-6 text-center text-sm text-muted-foreground">
+    <p className="glass px-3 py-6 text-center text-sm text-muted-foreground">
       {children}
     </p>
   );

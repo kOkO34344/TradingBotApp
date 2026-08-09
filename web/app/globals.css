@@ -4,29 +4,28 @@
 
 @custom-variant dark (&:is(.dark *));
 
-/* ================================================================== EMBER
-   A watch station read by one person, in the morning, about a robot that
-   traded alone overnight against limits that can kill the account with no
-   order placed.
+/* ============================================================== NEON WATCH
+   A watch station read by one person, about a robot that traded alone
+   overnight against limits that can kill the account with no order placed.
 
-   The theme is warm machined graphite under sodium light: a workshop, not a
-   cockpit. Chamfered type (Chakra Petch) and chamfered plates say the same
-   thing, which is what stops a loud typeface reading as decoration.
+   Cyberpunk register: cool near-black ground, glass panels, neon on the
+   things that matter, and motion that responds rather than decorates.
 
-   CAUTION IS MAGENTA, AND THAT IS THE LOAD-BEARING DECISION HERE.
-   The signal colour is burnt orange (~45 deg), which sits between loss-red
-   (~25 deg) and the amber this project used for "UNKNOWN" (~82 deg). Amber
-   would have been ~35 deg from the interactive colour on one side and ~55 on
-   the other — close enough that a caution chip and a button could read as the
-   same class of thing. `web/CLAUDE.md` rule 2 exists because conflating "the
-   venue did not answer" with "this position has no stop" nearly sent Koko
-   re-protecting positions that were already protected, so that distinction
-   does not get to be subtle. Magenta (~345 deg) is 65 deg clear of loss on
-   the other side of the wheel and shares no neighbourhood with anything.
+   THE NEONS ARE MEANING, NOT CHROME, AND THAT IS THE WHOLE STRUCTURE.
+   Neon green IS profit and neon pink IS loss, so the two loudest colours on
+   screen sit on the two numbers you actually came to read. Interaction is
+   orange, which is a colour no value ever takes. The alternative — neon as
+   button paint with P&L re-encoded — would have made a green button and a
+   green P&L the same colour, which is the failure class rule 2 exists to
+   prevent.
 
-   It is unusual for "caution" and takes a moment to learn. That was chosen
-   deliberately over a warm colour that is easier to guess and easier to
-   confuse. Do not "fix" it back to amber. */
+   UNKNOWN IS VIOLET, AND IT IS THE THIN ONE. Violet (~295 deg) is only ~55
+   deg from loss-pink (~350 deg), the tightest gap in the palette, and it
+   separates the two states that must never blur: "the venue did not answer"
+   and "money was lost". Hue alone is not carrying that. It is also separated
+   by LIGHTNESS and CHROMA (violet is darker and less saturated than the pink),
+   and every place it appears carries a text label as a second channel. If you
+   ever restyle a component that shows UNKNOWN, keep the label. */
 
 @theme inline {
   --color-profit: var(--profit);
@@ -40,7 +39,7 @@
   --color-foreground: var(--foreground);
   --font-sans: var(--font-chakra-petch);
   --font-mono: var(--font-spline-mono);
-  --font-heading: var(--font-chakra-petch);
+  --font-heading: var(--font-orbitron);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -79,112 +78,127 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Light. Warm paper against graphite ink — the same theme re-lit, not a
-   different one. The toggle exists because this panel is also read at midday,
-   and a dark screen in a bright room is as hard to read as a bright one at
-   night. Every hue below matches its dark counterpart; only lightness and
-   chroma move. */
+/* Light. Neon does not survive on white, so this is not a neon theme in
+   daylight — it is the same hues taken down to ink weight. Kept working
+   because the panel is also read at midday, and the toggle should not hand
+   you an unreadable screen. */
 :root {
-  --background: oklch(0.979 0.006 70);
-  --foreground: oklch(0.2 0.012 50);
+  --background: oklch(0.977 0.004 250);
+  --foreground: oklch(0.2 0.015 260);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.2 0.012 50);
+  --card-foreground: oklch(0.2 0.015 260);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.2 0.012 50);
-  --primary: oklch(0.55 0.16 45);
-  --primary-foreground: oklch(0.99 0.008 70);
-  --secondary: oklch(0.955 0.008 65);
-  --secondary-foreground: oklch(0.27 0.02 50);
-  --muted: oklch(0.955 0.008 65);
-  --muted-foreground: oklch(0.505 0.016 55);
-  --accent: oklch(0.945 0.03 55);
-  --accent-foreground: oklch(0.33 0.08 45);
-  --destructive: oklch(0.53 0.21 25);
-  --border: oklch(0.888 0.01 60);
-  --input: oklch(0.888 0.01 60);
-  --ring: oklch(0.55 0.16 45);
+  --popover-foreground: oklch(0.2 0.015 260);
+  --primary: oklch(0.58 0.17 55);
+  --primary-foreground: oklch(0.99 0.005 80);
+  --secondary: oklch(0.955 0.006 255);
+  --secondary-foreground: oklch(0.27 0.02 260);
+  --muted: oklch(0.955 0.006 255);
+  --muted-foreground: oklch(0.5 0.016 258);
+  --accent: oklch(0.94 0.035 55);
+  --accent-foreground: oklch(0.34 0.09 50);
+  --destructive: oklch(0.55 0.21 5);
+  --border: oklch(0.885 0.008 258);
+  --input: oklch(0.885 0.008 258);
+  --ring: oklch(0.58 0.17 55);
 
-  --profit: oklch(0.5 0.15 155);
-  --loss: oklch(0.53 0.21 25);
-  --unknown: oklch(0.55 0.19 345);
-  --neutral: oklch(0.505 0.016 55);
+  --profit: oklch(0.52 0.15 155);
+  --loss: oklch(0.55 0.21 5);
+  --unknown: oklch(0.48 0.19 295);
+  --neutral: oklch(0.5 0.016 258);
 
-  --chart-1: oklch(0.55 0.16 45);
-  --chart-2: oklch(0.52 0.12 210);
-  --chart-3: oklch(0.55 0.19 345);
-  --chart-4: oklch(0.5 0.15 155);
-  --chart-5: oklch(0.5 0.014 55);
-  --chart-grid: oklch(0.888 0.01 60);
-  --chart-up: oklch(0.5 0.15 155);
-  --chart-down: oklch(0.53 0.21 25);
+  --chart-1: oklch(0.58 0.17 55);
+  --chart-2: oklch(0.52 0.13 235);
+  --chart-3: oklch(0.48 0.19 295);
+  --chart-4: oklch(0.52 0.15 155);
+  --chart-5: oklch(0.5 0.014 258);
+  --chart-grid: oklch(0.885 0.008 258);
+  --chart-up: oklch(0.52 0.15 155);
+  --chart-down: oklch(0.55 0.21 5);
 
-  --sidebar: oklch(0.965 0.008 65);
-  --sidebar-foreground: oklch(0.2 0.012 50);
-  --sidebar-primary: oklch(0.55 0.16 45);
-  --sidebar-primary-foreground: oklch(0.99 0.008 70);
-  --sidebar-accent: oklch(0.945 0.03 55);
-  --sidebar-accent-foreground: oklch(0.33 0.08 45);
-  --sidebar-border: oklch(0.888 0.01 60);
-  --sidebar-ring: oklch(0.55 0.16 45);
+  --sidebar: oklch(0.963 0.006 255);
+  --sidebar-foreground: oklch(0.2 0.015 260);
+  --sidebar-primary: oklch(0.58 0.17 55);
+  --sidebar-primary-foreground: oklch(0.99 0.005 80);
+  --sidebar-accent: oklch(0.94 0.035 55);
+  --sidebar-accent-foreground: oklch(0.34 0.09 50);
+  --sidebar-border: oklch(0.885 0.008 258);
+  --sidebar-ring: oklch(0.58 0.17 55);
 
-  /* The hairline that traces a chamfered plate's cut edge. */
-  --plate-edge: oklch(0.87 0.012 60);
+  /* Glass: on light, a panel is opaque white with a soft rule. Frosting a
+     white panel over a white page buys nothing but GPU time. */
+  /* Opaque backing for charts that composite layers (the Monte Carlo band
+     is masked against it). Charts elsewhere stay transparent over the glass. */
+  --chart-surface: oklch(1 0 0);
+
+  --glass-fill: oklch(1 0 0);
+  --glass-edge: oklch(0.885 0.008 258);
+  --glass-blur: 0px;
+  --scanline-opacity: 0;
 }
 
-/* Dark is the default (see app/layout.tsx). Warm graphite rather than the
-   cold blue-black this replaced, and never true black: on a black ground
-   every hairline fights for attention, and the burnt-orange signal turns
-   garish without a warm surface under it. */
+/* Dark is the default. Near-black with a cool cast, NOT #000: pure black
+   under saturated neon causes halation — the glow smears into surrounding
+   pixels and thin text becomes hard to focus on. A few points of lightness
+   fixes it and costs nothing. */
 .dark {
-  --background: oklch(0.186 0.009 52);
-  --foreground: oklch(0.955 0.007 70);
-  --card: oklch(0.243 0.011 52);
-  --card-foreground: oklch(0.955 0.007 70);
-  --popover: oklch(0.243 0.011 52);
-  --popover-foreground: oklch(0.955 0.007 70);
-  --primary: oklch(0.7 0.155 45);
-  --primary-foreground: oklch(0.2 0.03 45);
-  --secondary: oklch(0.295 0.013 52);
-  --secondary-foreground: oklch(0.955 0.007 70);
-  --muted: oklch(0.275 0.012 52);
-  --muted-foreground: oklch(0.685 0.014 58);
-  --accent: oklch(0.325 0.05 45);
-  --accent-foreground: oklch(0.915 0.055 55);
-  --destructive: oklch(0.66 0.2 25);
-  --border: oklch(1 0 0 / 13%);
+  --background: oklch(0.14 0.012 265);
+  --foreground: oklch(0.945 0.008 250);
+  --card: oklch(0.185 0.016 265);
+  --card-foreground: oklch(0.945 0.008 250);
+  --popover: oklch(0.2 0.018 265);
+  --popover-foreground: oklch(0.945 0.008 250);
+  --primary: oklch(0.78 0.185 55);
+  --primary-foreground: oklch(0.16 0.03 55);
+  --secondary: oklch(0.245 0.02 265);
+  --secondary-foreground: oklch(0.945 0.008 250);
+  --muted: oklch(0.225 0.018 265);
+  --muted-foreground: oklch(0.68 0.02 258);
+  --accent: oklch(0.3 0.06 55);
+  --accent-foreground: oklch(0.93 0.07 65);
+  --destructive: oklch(0.68 0.245 5);
+  --border: oklch(1 0 0 / 12%);
   --input: oklch(1 0 0 / 16%);
-  --ring: oklch(0.7 0.155 45);
+  --ring: oklch(0.78 0.185 55);
 
-  /* Meaning colours. Never spent on chrome — on this screen a coloured value
-     is a claim about money or about certainty, and nothing decorative gets to
-     borrow that. See the header comment for why UNKNOWN is magenta. */
-  --profit: oklch(0.765 0.16 155);
-  --loss: oklch(0.66 0.2 25);
-  --unknown: oklch(0.72 0.19 345);
-  --neutral: oklch(0.7 0.014 58);
+  /* Meaning colours — the neons. Never spent on chrome: on this screen a
+     coloured value is a claim about money or about certainty, and nothing
+     decorative gets to borrow that.
 
-  /* Chart series, ordered by how often an overlay is added, so the common
-     case never collides with the orange UI accent. chart-2 is deliberately
-     cold — a second warm series would be indistinguishable from the signal. */
-  --chart-1: oklch(0.7 0.155 45);
-  --chart-2: oklch(0.7 0.12 210);
-  --chart-3: oklch(0.72 0.19 345);
-  --chart-4: oklch(0.765 0.16 155);
-  --chart-5: oklch(0.7 0.014 58);
-  --chart-grid: oklch(1 0 0 / 8%);
-  --chart-up: oklch(0.765 0.16 155);
-  --chart-down: oklch(0.66 0.2 25);
+     --unknown is deliberately DARKER and LESS saturated than --loss. They are
+     the closest pair on the wheel and the most dangerous pair to confuse, so
+     lightness and chroma do work that hue alone cannot. */
+  --profit: oklch(0.87 0.22 152);
+  --loss: oklch(0.68 0.245 5);
+  --unknown: oklch(0.62 0.2 295);
+  --neutral: oklch(0.7 0.02 258);
 
-  --sidebar: oklch(0.215 0.01 52);
-  --sidebar-foreground: oklch(0.955 0.007 70);
-  --sidebar-primary: oklch(0.7 0.155 45);
-  --sidebar-primary-foreground: oklch(0.2 0.03 45);
-  --sidebar-accent: oklch(0.325 0.05 45);
-  --sidebar-accent-foreground: oklch(0.915 0.055 55);
-  --sidebar-border: oklch(1 0 0 / 13%);
-  --sidebar-ring: oklch(0.7 0.155 45);
+  /* Chart series. chart-1 is the signal orange; chart-2 is deliberately cold
+     so a second overlay never reads as the accent. */
+  --chart-1: oklch(0.78 0.185 55);
+  --chart-2: oklch(0.72 0.15 235);
+  --chart-3: oklch(0.62 0.2 295);
+  --chart-4: oklch(0.87 0.22 152);
+  --chart-5: oklch(0.7 0.02 258);
+  --chart-grid: oklch(1 0 0 / 7%);
+  --chart-up: oklch(0.87 0.22 152);
+  --chart-down: oklch(0.68 0.245 5);
 
-  --plate-edge: oklch(1 0 0 / 15%);
+  --sidebar: oklch(0.165 0.014 265);
+  --sidebar-foreground: oklch(0.945 0.008 250);
+  --sidebar-primary: oklch(0.78 0.185 55);
+  --sidebar-primary-foreground: oklch(0.16 0.03 55);
+  --sidebar-accent: oklch(0.3 0.06 55);
+  --sidebar-accent-foreground: oklch(0.93 0.07 65);
+  --sidebar-border: oklch(1 0 0 / 12%);
+  --sidebar-ring: oklch(0.78 0.185 55);
+
+  --chart-surface: oklch(0.175 0.015 265);
+
+  --glass-fill: oklch(1 0 0 / 5%);
+  --glass-edge: oklch(1 0 0 / 14%);
+  --glass-blur: 14px;
+  --scanline-opacity: 0.05;
 }
 
 @layer base {
@@ -199,28 +213,16 @@
   }
 }
 
-/* ------------------------------------------------------------------ chrome
-   Four global decisions that define the look, kept here rather than sprinkled
-   per component so they cannot drift apart.
-
-   1. TABULAR FIGURES EVERYWHERE. Numbers are the product. Proportional digits
-      let a price column shift horizontally as the last digit ticks, which
-      makes a live quote look like noise and two prices hard to compare. This
-      one is not stylistic and does not change with the theme.
-   2. CHAMFERED PLATES. Panels have cut corners echoing Chakra Petch's
-      chamfered stems, so type and surface say the same thing.
-   3. SILKSCREEN LABELS. Chakra Petch has no width axis, so label width comes
-      from tracking alone — wide letterspacing, caps, restrained weight, the
-      way equipment is stamped rather than the way headings are set.
-   4. HEADINGS DO NOT SHOUT. The typeface is already assertive; weight is held
-      in reserve so that when something IS bold, it means something. */
-
 :root,
 .dark {
-  --radius: 0.125rem;
-  /* How deep each corner is cut. One value so every plate on screen reads as
-     the same milled part; the compact variant below halves it. */
-  --chamfer: 10px;
+  --radius: 0.5rem;
+  /* One duration scale. Anything slower than ~200ms on a panel that streams a
+     snapshot every second reads as lag, and a trading panel that feels laggy
+     feels untrustworthy. */
+  --t-fast: 90ms;
+  --t-base: 150ms;
+  --t-slow: 220ms;
+  --ease: cubic-bezier(0.2, 0.8, 0.2, 1);
 }
 
 html {
@@ -228,133 +230,259 @@ html {
   font-feature-settings: "tnum" 1;
 }
 
+/* ------------------------------------------------------------------- type
+   Three faces, each with one job. Orbitron is a display face and is kept to
+   headings and labels — text you SCAN. It is ~40% wider than Chakra Petch, so
+   the silkscreen tracking drops from 0.20em to 0.08em to fit the columns it
+   already has; do not raise it back without checking the table headers. */
+
 h1, h2, h3, h4 {
-  letter-spacing: 0.005em;
+  font-family: var(--font-orbitron);
+  letter-spacing: 0.01em;
   font-weight: 500;
 }
 
-/* Numeric cells opt into mono explicitly. Mono digits are already tabular,
-   but stating it means a future font swap cannot quietly break alignment. */
 .tabular {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.005em;
+  letter-spacing: -0.01em;
 }
 
-/* Equipment labelling. Used for section headings and column headers and for
-   nothing else — the moment it decorates, it stops reading as a label.
-   Chakra Petch is narrow at these sizes, so the tracking is doing the work
-   Archivo's width axis used to do. */
 .silkscreen {
-  font-family: var(--font-sans);
+  font-family: var(--font-orbitron);
   font-weight: 600;
   text-transform: uppercase;
-  letter-spacing: 0.2em;
+  letter-spacing: 0.08em;
   font-size: 0.625rem;
-  line-height: 1.1;
+  line-height: 1.15;
   color: var(--muted-foreground);
 }
 
-/* ------------------------------------------------------------------ plates
+/* ------------------------------------------------------------------ glass
 
-   A chamfered panel: the surface everything sits on.
+   Translucent blurred panels over the dark ground, with a bright top edge
+   catching the light. Replaces the chamfered plates.
 
-   Built from two negative-z pseudo-elements rather than a border, because
-   `clip-path` clips a border away at exactly the corners the chamfer creates
-   — the cut edge would lose its rule and the plate would read as a flat
-   silhouette. So `::after` paints the full shape in the edge colour, and
-   `::before` paints the fill one pixel inside it. The result is a 1px
-   hairline that follows the cut on all eight sides.
-
-   `isolation: isolate` keeps those negative z-indexes inside the plate; without
-   it they paint behind the page background and vanish. Children need no
-   z-index of their own, which is the point — this drops into existing markup
-   without touching a single component's DOM.
-
-   Two consequences to know before using this class:
-
-   - A `bg-*` utility on a `.plate` IS INVISIBLE. The element's own background
-     paints below negative-z descendants, so `::after` covers it completely.
-     Tint a child, or use a plain bordered box instead — a coloured callout is
-     not a panel and does not need to be one.
-   - Anything that must escape the plate's bounds (a menu, a tooltip) has to be
-     portalled, since clip-path clips descendants. Base UI portals its overlays
-     already. */
-.plate {
+   `backdrop-filter` is real GPU work and this page streams a snapshot every
+   second, so the blur radius is a token: if it ever costs frames, set
+   `--glass-blur: 0px` in `.dark` and every panel degrades to a flat tint with
+   no other change. Measured before shipping — see web/README.md. */
+.glass {
   position: relative;
-  isolation: isolate;
-  --plate-cut: var(--chamfer);
-  clip-path: polygon(
-    var(--plate-cut) 0%,
-    calc(100% - var(--plate-cut)) 0%,
-    100% var(--plate-cut),
-    100% calc(100% - var(--plate-cut)),
-    calc(100% - var(--plate-cut)) 100%,
-    var(--plate-cut) 100%,
-    0% calc(100% - var(--plate-cut)),
-    0% var(--plate-cut)
-  );
+  background: var(--glass-fill);
+  border: 1px solid var(--glass-edge);
+  border-radius: var(--radius);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.2);
 }
 
-.plate::after {
+/* The lit top edge. A 1px gradient rather than a border so it fades out at
+   the corners the way a real highlight does. */
+.dark .glass::before {
   content: "";
   position: absolute;
+  inset: 0 0 auto 0;
+  height: 1px;
+  border-radius: var(--radius) var(--radius) 0 0;
+  background: linear-gradient(
+    90deg,
+    transparent,
+    oklch(1 0 0 / 28%) 20%,
+    oklch(1 0 0 / 28%) 80%,
+    transparent
+  );
+  pointer-events: none;
+}
+
+/* Panels that respond. Edge and bloom pick up the signal colour on hover, so
+   glow carries information — "you are pointing at this" — instead of being
+   wallpaper. */
+.glass-interactive {
+  transition:
+    border-color var(--t-base) var(--ease),
+    box-shadow var(--t-base) var(--ease),
+    transform var(--t-base) var(--ease);
+}
+
+.glass-interactive:hover {
+  border-color: color-mix(in oklch, var(--primary) 55%, transparent);
+  box-shadow:
+    0 0 0 1px color-mix(in oklch, var(--primary) 25%, transparent),
+    0 0 24px -6px color-mix(in oklch, var(--primary) 45%, transparent);
+}
+
+/* --------------------------------------------------------------- neon glow
+   Applied to text that must read as emitted rather than printed. Deliberately
+   NOT applied to numbers by default: a glow spreads a glyph's edges, and a
+   stop price has to be legible at a glance more than it has to look lit. */
+.neon {
+  text-shadow:
+    0 0 6px color-mix(in oklch, currentColor 55%, transparent),
+    0 0 18px color-mix(in oklch, currentColor 30%, transparent);
+}
+
+/* ------------------------------------------------------------- scanlines
+   A fixed overlay on the whole viewport. Very low opacity on purpose — at
+   anything stronger it fights the 11px numbers this app is mostly made of.
+   `pointer-events: none` so it never eats a click. */
+body::after {
+  content: "";
+  position: fixed;
   inset: 0;
-  z-index: -2;
-  background: var(--plate-edge);
-}
-
-.plate::before {
-  content: "";
-  position: absolute;
-  inset: 1px;
-  z-index: -1;
-  background: var(--card);
-  clip-path: polygon(
-    calc(var(--plate-cut) - 1px) 0%,
-    calc(100% - var(--plate-cut) + 1px) 0%,
-    100% calc(var(--plate-cut) - 1px),
-    100% calc(100% - var(--plate-cut) + 1px),
-    calc(100% - var(--plate-cut) + 1px) 100%,
-    calc(var(--plate-cut) - 1px) 100%,
-    0% calc(100% - var(--plate-cut) + 1px),
-    0% calc(var(--plate-cut) - 1px)
+  z-index: 9999;
+  pointer-events: none;
+  opacity: var(--scanline-opacity);
+  background: repeating-linear-gradient(
+    to bottom,
+    oklch(1 0 0 / 60%) 0px,
+    oklch(1 0 0 / 60%) 1px,
+    transparent 1px,
+    transparent 3px
   );
 }
 
-/* Small plates — stat readouts, meters — get a shallower cut so the chamfer
-   stays proportional instead of eating the corner. */
-.plate-sm {
-  --plate-cut: 6px;
-}
+/* ------------------------------------------------------------------ motion
 
-/* A hairline is 1px at any DPR; on a 2x display a 1px CSS border renders as
-   two device pixels and reads heavy, which is what makes most dark UIs look
-   soft rather than precise. */
-@media (min-resolution: 2dppx) {
-  .hairline {
-    border-width: 0.5px;
-  }
-}
+   Every animation below is inside the reduced-motion guard, and the guard is
+   not a formality: an ambient sheen and a breathing lamp are exactly what
+   someone with vestibular sensitivity needs off. Nothing here carries
+   information that is lost when it stops moving — state is always in a colour
+   and a label as well. */
 
-/* Motion. Deliberately short and eased-out: at this density anything slower
-   than ~150ms reads as lag rather than as polish, and a trading panel that
-   feels laggy feels untrustworthy. */
 @media (prefers-reduced-motion: no-preference) {
+  /* Value ticked. Flash and decay, no scramble — a price must be readable the
+     instant you look at it. */
   .tick-flash {
     animation: tick-flash 420ms ease-out;
   }
+
+  /* A lamp coming on. */
   .annunciator-lit {
-    animation: annunciator-in 180ms ease-out;
+    animation: annunciator-in 180ms var(--ease);
+  }
+
+  /* The ARMED lamp breathes, because "the robot is live right now" is the one
+     state worth a heartbeat. */
+  .lamp-breathe {
+    animation: lamp-breathe 2.4s ease-in-out infinite;
+  }
+
+  /* A slow sheen crossing a panel edge — powered-on hardware. Runs on the
+     ::after layer so it never touches layout. */
+  .sheen::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    border-radius: inherit;
+    pointer-events: none;
+    background: linear-gradient(
+      100deg,
+      transparent 40%,
+      oklch(1 0 0 / 7%) 50%,
+      transparent 60%
+    );
+    background-size: 300% 100%;
+    animation: sheen 7s linear infinite;
+  }
+
+  /* Panels arriving. */
+  .rise {
+    animation: rise var(--t-slow) var(--ease) both;
+  }
+
+  /* Chromatic aberration on hover — an RGB split of one pixel. One pixel is
+     the whole point: enough to read as a CRT artefact, not enough to make the
+     label harder to read. */
+  .rgb-split:hover {
+    text-shadow:
+      -1px 0 color-mix(in oklch, var(--loss) 70%, transparent),
+      1px 0 color-mix(in oklch, var(--chart-2) 70%, transparent);
+  }
+
+  /* Boot sequence, once per browser session. */
+  .boot {
+    animation: boot 900ms var(--ease) both;
+  }
+  .boot-sweep {
+    animation: boot-sweep 900ms var(--ease) both;
   }
 }
 
+/* Buttons and controls respond even under reduced motion — a colour or
+   shadow change is not motion, and losing hover feedback entirely would be a
+   usability regression rather than an accessibility win. */
+button,
+[role="tab"],
+a {
+  transition:
+    color var(--t-fast) var(--ease),
+    background-color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    box-shadow var(--t-base) var(--ease);
+}
+
+@media (prefers-reduced-motion: no-preference) {
+  button:active {
+    transform: translateY(1px);
+  }
+}
+
+/* Focus is drawn in neon and is never removed. This is the one visual that
+   keyboard users navigate by. */
+:focus-visible {
+  outline: 2px solid var(--primary);
+  outline-offset: 2px;
+  box-shadow: 0 0 16px -2px color-mix(in oklch, var(--primary) 60%, transparent);
+}
+
 @keyframes tick-flash {
-  from { background-color: color-mix(in oklch, var(--primary) 22%, transparent); }
+  from { background-color: color-mix(in oklch, var(--primary) 24%, transparent); }
   to   { background-color: transparent; }
 }
 
 @keyframes annunciator-in {
   from { opacity: 0.35; }
   to   { opacity: 1; }
+}
+
+@keyframes lamp-breathe {
+  0%, 100% { opacity: 1; }
+  50%      { opacity: 0.55; }
+}
+
+@keyframes sheen {
+  from { background-position: 150% 0; }
+  to   { background-position: -150% 0; }
+}
+
+@keyframes rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+
+@keyframes boot {
+  0%   { opacity: 0; filter: brightness(3) saturate(0); }
+  35%  { opacity: 1; filter: brightness(1.6) saturate(0.4); }
+  100% { opacity: 1; filter: none; }
+}
+
+@keyframes boot-bar {
+  0%   { top: 50%; opacity: 0; }
+  15%  { top: 50%; opacity: 1; }
+  100% { top: 100%; opacity: 0; }
+}
+
+@keyframes boot-sweep {
+  0%   { transform: scaleY(0.004); opacity: 1; }
+  40%  { transform: scaleY(0.004); opacity: 1; }
+  70%  { transform: scaleY(1); opacity: 0.35; }
+  100% { transform: scaleY(1); opacity: 0; }
+}
+
+/* A hairline is 1px at any DPR; on a 2x display a 1px CSS border renders as
+   two device pixels and reads heavy. */
+@media (min-resolution: 2dppx) {
+  .hairline {
+    border-width: 0.5px;
+  }
 }

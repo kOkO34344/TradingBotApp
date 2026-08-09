@@ -48,7 +48,7 @@ export function NightBand() {
 
   if (error) {
     return (
-      <section className="plate p-4">
+      <section className="glass p-4">
         <Lane>Night band</Lane>
         <p className="mt-2 text-sm text-loss">
           Couldn&apos;t read the audit trail: {error}
@@ -59,7 +59,7 @@ export function NightBand() {
 
   if (!data) {
     return (
-      <section className="plate p-4">
+      <section className="glass p-4">
         <Lane>Night band</Lane>
         <p className="mt-2 text-sm text-muted-foreground">
           Reading the audit trail.
@@ -87,7 +87,7 @@ export function NightBand() {
   const { dailySoft, dailyFlatten, dailyHard } = data.limits;
 
   return (
-    <section className="plate overflow-hidden">
+    <section className="glass sheen overflow-hidden">
       <BandHeader data={data} />
 
       <div className="space-y-4 px-4 pt-3 pb-4">

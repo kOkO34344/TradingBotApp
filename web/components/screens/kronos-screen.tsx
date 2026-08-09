@@ -47,7 +47,7 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { FanChart, ForecastChart } from "@/components/chart/forecast-chart";
+import { MAX_DRAWN_PATHS, FanChart, ForecastChart } from "@/components/chart/forecast-chart";
 
 export function KronosScreen() {
   const [job, setJob] = useState<Job<KronosResult> | null>(null);
@@ -339,8 +339,8 @@ export function KronosScreen() {
               Monte Carlo fan
             </h2>
             <p className="text-sm text-muted-foreground">
-              Individual single-sample paths, drawn separately rather than
-              averaged — the spread is the point.
+              Individual single-sample paths over a P10–P90 envelope, with the
+              median on top. Not averaged — the spread is the point.
             </p>
           </div>
           <div className="flex items-end gap-2">
@@ -422,8 +422,19 @@ export function KronosScreen() {
             <FanChart history={mcResult.history} series={mcResult.series} />
             <p className="text-xs text-muted-foreground">
               Each line is one <span className="font-mono">sample_count=1</span>{" "}
-              draw for {mcResult.ticker}. Where the lines fan out, the model is
-              not committing to a direction.
+              draw for {mcResult.ticker}, coloured{" "}
+              <span className="text-profit">green</span> if it finishes above
+              today&apos;s close and <span className="text-loss">pink</span> if
+              below. The shaded ribbon is P10–P90; the thick orange line is the
+              median. Where the lines fan out, the model is not committing to a
+              direction.
+              {mcResult.series.length > MAX_DRAWN_PATHS && (
+                <>
+                  {" "}
+                  Showing {MAX_DRAWN_PATHS} of {mcResult.series.length} paths
+                  individually — the ribbon still covers all of them.
+                </>
+              )}
             </p>
           </>
         )}
