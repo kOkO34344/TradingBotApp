@@ -22,11 +22,13 @@ WHY EQUITY, NOT BALANCE. Every FTMO loss limit is measured on equity, meaning
 balance plus floating P&L on open positions. So the account can breach a limit
 with no order placed and nothing realised — an overnight gap on a position you
 already hold is sufficient. This is the single biggest difference from
-ibkr_service.RiskGuard, whose daily-loss breaker reads IBKR's realised
-RealizedPnL and is only consulted when an order is being placed. That design
-provably cannot see this failure (see CLAUDE.md, the 2026-07-23 GOOGL close),
-which is why the FTMO path gets a continuous monitor rather than a pre-trade
-gate.
+the pre-trade risk gate this project used on IBKR (removed 2026-08-09),
+whose daily-loss breaker read the broker's realised P&L and was only consulted
+when an order was being placed. That design provably cannot see this failure —
+a stop firing overnight moved the account and the breaker was simply never
+evaluated (see CLAUDE.md, the 2026-07-23 GOOGL close). It is why the FTMO path
+gets a continuous monitor rather than a pre-trade gate, and the lesson outlives
+the code it was learned on.
 
 THE THREE THRESHOLDS. FTMO publishes one number per limit; this engine derives
 three from it, because stopping exactly at the published number leaves nothing
@@ -65,8 +67,8 @@ from zoneinfo import ZoneInfo
 
 # FTMO is Prague-based and resets at 00:00 CE(S)T. Europe/Prague tracks the
 # CET/CEST switch on its own — do NOT hardcode a UTC offset, and do not use
-# host time. Same reasoning as ibkr_service.market_is_open() using
-# America/New_York rather than this machine's EEST.
+# host time. Same reasoning as ftmo_runner resolving Europe/Sofia through
+# zoneinfo rather than trusting this machine's EEST.
 FTMO_TZ = ZoneInfo("Europe/Prague")
 
 PRODUCTS = ("2step", "1step")

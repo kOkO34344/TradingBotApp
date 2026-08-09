@@ -32,7 +32,7 @@ HONEST NOTE ON THE EVIDENCE (do not quietly delete this)
     still apply in full: paper only, graded evidence, negative results reported.
 
 TO RE-ENABLE MOMENTUM (owner, in a session where you've said so):
-    python3 paper_trader.py --signal momentum --allow-momentum
+    python3 ftmo_runner.py --force --allow-momentum
   or for the unattended runner, set trader_settings.json's
     "autotrade": {"signal": "momentum", "allow_momentum": true}
   Without that second explicit key the runner refuses to fire and says so,
@@ -59,7 +59,7 @@ def _refusal(signal: str, context: str) -> str:
         f"run again until they explicitly ask for it in that session.\n"
         f"Kronos is the project's default signal. If you ARE the owner and you do "
         f"want momentum right now:\n"
-        f"  python3 paper_trader.py --signal momentum --allow-momentum\n"
+        f"  python3 ftmo_runner.py --force --allow-momentum\n"
         f"  (unattended: add \"allow_momentum\": true to trader_settings.json's "
         f"\"autotrade\" block)"
     )

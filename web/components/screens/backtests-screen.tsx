@@ -27,13 +27,13 @@ import {
   type BacktestFinding as Finding,
   type BacktestsResponse,
 } from "@/lib/api";
-import { useFetch } from "@/lib/use-live";
+import { useFetch } from "@/lib/use-fetch";
 import { DASH, fmtPct } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 
-export default function BacktestsPage() {
+export function BacktestsScreen() {
   const data = useFetch<BacktestsResponse>(() => api.backtests(), []);
 
   const results = data.data?.results;

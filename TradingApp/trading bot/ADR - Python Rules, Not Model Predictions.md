@@ -6,6 +6,19 @@ status: "Finalized — codified in ibkr_service.py"
 
 # ADR: Risk Enforcement in Python, Not Model Predictions
 
+> [!note] Still the governing decision; the examples moved venue (2026-08-09)
+> The principle is unchanged and is arguably better demonstrated now. Where
+> this note says `ibkr_service.py` or RiskGuard, read `ftmo_rules.py`,
+> `ftmo_sizing.py` and `ftmo_monitor.py` — the limits, the three thresholds and
+> the stop-required rule all live in Python there, enforced regardless of what
+> any model says.
+>
+> One sharpening the FTMO venue added: every limit is measured on equity
+> INCLUDING floating P&L, so the account can breach with no order placed. A
+> pre-trade gate structurally cannot see that, which is why the enforcement is
+> a continuous monitor.
+
+
 ## The Question
 
 When the research agent proposes a trade (or a human approves one), how should risk be managed?

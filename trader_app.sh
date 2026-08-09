@@ -3,14 +3,14 @@
 #
 # Use this instead of `python3 trader_app.py`. On this machine `python3`
 # resolves to /opt/anaconda3/bin/python3 (conda base), which has pandas,
-# rich, yfinance and ib_async but NOT torch — so the app starts and looks
+# rich and yfinance but NOT torch — so the app starts and looks
 # completely healthy right up until you open the Kronos menu, which then
 # reports "Kronos dependencies not installed: No module named 'torch'".
 # The dependencies are installed; they're in .venv, and conda base is a
 # different interpreter. A partial environment is a good disguise.
 #
 # Every automated script in this project already pins .venv/bin/python
-# (reflect_on_trades.sh, autotrade_runner.sh, daily_digest.sh); the
+# (ftmo_runner.sh, daily_digest.sh); the
 # interactive app was the one entry point without a launcher, which is
 # exactly why it was the one that broke.
 #

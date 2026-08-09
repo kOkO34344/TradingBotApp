@@ -14,10 +14,9 @@ import { useRouter } from "next/navigation";
  * silent no-op handler is the whole failure mode, so this uses plain
  * elements whose behaviour is visible in this file.
  *
- * Navigation only. It deliberately cannot place, flatten or cancel anything:
- * every write in this app goes through preview -> execute(token) so the UI
- * cannot show one order and send another, and a fuzzy-matched keystroke is
- * exactly the wrong way to reach that path.
+ * Navigation only, and it stays that way. The single write this UI still has
+ * is arming the unattended runner, which lives behind a confirmation dialog in
+ * the header — a fuzzy-matched keystroke is exactly the wrong way to reach it.
  */
 
 interface Cmd {
@@ -28,23 +27,23 @@ interface Cmd {
   keywords: string;
 }
 
+// Four destinations, matching the nav. The old eight-entry list is kept alive
+// only as keywords: typing "positions" or "rebalance" still has to land
+// somewhere, because that is what a palette is for — you type the word you
+// have in your head, not the one the nav settled on this week.
 const COMMANDS: Cmd[] = [
-  { id: "ftmo", label: "FTMO", hint: "venue · limits · positions", href: "/ftmo",
-    keywords: "ftmo venue equity drawdown daily limit prop challenge" },
-  { id: "charts", label: "Charts", hint: "price + indicators (IBKR)", href: "/charts",
-    keywords: "charts price candles indicator sma ema bollinger atr ibkr" },
-  { id: "dashboard", label: "Dashboard", hint: "account overview (IBKR)", href: "/dashboard",
-    keywords: "dashboard overview account summary ibkr" },
-  { id: "positions", label: "Positions", hint: "open positions + stops (IBKR)", href: "/positions",
-    keywords: "positions holdings stops protected ibkr" },
-  { id: "rebalance", label: "Rebalance", hint: "Kronos proposal (IBKR)", href: "/rebalance",
-    keywords: "rebalance rotate kronos proposal target ibkr" },
-  { id: "journal", label: "Journal", hint: "every order attempt and fill", href: "/journal",
-    keywords: "journal trades log fills blocked audit history" },
-  { id: "kronos", label: "Kronos", hint: "forecast + monte carlo", href: "/kronos",
-    keywords: "kronos forecast predict model monte carlo signal" },
-  { id: "backtests", label: "Backtests", hint: "strategy results", href: "/backtests",
-    keywords: "backtest strategy results momentum sma performance" },
+  { id: "watch", label: "Watch", hint: "the account and the night", href: "/watch",
+    keywords: "watch ftmo venue equity drawdown daily limit prop challenge "
+      + "night band wakeups positions holdings stops protected dashboard "
+      + "overview account summary" },
+  { id: "signal", label: "Signal", hint: "Kronos and the plan", href: "/signal",
+    keywords: "signal kronos forecast predict model monte carlo rebalance "
+      + "rotate proposal target ranking spread plan" },
+  { id: "market", label: "Market", hint: "price + indicators", href: "/market",
+    keywords: "market charts price candles indicator sma ema bollinger atr bars" },
+  { id: "ledger", label: "Ledger", hint: "journal + backtests", href: "/ledger",
+    keywords: "ledger journal trades log fills blocked audit history record "
+      + "backtest strategy results momentum performance evidence" },
 ];
 
 /** Subsequence match: "ftm" hits "FTMO", "reb" hits "Rebalance". */

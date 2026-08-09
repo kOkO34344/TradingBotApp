@@ -5,8 +5,8 @@ notify.py — reusable Telegram phone-notification module for TradingBotApp.
 Lives in its own TelegramBot/ folder (separate from the strategy/backtest
 code) specifically so ANY script anywhere in the project can import it for
 ANY kind of alert — not just the Kronos backtest. Current + likely future
-callers: the Kronos backtest wrapper, paper_trader.py (fills, circuit
-breaker trips), reflect_on_trades.py, the daily vault sync, IBKR
+callers: the Kronos backtest wrapper, ftmo_runner.py (fills, limit
+breaches, flatten decisions), ftmo_closes.py, the daily vault sync, venue
 connection-loss alerts, research_agent.py run failures, grade_calls.py
 weekly calibration summaries, launchd job failures, etc. One bot, one
 chat_id, many message sources.

@@ -17,7 +17,7 @@ passed its own screen, so on the evidence NOTHING here should fire.
 
 It runs anyway, on the owner's explicit instruction of 2026-08-05, given with
 that evidence stated. **That is a THIRD deliberate exception to rule 5, after
-`autotrade_runner.py` (rule 7) and the unattended FTMO path (rule 9). Flag it
+the retired IBKR runner (rule 7) and the unattended FTMO path (rule 9). Flag it
 that way; it is not precedent, and it is not a validated strategy.** What
 autonomy removes is the human approval step — never a limit. Every order still
 passes the rule engine, the sizer's per-trade and per-portfolio caps, and the
@@ -40,6 +40,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -48,6 +49,7 @@ import ftmo_rules as fr
 import ftmo_service as svc
 import ftmo_sizing as fz
 import ftmo_session as fs
+import signal_policy as sp
 
 BASE_DIR = Path(__file__).resolve().parent
 SETTINGS = BASE_DIR / "trader_settings.json"
@@ -62,9 +64,41 @@ DEFAULT_UNIVERSE = {
     "crypto":      ["BTCUSD", "ETHUSD", "SOLUSD", "LTCUSD"],
 }
 
-TOP_N = 4               # matches ftmo_sizing's max positions and the 1% budget
+# The venue's own grouping, mapped onto THIS project's asset classes.
+#
+# Not 1:1, and the exception is the whole reason this table exists: category 13
+# mixes equity indices (US30.cash, US500.cash) with energy (USOIL.cash,
+# HEATOIL.c). Rule 9's gate is per ASSET CLASS, so taking the venue's grouping
+# at face value would file an index trade under the commodities screen and vice
+# versa — a mislabelled trade against a gate is worse than no label.
+#
+# Anything whose category is unknown is REFUSED rather than bucketed into a
+# default. A symbol we cannot classify is a symbol we cannot check a screen
+# for, and rule 9 is not satisfiable by guessing.
+CATEGORY_CLASS = {12: "stocks", 10: "crypto", 8: "commodities",
+                  9: "commodities", 15: "commodities", 11: "fx", 16: "fx"}
+
+# Category 13 has to be split by name. Kept explicit and small rather than
+# pattern-matched on ".cash": UKOIL.cash and US500.cash share that suffix and
+# are not the same asset class.
+CATEGORY_13_INDICES = {"US30.cash", "US500.cash", "US100.cash", "US2000.cash"}
+
+# ~12 months of daily bars — the same trailing-return quantity momentum
+# rotation's 18.5% CAGR was measured on. See momentum_rank() for why matching
+# the quantity does NOT mean inheriting the result.
+MOMENTUM_LOOKBACK_BARS = 252
+
+TOP_N = 4               # candidate slots; the portfolio budget truncates them
 ATR_PERIOD = 14
 BARS_NEEDED = 420       # Kronos LOOKBACK is 400; a little slack for gaps
+
+# MUST equal kronos_agent.PRED_LEN. Duplicated rather than imported because
+# `import kronos_agent` pulls torch (~2 GB), and ftmo_runner's selftests assert
+# that nothing loads the model before the arm check and the trading window —
+# importing it here to read one integer would defeat both. The selftest reads
+# kronos_agent's SOURCE and fails if the two drift apart, so this is a checked
+# copy rather than a remembered one.
+FORECAST_HORIZON_BARS = 5
 
 
 @dataclass(frozen=True)
@@ -88,6 +122,44 @@ def load_universe(settings_path: Path | None = None) -> dict:
     except (OSError, json.JSONDecodeError):
         cfg = None
     return cfg or DEFAULT_UNIVERSE
+
+
+def universe_from_capture(specs: dict) -> dict:
+    """Derive the tradeable universe from the venue's own symbol capture.
+
+    Returns {asset_class: [symbols]}, the same shape `ftmo.universe` takes in
+    trader_settings.json, so it is a drop-in for the hand-written basket.
+
+    Runtime-derived rather than hardcoded (owner request, 2026-08-08): when the
+    venue's listing changes, re-running `ftmo_service.py --symbols` changes the
+    universe, instead of a constant here drifting out of step with what can
+    actually be traded.
+
+    **Only USD-quoted symbols are included, so this returns ~102 of 202.**
+    That is not a filter choice made here — `build_universe` refuses a non-USD
+    quote outright because sizing needs a real conversion rate and will not
+    assume 1.0. Including them would produce a universe that raises on every
+    run.
+
+    Symbols are also dropped if `trading_mode` is not ENABLED, or if their
+    category is unknown. An unclassifiable symbol cannot be checked against a
+    rule 9 screen, and a default bucket would silently mislabel it.
+    """
+    out: dict[str, list] = {}
+    for sym, spec in sorted(specs.items()):
+        if spec.get("quote_asset") != "USD":
+            continue
+        if spec.get("trading_mode") not in (None, "ENABLED"):
+            continue
+        cid = spec.get("category_id")
+        if cid == 13:
+            cls = "indices" if sym in CATEGORY_13_INDICES else "commodities"
+        else:
+            cls = CATEGORY_CLASS.get(cid)
+        if cls is None:
+            continue
+        out.setdefault(cls, []).append(sym)
+    return out
 
 
 def build_universe(specs: dict, universe: dict | None = None) -> list[tuple[str, str]]:
@@ -164,6 +236,85 @@ def rank_candidates(pred_dfs: dict, bars_by_symbol: dict,
     return out
 
 
+def momentum_rank(bars_by_symbol: dict, lookback: int = MOMENTUM_LOOKBACK_BARS,
+                  allow_momentum: bool = False) -> list[tuple[str, float]]:
+    """Trailing-return ranking over venue bars. [(symbol, return), ...] desc.
+
+    GATED. Raises `SignalDisabled` unless `allow_momentum=True` (rule 8). The
+    gate is at the top of the computation rather than at the call sites, for
+    the same reason the retired IBKR signal path put it there: a gate a
+    caller has to remember is a gate that gets forgotten.
+
+    **Read this before treating the output as "the 18.5% CAGR strategy".**
+    Momentum rotation earned that number on a MONTHLY rebalance of a 12-month
+    trailing return over US large caps. This computes the same *quantity* from
+    daily venue bars, but the FTMO runner fires ~20 times a day, so the signal
+    is being sampled roughly 600x more often than the cadence it was measured
+    at. Same arithmetic, different strategy. Nothing here inherits that CAGR.
+
+    Symbols with fewer than `lookback + 1` bars are omitted rather than ranked
+    off a shorter window — comparing a 252-bar return against a 90-bar one puts
+    them on the same list at different scales, which is a ranking bug that
+    looks like a signal.
+    """
+    sp.assert_allowed("momentum", allow_momentum,
+                      context="ftmo_signal.momentum_rank")
+    out = []
+    for sym, bars in bars_by_symbol.items():
+        if bars is None or len(bars) < lookback + 1:
+            continue
+        closes = [b["close"] for b in bars] if isinstance(bars, list) else \
+            list(bars["Close"] if "Close" in bars else bars["close"])
+        past, now = closes[-(lookback + 1)], closes[-1]
+        if past <= 0:
+            continue
+        out.append((sym, now / past - 1.0))
+    return sorted(out, key=lambda kv: kv[1], reverse=True)
+
+
+def apply_kronos_veto(momentum_ranked: list[tuple[str, float]],
+                      kronos_by_symbol: dict, top_n: int = TOP_N
+                      ) -> tuple[list[str], list[dict]]:
+    """The AND gate. Momentum picks; Kronos vetoes any pick it forecasts <= 0.
+
+    Owner decision, 2026-08-08. Returns (selected, vetoed) — the vetoes are
+    returned rather than dropped so the runner can journal WHY a momentum pick
+    did not trade. A filter whose rejections are invisible cannot be audited
+    against the trades it prevented.
+
+    Kronos can only ever REMOVE. It never promotes a symbol momentum did not
+    pick, and it never reorders momentum's ranking. That asymmetry is the point
+    of this design: momentum is the signal with measured edge and stays the
+    decision-maker; Kronos is a false-positive filter and nothing more.
+
+    **The gate is only worth having if Kronos's directional call beats a coin
+    flip at this horizon.** At 20 days it was 50.0%; hourly it was 46.4%. If
+    5-day lands at ~50% too, this removes momentum picks at RANDOM, which makes
+    the hybrid strictly worse than momentum alone rather than safer. That is a
+    question for the IC screen, not for this function.
+
+    A symbol with NO Kronos forecast is vetoed, not waved through: the gate is
+    an AND, and a missing operand cannot satisfy it.
+    """
+    selected, vetoed = [], []
+    for sym, mom in momentum_ranked:
+        if len(selected) >= top_n:
+            break
+        pred = kronos_by_symbol.get(sym)
+        if pred is None:
+            vetoed.append({"symbol": sym, "momentum": mom, "kronos": None,
+                           "reason": "no Kronos forecast — an AND gate cannot "
+                                     "pass on a missing operand"})
+            continue
+        if pred <= 0:
+            vetoed.append({"symbol": sym, "momentum": mom, "kronos": pred,
+                           "reason": f"Kronos forecasts {pred:+.2f}% — "
+                                     f"disagrees with momentum's long"})
+            continue
+        selected.append(sym)
+    return selected, vetoed
+
+
 def rank_boundary_gap(ranked: list[Candidate], n: int = TOP_N) -> float | None:
     """Predicted-return gap between rank N and rank N+1.
 
@@ -180,7 +331,7 @@ def apply_rotation_margin(held: list[str], ranked: list[Candidate],
                           margin_pct: float, n: int = TOP_N) -> list[str]:
     """Incumbents keep their slot unless beaten by more than `margin_pct`.
 
-    Same hysteresis `paper_trader.apply_rotation_margin` gives the IBKR path,
+    Same hysteresis the retired IBKR rotation used (removed 2026-08-09),
     and for the same measured reason: two runs 30 minutes apart on identical
     closed-market data produced different top-3s because two names sat ~1
     point apart. This suppresses churn; it does NOT create edge. The IC is
@@ -199,7 +350,24 @@ def apply_rotation_margin(held: list[str], ranked: list[Candidate],
         better = [c for c in challengers
                   if c.predicted_return_pct - incumbent.predicted_return_pct
                   > margin_pct]
-        if not better:
+        # `>= n`, NOT `if not better`. An incumbent should only lose its slot
+        # when enough challengers beat it by the margin to actually push it out
+        # of the top N — a single better challenger does not, because there are
+        # n slots.
+        #
+        # The old `if not better` inverted the hysteresis it was built to
+        # provide: an incumbent was HARDER to keep than a newcomer at the same
+        # rank, so the mechanism meant to suppress churn was causing it, paying
+        # spread both ways ~20 times a day. Reproduced live on 2026-08-07 21:32
+        # — the runner sold ETHUSD (predicted +9.51%) to buy EURUSD (predicted
+        # -0.15%), rank 4 out and rank 5 in.
+        #
+        # It also broke `margin_pct=0`, which is documented as "restore strict
+        # ranking": with `if not better`, any challenger ahead by any amount
+        # evicted the incumbent regardless of rank. The old selftest asserting
+        # that passed only because its fixture never had a challenger below the
+        # incumbent's rank.
+        if len(better) < n:
             chosen.append(sym)
     for c in challengers:
         if len(chosen) >= n:
@@ -212,7 +380,8 @@ def apply_rotation_margin(held: list[str], ranked: list[Candidate],
 def plan_orders(session, config: fr.FTMOConfig, state: fr.AccountState,
                 ranked: list[Candidate], held: list[str],
                 risk_pct: float = 1.0, margin_pct: float = 1.0,
-                top_n: int = TOP_N) -> dict:
+                top_n: int = TOP_N,
+                horizon_bars: int = FORECAST_HORIZON_BARS) -> dict:
     """Turn a ranking into concrete sized orders, or into a stated refusal.
 
     Asks the rule engine BEFORE sizing anything, so a blocked account produces
@@ -241,6 +410,13 @@ def plan_orders(session, config: fr.FTMOConfig, state: fr.AccountState,
 
     by_symbol = {c.symbol: c for c in ranked}
     open_risk = 0.0
+    # One multiple for the whole plan: the stop has to be sized against the
+    # horizon the TARGET is drawn from, and every candidate in this plan came
+    # out of the same forecast. Computing it per symbol would invite a future
+    # edit to vary it per instrument, which is where curve-fitting starts.
+    stop_mult = fz.stop_atr_mult_for_horizon(horizon_bars)
+    out["stop_atr_mult"] = stop_mult
+    out["horizon_bars"] = horizon_bars
     for sym in target:
         if sym in held:
             continue
@@ -249,7 +425,7 @@ def plan_orders(session, config: fr.FTMOConfig, state: fr.AccountState,
         budget = fr.max_position_risk_usd(config, state, open_risk_usd=open_risk)
         quote = session.quote(sym)
         entry = (quote.ask if quote and quote.ask else cand.last_close)
-        stop = fz.stop_price_from_atr(entry, cand.atr, "BUY")
+        stop = fz.stop_price_from_atr(entry, cand.atr, "BUY", mult=stop_mult)
         # Validate the stop HERE, not only at the venue. On 2026-08-05 a
         # mis-scaled ATR produced a stop of -17.29 on an instrument trading at
         # 2.69, and the sizer happily costed it at $199.86 of "risk" and
@@ -264,6 +440,21 @@ def plan_orders(session, config: fr.FTMOConfig, state: fr.AccountState,
                 f"{sym}: refusing — {e} (ATR {cand.atr:g} vs price {entry:g}; "
                 f"suspect bad bar data, not a market move)")
             continue
+        # Every entry carries a target as well as a stop (owner decision,
+        # 2026-08-08), and the target is Kronos's own predicted return. An
+        # entry WITHOUT a derivable target is dropped rather than sent naked:
+        # the only way the derivation fails is a forecast pointing against the
+        # trade, and buying something the model expects to fall is not a
+        # position this path should open regardless of the target question.
+        try:
+            take_profit = fz.take_profit_from_prediction(
+                entry, cand.predicted_return_pct, "BUY")
+            fs.validate_take_profit("BUY", entry, take_profit)
+        except (ValueError, fs.SessionError) as e:
+            out["skipped"].append(
+                f"{sym}: refusing — {e} (ranked into the top {top_n} on a "
+                f"forecast of {cand.predicted_return_pct:+.2f}%)")
+            continue
         result = fz.size_position(spec, state.equity, risk_pct, entry, stop,
                                   quote_to_account_rate=1.0,
                                   budget_remaining=budget)
@@ -275,7 +466,10 @@ def plan_orders(session, config: fr.FTMOConfig, state: fr.AccountState,
             "symbol": sym, "asset_class": cand.asset_class, "side": "BUY",
             "volume": result.volume, "units": result.units,
             "entry_price": entry, "stop_price": stop,
+            "take_profit_price": take_profit,
             "risk_at_stop": result.risk_at_stop,
+            "reward_at_target": result.risk_at_stop * (
+                (take_profit - entry) / (entry - stop)) if entry > stop else 0.0,
             "predicted_return_pct": cand.predicted_return_pct,
             "atr": cand.atr,
         })
@@ -304,14 +498,26 @@ def format_plan(plan: dict) -> str:
         lines.append(f"exits:  {', '.join(plan['exits'])}")
     lines.append("")
     if plan["entries"]:
+        mult = plan.get("stop_atr_mult")
+        horizon = plan.get("horizon_bars")
+        if mult is not None and horizon is not None:
+            lines.append(f"stop geometry: {mult:.2f} x ATR, scaled to the "
+                         f"{horizon}-bar forecast horizon")
         lines.append("proposed entries:")
         for e in plan["entries"]:
+            rr = ((e["take_profit_price"] - e["entry_price"])
+                  / (e["entry_price"] - e["stop_price"])
+                  if e["entry_price"] > e["stop_price"] else float("nan"))
             lines.append(f"  BUY {e['symbol']:<12} vol={e['volume']:<10} "
                          f"entry={e['entry_price']:<12.5f} "
                          f"stop={e['stop_price']:<12.5f} "
-                         f"risk=${e['risk_at_stop']:,.2f}")
+                         f"tp={e['take_profit_price']:<12.5f} "
+                         f"risk=${e['risk_at_stop']:,.2f} "
+                         f"({rr:.1f}R)")
         lines.append(f"  total risk at stop: "
                      f"${sum(e['risk_at_stop'] for e in plan['entries']):,.2f}")
+        lines.append(f"  total reward at target: "
+                     f"${sum(e['reward_at_target'] for e in plan['entries']):,.2f}")
     else:
         lines.append("proposed entries: NONE")
     for s in plan["skipped"]:
@@ -493,6 +699,134 @@ def selftest() -> int:
               e["volume"] % 100000 == 0)
         check("the stop would pass ftmo_session's own validation",
               fs.validate_stop("BUY", e["entry_price"], e["stop_price"]) is None)
+        check("the entry carries a take-profit above entry (long)",
+              e["take_profit_price"] > e["entry_price"])
+        check("the target is the forecast, not an R multiple",
+              abs(e["take_profit_price"]
+                  - e["entry_price"] * 1.03) < 1e-9)
+        check("the target would pass ftmo_session's own validation",
+              fs.validate_take_profit("BUY", e["entry_price"],
+                                      e["take_profit_price"]) is None)
+        check("stop and target straddle the entry",
+              e["stop_price"] < e["entry_price"] < e["take_profit_price"])
+        check("reward at target is reported alongside risk",
+              e["reward_at_target"] > 0)
+
+    print("every entry carries a target — one without is not an entry:")
+    check("no planned entry may lack a take-profit",
+          all("take_profit_price" in e and e["take_profit_price"] > 0
+              for e in p2["entries"]))
+
+    print("a forecast pointing the WRONG way is dropped (2026-08-07 EURUSD):")
+    # EURUSD ranked into the top 4 on a predicted -0.15% and was bought. There
+    # is no take-profit on the profitable side of that trade, and rather than
+    # send it without one the entry is dropped. This is a BEHAVIOUR CHANGE:
+    # before 2026-08-08 this candidate produced an order.
+    negative = [Candidate("EURUSD", "fx", -0.15, 1.0850, 0.0050)]
+    p4 = plan_orders(_S(), cfg, healthy, negative, [])
+    check("a negatively-forecast candidate proposes no entry",
+          p4["entries"] == [])
+    check("...and the skip names the forecast that caused it",
+          any("-0.15%" in s for s in p4["skipped"]))
+    zero = [Candidate("EURUSD", "fx", 0.0, 1.0850, 0.0050)]
+    check("a zero forecast is dropped too, not treated as flat-but-fine",
+          plan_orders(_S(), cfg, healthy, zero, [])["entries"] == [])
+
+    print("rotation margin: hysteresis KEEPS incumbents (2026-08-07 bug):")
+    # The exact live shape: ETHUSD held at rank 4, EURUSD challenging at rank 5.
+    # The old code sold the +9.51% incumbent to buy the -0.15% challenger.
+    live_ranked = [cand("SOLUSD", 27.7), cand("NATGAS.cash", 26.0),
+                   cand("LTCUSD", 9.6), cand("ETHUSD", 9.51),
+                   cand("EURUSD", -0.15)]
+    tgt = apply_rotation_margin(["ETHUSD"], live_ranked, 1.0, 4)
+    check("the held incumbent KEEPS its slot (it did not, before)",
+          "ETHUSD" in tgt)
+    check("...and the worse-ranked challenger does not take it",
+          "EURUSD" not in tgt)
+    check("the target is still exactly top_n",  len(tgt) == 4)
+    # Compared as a SET: the function returns keepers first, so the order
+    # differs from the raw ranking while the selection is identical. Every
+    # consumer tests `target` for membership (`out["exits"]`, the entry loop),
+    # so order carries no meaning — asserting on it tests the implementation
+    # rather than the behaviour.
+    check("margin=0 really does restore strict ranking now",
+          set(apply_rotation_margin(["ETHUSD"], live_ranked, 0.0, 4))
+          == {c.symbol for c in live_ranked[:4]})
+    # The mechanism must still DROP a genuinely beaten incumbent.
+    beaten = [cand("A", 30.0), cand("B", 29.0), cand("C", 28.0),
+              cand("D", 27.0), cand("HELD", 1.0)]
+    check("an incumbent beaten by n challengers IS dropped — this is "
+          "hysteresis, not a ratchet",
+          "HELD" not in apply_rotation_margin(["HELD"], beaten, 1.0, 4))
+    check("an incumbent beaten by fewer than n challengers is kept",
+          "HELD" in apply_rotation_margin(
+              ["HELD"], [cand("A", 30.0), cand("HELD", 1.0),
+                         cand("B", 0.5), cand("C", 0.4)], 1.0, 4))
+
+    print("momentum stays gated on this venue too (rule 8):")
+    bars = {"A": [{"close": 100.0}] * 200 + [{"close": 100.0 + i}
+                                             for i in range(60)],
+            "B": [{"close": 100.0}] * 200 + [{"close": 100.0 - i * 0.1}
+                                             for i in range(60)]}
+    check("momentum_rank refuses without the explicit opt-in",
+          raises(lambda: momentum_rank(bars), "DISABLED"))
+    check("...and computes with it",
+          len(momentum_rank(bars, lookback=252, allow_momentum=True)) == 2)
+    ranked_m = momentum_rank(bars, lookback=252, allow_momentum=True)
+    check("the riser outranks the faller", ranked_m[0][0] == "A")
+    check("a symbol with too little history is omitted, not short-windowed",
+          momentum_rank({"S": [{"close": 1.0}] * 100}, lookback=252,
+                        allow_momentum=True) == [])
+
+    print("the AND gate: momentum picks, Kronos vetoes on sign:")
+    mom = [("A", 0.40), ("B", 0.30), ("C", 0.20), ("D", 0.10), ("E", 0.05)]
+    sel, vetoed = apply_kronos_veto(
+        mom, {"A": 2.1, "B": -0.4, "C": 5.8, "D": -1.2, "E": 3.0}, top_n=4)
+    check("picks Kronos agrees with are kept", "A" in sel and "C" in sel)
+    check("picks Kronos forecasts negative are dropped",
+          "B" not in sel and "D" not in sel)
+    check("Kronos never PROMOTES a symbol momentum did not pick",
+          set(sel) <= {s for s, _ in mom})
+    check("...and never reorders momentum's ranking",
+          sel == [s for s, _ in mom if s in sel])
+    check("every veto is reported with its reason, not silently dropped",
+          len(vetoed) == 2 and all(v["reason"] for v in vetoed))
+    check("a missing Kronos forecast is a VETO, not a pass",
+          apply_kronos_veto([("Z", 0.5)], {}, top_n=4)[0] == [])
+    check("a zero forecast is a veto too — it does not agree with a long",
+          apply_kronos_veto([("Z", 0.5)], {"Z": 0.0}, top_n=4)[0] == [])
+    check("the gate never returns more than top_n",
+          len(apply_kronos_veto(mom, {s: 9.0 for s, _ in mom}, top_n=2)[0]) == 2)
+    check("a total disagreement yields NO trade, not a fallback to momentum",
+          apply_kronos_veto(mom, {s: -1.0 for s, _ in mom}, top_n=4)[0] == [])
+
+    print("the universe is derived from the capture, not hardcoded:")
+    real = json.loads((BASE_DIR / "ftmo_symbol_specs.json").read_text())["symbols"]
+    derived = universe_from_capture(real)
+    flat_derived = build_universe(real, derived)
+    check("every derived symbol survives build_universe's own validation",
+          len(flat_derived) == sum(len(v) for v in derived.values()))
+    check("no non-USD symbol is included (build_universe would refuse it)",
+          all(real[s]["quote_asset"] == "USD"
+              for syms in derived.values() for s in syms))
+    check("a DISABLED symbol is excluded (FETUSD, the live example)",
+          "FETUSD" not in {s for v in derived.values() for s in v})
+    # Category 13 mixes indices with energy. Getting this wrong files a trade
+    # against the wrong rule 9 screen, which is why it is asserted both ways.
+    check("US500.cash is classified as an INDEX, not a commodity",
+          "US500.cash" in derived["indices"])
+    check("USOIL.cash shares category 13 but is a COMMODITY",
+          "USOIL.cash" in derived["commodities"])
+    check("UKOIL.cash is not swept into indices by its .cash suffix",
+          "UKOIL.cash" in derived["commodities"])
+    check("stock CFDs are their own class, inheriting the stock evidence",
+          "AAPL" in derived["stocks"])
+    check("an unknown category is dropped, never bucketed into a default",
+          universe_from_capture(
+              {"WAT": {"quote_asset": "USD", "trading_mode": "ENABLED",
+                       "category_id": 999}}) == {})
+    check("the result is the same shape ftmo.universe takes in settings",
+          all(isinstance(v, list) for v in derived.values()))
 
     print("a nonsensical stop is refused, not sized (2026-08-05 regression):")
     # ATR wildly larger than price is what a mis-scaled bar series looks like.
@@ -502,6 +836,41 @@ def selftest() -> int:
     check("no entry is proposed from a negative stop", p3["entries"] == [])
     check("...and the skip says it is suspected bad data, not a market move",
           any("bad bar data" in s for s in p3["skipped"]))
+
+    print("the stop is scaled to the forecast horizon (2026-08-09):")
+    # Read the source rather than importing it: `import kronos_agent` pulls
+    # torch, and ftmo_runner's selftests assert the model is not loaded before
+    # the arm check. A duplicated constant that nothing verifies is exactly the
+    # kind of drift that makes a stop silently wrong, so it is verified here.
+    ka_src = (BASE_DIR / "KronosAI" / "kronos_agent.py").read_text()
+    m = re.search(r"^PRED_LEN\s*=\s*(\d+)", ka_src, re.M)
+    check("kronos_agent.PRED_LEN is still parseable from source", m is not None)
+    check(f"FORECAST_HORIZON_BARS ({FORECAST_HORIZON_BARS}) still matches "
+          f"kronos_agent.PRED_LEN ({m.group(1) if m else '?'})",
+          m is not None and int(m.group(1)) == FORECAST_HORIZON_BARS)
+    check("...and no torch was imported to check it", "torch" not in sys.modules)
+
+    p4 = plan_orders(_S(), cfg, healthy, ranked3, [], horizon_bars=5)
+    p20 = plan_orders(_S(), cfg, healthy, ranked3, [], horizon_bars=20)
+    check("the plan reports the multiple it used",
+          abs(p4["stop_atr_mult"] - 1.0) < 1e-9
+          and abs(p20["stop_atr_mult"] - 2.0) < 1e-9)
+    check("the 20-bar plan reproduces the pre-2026-08-09 stop exactly",
+          abs(p20["entries"][0]["stop_price"]
+              - (1.0850 - 2.0 * 0.0050)) < 1e-9)
+    check("a shorter horizon stops nearer entry on identical candidates",
+          p4["entries"][0]["stop_price"] > p20["entries"][0]["stop_price"])
+    check("...and the target is untouched by the horizon — only the stop moved",
+          abs(p4["entries"][0]["take_profit_price"]
+              - p20["entries"][0]["take_profit_price"]) < 1e-9)
+    check("...so the reward-to-risk ratio improves",
+          (p4["entries"][0]["reward_at_target"] / p4["entries"][0]["risk_at_stop"])
+          > (p20["entries"][0]["reward_at_target"] / p20["entries"][0]["risk_at_stop"]))
+    check("a nearer stop still never risks more than the per-trade cap — "
+          "tightening buys SIZE, not extra risk",
+          p4["entries"][0]["risk_at_stop"] <= 250.0 + 1e-6)
+    check("...and it does buy size: half the distance, twice the volume",
+          p4["entries"][0]["volume"] > p20["entries"][0]["volume"])
 
     print("\nFAILED" if failures else "\nAll ftmo_signal offline selftests passed.")
     return 1 if failures else 0

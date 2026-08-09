@@ -10,7 +10,7 @@ The journal is append-only and has been wrong twice in ways that mattered:
   * 2026-07-27: two bracket orders that actually FILLED were journalled
     `Cancelled` a second after placement. The corrections were appended as
     `RESULT_CORRECTED` rows; the originals were deliberately left in place.
-  * 2026-07-25: `reflect_on_trades.py` wrote phantom `CLOSE_DETECTED` rows
+  * 2026-07-25: the IBKR monitor wrote phantom `CLOSE_DETECTED` rows
     for two positions that were never closed, later annotated by `NOTE`
     rows saying so.
 
@@ -20,7 +20,7 @@ marks superseded rows `superseded: true` with a pointer to what corrected
 them, and marks disputed rows `disputed: true` with the note text. The UI
 greys them out rather than dropping them.
 
-Nothing here writes. Journal writes stay in `ibkr_service.journal()`.
+Nothing here writes. Journal writes stay in `trade_journal.append()`.
 """
 from __future__ import annotations
 

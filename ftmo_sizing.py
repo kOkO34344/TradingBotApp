@@ -16,7 +16,7 @@ four correlated names across correlated asset classes is exactly how that
 happens. `ftmo_rules.max_position_risk_usd()` owns that budget; this module
 spends it.
 
-WHY THIS ISN'T paper_trader.size_position(). That one thinks in SHARES of a US
+WHY THIS ISN'T THE OLD SHARE SIZER. The retired IBKR sizer thought in SHARES of a US
 equity priced in the account currency, and clamps to a notional cap. Here a
 "unit" means something different per instrument — 100,000 base units for a
 standard FX lot, one ounce for gold, one share for a stock CFD, one index point
@@ -51,9 +51,25 @@ from dataclasses import dataclass
 
 import ftmo_rules as fr
 
-# Same multiple paper_trader.py uses, so the two venues place stops at the same
+# Same multiple the retired IBKR sizer used, so stops stayed at the same
 # distance for the same volatility and their results stay comparable.
 STOP_ATR_MULT = 2.0
+
+# ...but that multiple was calibrated against a TWENTY-bar forecast horizon,
+# and since 2026-08-08 Kronos forecasts FIVE. Holding the stop still while the
+# target shrank inverted the geometry: the 2026-08-09 dry run proposed entries
+# at 0.3R, 0.2R and 0.1R, which need a 77-91% hit rate to break even against a
+# measured ~50%. So the multiple now scales with the horizon it is protecting.
+REFERENCE_HORIZON_BARS = 20
+
+# The floor exists because a stop tighter than roughly one bar's range sits
+# INSIDE the instrument's ordinary noise, so it stops out on the walk rather
+# than on the thesis being wrong. Tightening a stop always improves the R
+# multiple on paper — it is the cheapest possible way to make a plan look
+# better while making it perform worse — and this constant is what stops that
+# from running away. A position held at least one bar needs at least one bar's
+# room.
+MIN_STOP_ATR_MULT = 1.0
 
 # cTrader expresses volume in hundredths of a unit ("centi-units"), and a
 # symbol's minVolume / stepVolume / maxVolume arrive in that same scale. Mixing
@@ -140,6 +156,41 @@ def _load_capture() -> dict:
     return ftmo_service.load_symbol_specs()
 
 
+def stop_atr_mult_for_horizon(horizon_bars: int,
+                              base_mult: float = STOP_ATR_MULT,
+                              reference_bars: int = REFERENCE_HORIZON_BARS) -> float:
+    """The ATR multiple to protect a position held `horizon_bars` bars.
+
+    Scales as the SQUARE ROOT of the horizon, not linearly. Price dispersion
+    grows with sqrt(time), so a 5-bar hold expects half the excursion of a
+    20-bar hold, not a quarter of it. Linear scaling would return 0.5 x ATR at
+    5 bars — inside a single bar's range, i.e. a stop that fires on noise
+    before the forecast has had a bar to be right or wrong.
+
+    Calibrated so the reference horizon is unchanged: `stop_atr_mult_for_horizon(20)`
+    is exactly `STOP_ATR_MULT`. This is a re-derivation of an existing constant
+    for a horizon that moved, NOT a new free parameter tuned until the numbers
+    looked good — rule 4. Nothing here was fitted to a return series.
+
+    What this does NOT do, and it matters more than what it does: it cannot
+    make a forecast larger than the noise it sits in. On 2026-08-09 Kronos
+    predicted +2.01% on NATGAS.cash whose 5-bar dispersion is ~7.6%. Halving
+    the stop takes that trade from 0.3R to 0.6R and no further. A tighter stop
+    improves the RATIO by shrinking the denominator; it adds nothing to the
+    numerator, and it buys the improvement with a higher stop-out rate. Read
+    any R improvement from this function as geometry corrected, never as edge
+    created.
+    """
+    if horizon_bars <= 0:
+        raise ValueError(f"horizon_bars must be positive, got {horizon_bars!r}")
+    if reference_bars <= 0:
+        raise ValueError(f"reference_bars must be positive, got {reference_bars!r}")
+    if base_mult <= 0:
+        raise ValueError(f"base_mult must be positive, got {base_mult!r}")
+    scaled = base_mult * math.sqrt(horizon_bars / reference_bars)
+    return max(MIN_STOP_ATR_MULT, scaled)
+
+
 def stop_price_from_atr(entry_price: float, atr: float, side: str,
                         mult: float = STOP_ATR_MULT) -> float:
     """Stop `mult` x ATR away from entry, on the correct side.
@@ -154,6 +205,47 @@ def stop_price_from_atr(entry_price: float, atr: float, side: str,
     if atr <= 0:
         raise ValueError("atr must be positive — a zero stop distance is infinite size")
     return entry_price - mult * atr if side == "BUY" else entry_price + mult * atr
+
+
+def take_profit_from_prediction(entry_price: float, predicted_return_pct: float,
+                                side: str) -> float:
+    """The price at which Kronos's own forecast would have come true.
+
+    TP = entry x (1 + predicted_return_pct/100). Chosen over an R multiple
+    deliberately (owner decision, 2026-08-08): the target is the strategy's
+    own thesis, so the position exits when the forecast is realised rather
+    than at a level picked independently of it.
+
+    Two properties of this input to keep in view, neither of which this
+    function can fix:
+
+    1. **The forecast must point the trade's way or there is no target.** A
+       top-N candidate can carry a NEGATIVE prediction — EURUSD was entered at
+       -0.15% on 2026-08-07 — and `entry x (1 + -0.0015)` is BELOW entry on a
+       long. That is not a conservative target, it is an instruction to close
+       at a loss on fill. Raises instead, and the caller drops the entry.
+    2. **The prediction is noisy at exactly this resolution.** Documented in
+       CLAUDE.md: the same symbol re-forecast ten minutes later moved from
+       +17.64% to +25.15%. The stop is ATR-derived and stable; the target is
+       not, so two runs can size identically and target differently. That is a
+       property of the chosen rule, not a defect in this arithmetic.
+    """
+    side = side.upper()
+    if side not in ("BUY", "SELL"):
+        raise ValueError(f"side must be BUY or SELL, got {side!r}")
+    if entry_price <= 0:
+        raise ValueError(f"entry_price must be positive, got {entry_price!r}")
+    if side == "BUY" and predicted_return_pct <= 0:
+        raise ValueError(
+            f"a BUY needs a positive forecast to derive a target from, got "
+            f"{predicted_return_pct:+.2f}% — no take-profit exists on the "
+            f"profitable side")
+    if side == "SELL" and predicted_return_pct >= 0:
+        raise ValueError(
+            f"a SELL needs a negative forecast to derive a target from, got "
+            f"{predicted_return_pct:+.2f}% — no take-profit exists on the "
+            f"profitable side")
+    return entry_price * (1.0 + predicted_return_pct / 100.0)
 
 
 def floor_to_step(volume: float, spec: SymbolSpec) -> int:
@@ -252,15 +344,22 @@ def plan_entry(spec: SymbolSpec, config: fr.FTMOConfig, state: fr.AccountState,
                entry_price: float, atr: float, side: str,
                quote_to_account_rate: float, risk_pct: float,
                open_risk_usd: float = 0.0,
-               max_positions: int = 4) -> SizingResult:
+               max_positions: int = 4,
+               horizon_bars: int = REFERENCE_HORIZON_BARS) -> SizingResult:
     """Full pre-trade path: rule engine first, then sizing. The entry point.
 
     Deliberately asks `ftmo_rules.evaluate()` BEFORE computing a size, so a
     blocked account produces a refusal with the rule engine's own reason rather
     than a number nobody should act on. Same ordering principle as
     RiskGuard.check() gating an order before it reaches the broker.
+
+    `horizon_bars` defaults to the REFERENCE horizon, which reproduces the
+    historical 2 x ATR stop exactly. `ftmo_signal.plan_orders` is the live
+    path and passes the real forecast horizon; this default keeps an
+    unparameterised call honest rather than silently tightening a stop.
     """
-    stop_price = stop_price_from_atr(entry_price, atr, side)
+    stop_price = stop_price_from_atr(
+        entry_price, atr, side, mult=stop_atr_mult_for_horizon(horizon_bars))
     verdict = fr.evaluate(config, state)
 
     def refuse(reason: str) -> SizingResult:
@@ -320,6 +419,61 @@ def selftest() -> int:
           _raises(lambda: stop_price_from_atr(100.0, 0.0, "BUY")))
     check("a bad side is refused, not guessed",
           _raises(lambda: stop_price_from_atr(100.0, 2.0, "HOLD")))
+
+    print("the stop multiple scales to the forecast horizon (2026-08-09):")
+    check("the reference horizon reproduces STOP_ATR_MULT exactly — this is a "
+          "re-derivation, not a retune",
+          approx(stop_atr_mult_for_horizon(REFERENCE_HORIZON_BARS), STOP_ATR_MULT))
+    check("the live 5-bar horizon halves the multiple to 1.0",
+          approx(stop_atr_mult_for_horizon(5), 1.0))
+    check("scaling is sqrt-of-time, not linear (5/20 -> 1/2, not 1/4)",
+          approx(stop_atr_mult_for_horizon(5), STOP_ATR_MULT * 0.5)
+          and not approx(stop_atr_mult_for_horizon(5), STOP_ATR_MULT * 0.25))
+    check("a longer horizon widens the stop (80 bars -> 4.0)",
+          approx(stop_atr_mult_for_horizon(80), 4.0))
+    check("the multiple rises monotonically with the horizon",
+          all(stop_atr_mult_for_horizon(h) <= stop_atr_mult_for_horizon(h + 1)
+              for h in range(1, 60)))
+    check("the floor holds at a 1-bar horizon rather than returning 0.45",
+          approx(stop_atr_mult_for_horizon(1), MIN_STOP_ATR_MULT))
+    check("no horizon can ever produce a stop inside one bar's range",
+          all(stop_atr_mult_for_horizon(h) >= MIN_STOP_ATR_MULT
+              for h in range(1, 200)))
+    check("a zero or negative horizon is refused, never floored",
+          _raises(lambda: stop_atr_mult_for_horizon(0))
+          and _raises(lambda: stop_atr_mult_for_horizon(-5)))
+    # The whole point of the change: same ATR, same entry, shorter horizon ->
+    # a nearer stop, which is what lifts R off the floor.
+    check("a 5-bar stop sits nearer than a 20-bar stop on identical inputs",
+          stop_price_from_atr(100.0, 2.0, "BUY",
+                              mult=stop_atr_mult_for_horizon(5))
+          > stop_price_from_atr(100.0, 2.0, "BUY",
+                                mult=stop_atr_mult_for_horizon(20)))
+
+    print("take-profit from Kronos's own forecast (owner decision 2026-08-08):")
+    check("a +14.58% forecast targets entry x 1.1458",
+          approx(take_profit_from_prediction(1917.42, 14.58, "BUY"),
+                 1917.42 * 1.1458))
+    check("the target sits above entry on a long",
+          take_profit_from_prediction(100.0, 5.0, "BUY") > 100.0)
+    check("the target sits below entry on a short",
+          take_profit_from_prediction(100.0, -5.0, "SELL") < 100.0)
+    # The live case: a top-N candidate whose forecast points the WRONG way.
+    # EURUSD was entered at -0.15% on 2026-08-07; entry x (1 - 0.0015) is a
+    # "target" below entry on a long, i.e. an instruction to close at a loss.
+    check("a NEGATIVE forecast yields no BUY target — it raises",
+          _raises(lambda: take_profit_from_prediction(1.16, -0.15, "BUY")))
+    check("a zero forecast yields no BUY target either",
+          _raises(lambda: take_profit_from_prediction(100.0, 0.0, "BUY")))
+    check("a POSITIVE forecast yields no SELL target",
+          _raises(lambda: take_profit_from_prediction(100.0, 5.0, "SELL")))
+    check("a bad side is refused, not guessed",
+          _raises(lambda: take_profit_from_prediction(100.0, 5.0, "HOLD")))
+    check("a non-positive entry is refused",
+          _raises(lambda: take_profit_from_prediction(0.0, 5.0, "BUY")))
+    check("stop and target straddle entry, so R is positive and finite",
+          (take_profit_from_prediction(100.0, 6.0, "BUY") - 100.0)
+          / (100.0 - stop_price_from_atr(100.0, 2.0, "BUY")) > 0)
 
     print("floor_to_step never rounds up:")
     check("below minimum -> zero, not the minimum", floor_to_step(50, fx) == 0)

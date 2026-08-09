@@ -5,23 +5,23 @@ Kronos as the project's quantitative research agent: forecasts each
 watchlist ticker's close price N trading days ahead and ranks the
 watchlist by predicted return. Shared by:
   - trader_app.py's "Kronos forecast" menu item (analysis only, no orders)
-  - paper_trader.py's `--signal kronos` path (feeds the same approval +
+  - ftmo_runner.py's ranking step (feeds the same sizing +
     execution pipeline momentum uses — ATR sizing, bracket orders,
     RiskGuard, trade journal are all untouched by which signal produced
     the ranking)
   - kronos_watchlist_forecast.py, the ad hoc CLI for eyeballing forecasts
 
 forecast_signal() returns the exact (top, data, ranked) shape as
-paper_trader.compute_signal() so callers don't need to know which signal
+the shared signal contract so callers don't need to know which signal
 produced it. `data[ticker]` keeps trader_app.fetch()'s original
 capitalized OHLCV columns (Open/High/Low/Close/Volume) since that's what
-indicators.atr() and paper_trader's sizing expect; only the internal copy
+indicators.atr() and ftmo_sizing expect; only the internal copy
 fed to Kronos itself is lower-cased.
 
 Always force-refetches through today into price_data_live/ (same dir
-paper_trader.py uses) rather than trader_app's price_data/ — that cache
+the live paths use) rather than trader_app's price_data/ — that cache
 is keyed only by ticker, not date range, and silently served stale/
-truncated history to whichever script asked first (see paper_trader.py's
+truncated history to whichever script asked first (see the live cache's
 LIVE_DATA_DIR comment for the incident this avoids).
 
 sample_count matters: a single sample (sample_count=1) is noisy — swung
@@ -31,7 +31,7 @@ Default here is 10 as a speed/stability tradeoff.
 
 Status: unvalidated. No backtest, no grade_calls.py-style calibration yet.
 Per CLAUDE.md rule 5 (autonomy earned by evidence, not capability), this
-stays opt-in — paper_trader.py still defaults to momentum rotation, the
+stays opt-in — see signal_policy.py for what may run, the
 one strategy that's actually earned Phase 3.
 """
 import sys
@@ -46,7 +46,24 @@ import trader_app as ta
 from model import Kronos, KronosTokenizer, KronosPredictor
 
 LOOKBACK = 400          # trading days of context fed to the model (Kronos-small max_context=512)
-PRED_LEN = 20           # trading days forecast ahead (~1 month, in step with the momentum rebalance cadence)
+
+# Trading days forecast ahead. Owner decision, 2026-08-08: 20 -> 5.
+#
+# THIS CONSTANT IS LIVE. `ftmo_signal.plan_orders` and `ftmo_runner.run` both
+# call `forecast_frames()` WITHOUT passing pred_len, so they inherit whatever
+# is set here, and the FTMO runner is armed. Changing this number changes what
+# the unattended bot forecasts on its next firing — there is no separate deploy
+# step. Pin `pred_len=` at those call sites if the two venues should ever
+# diverge.
+#
+# It was 20 to sit in step with the momentum rebalance cadence, and the whole
+# of this project's Kronos evidence was measured at 20: IC 0.036 / 50.0% hit
+# rate daily, and the four asset-class screens that all failed. NONE of that
+# evidence transfers to 5. The nearest thing we have to a short horizon is the
+# hourly screen, where Kronos scored IC -0.081 / 46.4% — its worst result, and
+# worse than the momentum baseline on the same screen. Shortening the horizon
+# is a thing to TEST, not an improvement that has been demonstrated.
+PRED_LEN = 5
 DEFAULT_SAMPLE_COUNT = 10
 
 LIVE_DATA_DIR = Path(__file__).parent.parent / "price_data_live"
@@ -171,7 +188,7 @@ def _predict(names, df_list, x_ts_list, y_ts_list, pred_len, sample_count,
 
 def forecast_signal(settings: dict, pred_len: int = PRED_LEN,
                      sample_count: int = DEFAULT_SAMPLE_COUNT, verbose: bool = False):
-    """Same (top, data, ranked) contract as paper_trader.compute_signal():
+    """Same (top, data, ranked) contract the live signal path expects:
     ranked = predicted % change in close, `pred_len` trading days out,
     sorted descending; top = top-N tickers (dual-momentum-style "only
     buy positive" filter applied if settings['risk_engine'] is set)."""
@@ -190,3 +207,99 @@ def forecast_signal(settings: dict, pred_len: int = PRED_LEN,
     if dual:
         top = [t for t in top if ranked[t] > 0]
     return top, hist_data, ranked
+
+
+# ------------------------------------------------------------------ selftest
+
+def _selftest() -> int:
+    """Offline. Verifies the context/horizon contract without loading weights.
+
+    Stubs `_predict` so nothing downloads from Hugging Face and no GPU work
+    happens: what is under test is the framing — how much history goes in and
+    how many periods come out — not the model.
+    """
+    import numpy as np
+    failures = []
+
+    def check(name, cond):
+        print(f"  {'ok  ' if cond else 'FAIL'}  {name}")
+        if not cond:
+            failures.append(name)
+
+    captured = {}
+
+    def fake_predict(names, df_list, x_ts_list, y_ts_list, pred_len,
+                     sample_count, verbose):
+        captured.update(names=names, df_list=df_list, x_ts_list=x_ts_list,
+                        y_ts_list=y_ts_list, pred_len=pred_len)
+        # Mirrors the real `_predict`'s return shape (name -> frame). Returning
+        # a bare list here passed every framing check and then blew up on the
+        # caller's dict lookup — a stub that lies about its contract tests the
+        # wrong thing.
+        return {n: pd.DataFrame({"close": np.linspace(100, 105, pred_len)})
+                for n in names}
+
+    real_predict, real_get = _predict, get_predictor
+    globals()["_predict"] = fake_predict
+    globals()["get_predictor"] = lambda: None
+    try:
+        idx = pd.bdate_range("2023-01-02", periods=500)
+        frame = pd.DataFrame(
+            {"Open": np.linspace(90, 110, 500), "High": np.linspace(91, 111, 500),
+             "Low": np.linspace(89, 109, 500), "Close": np.linspace(90, 110, 500),
+             "Volume": np.full(500, 1_000_000)}, index=idx)
+
+        print("the horizon is 5 trading days, the context is still 400 bars:")
+        check("PRED_LEN is 5", PRED_LEN == 5)
+        check("LOOKBACK is unchanged at 400", LOOKBACK == 400)
+
+        ok, hist, preds = forecast_frames({"TEST": frame}, verbose=False)
+        check("the symbol was accepted", ok == ["TEST"])
+        check("exactly 400 bars of context are fed in, not 500",
+              len(captured["df_list"][0]) == 400)
+        check("...and they are the MOST RECENT 400",
+              captured["x_ts_list"][0].iloc[-1] == idx[-1])
+        check("the model is asked for 5 periods", captured["pred_len"] == 5)
+        check("exactly 5 forecast timestamps are constructed",
+              len(captured["y_ts_list"][0]) == 5)
+        check("the forecast starts AFTER the last historical bar",
+              captured["y_ts_list"][0].iloc[0] > idx[-1])
+        check("forecast timestamps are business days",
+              all(ts.weekday() < 5 for ts in captured["y_ts_list"][0]))
+        check("the returned forecast frame has 5 rows",
+              len(preds["TEST"]) == 5)
+        check("history is returned with its original capitalised columns",
+              "Close" in hist["TEST"].columns)
+
+        print("a symbol with too little history is skipped, not truncated:")
+        short = frame.tail(399)
+        raised = False
+        try:
+            forecast_frames({"SHORT": short}, verbose=False)
+        except RuntimeError:
+            raised = True
+        check("399 bars is refused — 400 means 400", raised)
+
+        print("the live callers inherit this constant (they pass no pred_len):")
+        import inspect
+        for mod in ("ftmo_signal", "ftmo_runner"):
+            src = (Path(__file__).parent.parent / f"{mod}.py").read_text()
+            call = src[src.index("forecast_frames("):][:120]
+            check(f"{mod} does not pin pred_len, so it follows PRED_LEN",
+                  "pred_len" not in call)
+    finally:
+        globals()["_predict"] = real_predict
+        globals()["get_predictor"] = real_get
+
+    print("\nFAILED" if failures else "\nAll kronos_agent offline selftests passed.")
+    return 1 if failures else 0
+
+
+if __name__ == "__main__":
+    import argparse
+    _ap = argparse.ArgumentParser(description="Kronos research agent.")
+    _ap.add_argument("--selftest", action="store_true",
+                     help="offline checks; no model download, no network")
+    if _ap.parse_args().selftest:
+        sys.exit(_selftest())
+    _ap.print_help()

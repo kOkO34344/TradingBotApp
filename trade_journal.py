@@ -4,15 +4,19 @@ trade_journal.py — the append-only trade journal, and the ONE place that knows
 its column set.
 
 Rule 6: every order attempt, block and fill goes to `trade_journal.csv`. If it
-is not in the journal, it did not happen. Until now that file was written from
-`ibkr_service.journal()`, which was fine while IBKR was the only venue. Rule 9
-added FTMO, so the journal needs a `venue` column and a writer that is not
-bolted to `ib_async` — importing the IBKR adapter to record an FTMO order would
-make the FTMO path depend on a broker it never talks to.
+is not in the journal, it did not happen.
 
-`ibkr_service.journal()` keeps its signature and its Telegram alerting and
-delegates the write here, so there is still exactly one writer and one column
-list. Nothing about the IBKR path's behaviour changes.
+This module was extracted from the IBKR adapter on 2026-08-06, when FTMO
+arrived and the journal needed a `venue` column plus a writer that was not
+bolted to `ib_async` — importing a broker adapter to record an order on a
+different broker is the wrong dependency. IBKR was removed entirely on
+2026-08-09 and this file outlived it, which is the extraction paying off: the
+audit trail did not have to move when the venue did.
+
+**`venue="ibkr"` is still a valid value and always will be.** The journal holds
+46 rows from that account and they are not going anywhere: an audit trail you
+prune when a venue is retired is not an audit trail. What was removed is the
+CODE, never the record of what it did.
 
 WHY THE MIGRATION LIVES IN THE WRITER
 -------------------------------------

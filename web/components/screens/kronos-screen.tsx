@@ -47,9 +47,9 @@ import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
-import { FanChart, ForecastChart } from "@/components/chart/forecast-chart";
+import { MAX_DRAWN_PATHS, FanChart, ForecastChart } from "@/components/chart/forecast-chart";
 
-export default function KronosPage() {
+export function KronosScreen() {
   const [job, setJob] = useState<Job<KronosResult> | null>(null);
   const [mcJob, setMcJob] = useState<Job<MonteCarloResult> | null>(null);
   const [draws, setDraws] = useState(3);
@@ -59,13 +59,23 @@ export default function KronosPage() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load whatever the last completed run was, so reopening the page doesn't
-  // mean paying for another inference.
+  // mean paying for another inference. BOTH panels restore — the forecast and
+  // the Monte Carlo are each a couple of minutes of GPU time, and losing one
+  // of them on a refresh while the other survived was an inconsistency you
+  // would only notice by paying for it twice.
   useEffect(() => {
     kronos
       .latest()
       .then(({ job: last, running }) => {
         if (running) setJob(running as Job<KronosResult>);
         else if (last) setJob(last);
+      })
+      .catch(() => {});
+    kronos
+      .latest<MonteCarloResult>("kronos-mc")
+      .then(({ job: last, running }) => {
+        if (running) setMcJob(running as Job<MonteCarloResult>);
+        else if (last) setMcJob(last);
       })
       .catch(() => {});
   }, []);
@@ -322,7 +332,7 @@ export default function KronosPage() {
                 forecast={chart.forecast}
               />
               <p className="text-xs text-muted-foreground">
-                Amber bars are model output, not prices. This is one draw —
+                Tinted bars are model output, not prices. This is one draw —
                 the range column above shows where the other draws landed.
               </p>
             </Card>
@@ -339,8 +349,8 @@ export default function KronosPage() {
               Monte Carlo fan
             </h2>
             <p className="text-sm text-muted-foreground">
-              Individual single-sample paths, drawn separately rather than
-              averaged — the spread is the point.
+              Individual single-sample paths over a P10–P90 envelope, with the
+              median on top. Not averaged — the spread is the point.
             </p>
           </div>
           <div className="flex items-end gap-2">
@@ -422,8 +432,19 @@ export default function KronosPage() {
             <FanChart history={mcResult.history} series={mcResult.series} />
             <p className="text-xs text-muted-foreground">
               Each line is one <span className="font-mono">sample_count=1</span>{" "}
-              draw for {mcResult.ticker}. Where the lines fan out, the model is
-              not committing to a direction.
+              draw for {mcResult.ticker}, coloured{" "}
+              <span className="text-profit">green</span> if it finishes above
+              today&apos;s close and <span className="text-loss">pink</span> if
+              below. The shaded ribbon is P10–P90; the thick orange line is the
+              median. Where the lines fan out, the model is not committing to a
+              direction.
+              {mcResult.series.length > MAX_DRAWN_PATHS && (
+                <>
+                  {" "}
+                  Showing {MAX_DRAWN_PATHS} of {mcResult.series.length} paths
+                  individually — the ribbon still covers all of them.
+                </>
+              )}
             </p>
           </>
         )}

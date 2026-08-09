@@ -1,10 +1,21 @@
 ---
 tags: [adr, architecture, broker, decision]
 date: 2026-07-21
-status: "Finalized"
+status: "HISTORICAL — superseded 2026-08-02; the project trades FTMO"
 ---
 
 # ADR: Interactive Brokers vs Alpaca
+
+> [!danger] HISTORICAL — superseded on 2026-08-02, code removed 2026-08-09
+> This decision is moot. The project does not use Interactive Brokers or
+> Alpaca; it trades **FTMO** through the cTrader Open API on a Challenge
+> account with simulated capital. See [[FTMO Venue]].
+>
+> Kept because the reasoning — asset-class coverage, paper-account fidelity,
+> API maturity — is the same reasoning that later chose cTrader over
+> MetaTrader (the official `MetaTrader5` package is Windows-only and this
+> machine is an arm64 Mac with no VM).
+
 
 ## Context
 

@@ -2,7 +2,7 @@
 """
 ftmo_service.py — FTMO venue adapter over the cTrader Open API.
 
-The broker layer for the FTMO side, the counterpart to `ibkr_service.py`.
+The broker layer for the FTMO venue — the only venue this project trades.
 Same division of responsibility: this module talks to the venue, and
 `ftmo_rules.py` decides whether a trade is allowed. Neither imports the other's
 job, so the rule engine stays pure and testable offline and this file stays a
@@ -15,7 +15,7 @@ Open API is protobuf over TLS and runs natively here. FTMO supports it, and
 issues a cTrader ID in the Client Area.
 
 TWISTED, IN AN ASYNCIO PROJECT. The cTrader SDK is built on Twisted while
-`ib_async` and the FastAPI backend are asyncio. They can share a process, but
+The FastAPI backend is asyncio and Twisted is not. They can share a process, but
 only via Twisted's asyncio reactor, and it must be installed BEFORE anything
 imports the default reactor. `install_asyncio_reactor()` below does that and is
 a no-op once a reactor exists. The CLI paths in this file run standalone and
@@ -179,7 +179,7 @@ def routing_hint(choice: str, is_live: bool) -> str | None:
 def install_asyncio_reactor() -> bool:
     """Make Twisted run on the asyncio event loop. No-op if already installed.
 
-    Only matters when this module is imported alongside ib_async or FastAPI.
+    Only matters when this module is imported alongside FastAPI.
     Must run before any other import pulls in twisted.internet.reactor, which
     is why it is a function called early rather than an import side effect.
     """

@@ -164,7 +164,7 @@ REGISTRY: dict[str, IndicatorSpec] = {
         "MACD line, signal line and histogram.", guides=[0]),
     "atr": IndicatorSpec(
         "atr", "ATR", "atr", {"period": 14}, _c_atr, ["atr"],
-        "Average true range — the same measure paper_trader sizes stops with."),
+        "Average true range — the same measure ftmo_sizing sizes stops with."),
     "obv": IndicatorSpec(
         "obv", "OBV", "obv", {}, _c_obv, ["obv"],
         "On-balance volume."),

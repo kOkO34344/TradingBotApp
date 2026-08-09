@@ -2,7 +2,7 @@
 # run_notify.sh — generic "run any script in this project, text my phone
 # when it's done" wrapper. Usable from any session (this chat, Claude
 # Code, a plain terminal) for any one-shot script — backtests, a single
-# research_agent.py ticker run, paper_trader.py --dry-run, etc.
+# research_agent.py ticker run, a backtest, etc.
 #
 # Usage:
 #   ./run_notify.sh sma_crossover_backtest.py
@@ -14,7 +14,7 @@
 # Detached, survives closing the terminal:
 #   nohup ./run_notify.sh <script> [args...] > /dev/null 2>&1 & disown
 #
-# NOT for recurring/polling jobs (reflect_on_trades.sh runs every 30 min
+# NOT for recurring/polling jobs (ftmo_runner.sh fires hourly
 # via launchd) — see CLAUDE.md's automation section for why.
 
 set -u

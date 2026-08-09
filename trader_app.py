@@ -41,7 +41,7 @@ def running_in_project_venv() -> bool:
     """Is this interpreter the project's own .venv?
 
     Worth checking explicitly because conda base on this machine is a PARTIAL
-    match: it has pandas, rich, yfinance and ib_async but not torch. The app
+    match: it has pandas, rich and yfinance but not torch. The app
     therefore starts and behaves normally right up to the Kronos menu, which
     then reports missing dependencies that are in fact installed — just in a
     different interpreter. See trader_app.sh.
@@ -83,9 +83,6 @@ DEFAULT_SETTINGS = {
     "risk_pct_per_trade": 2.0,
     "momentum_top_n": 3,
     "momentum_lookback_m": 12,
-    "ibkr_port": 7497,
-    "ibkr_client_id": 7,
-    "autotrade": {"enabled": False, "signal": "kronos"},
 }
 
 console = Console()
@@ -518,9 +515,9 @@ def momentum_backtest(data: dict, settings: dict):
 
 def kronos_menu(settings: dict):
     """Run KronosAI's forecast agent (kronos_agent.py) against the watchlist
-    and show a ranked table. Analysis only — this app places no orders;
-    paper_trader.py --signal kronos trades off this same signal (still
-    paper, still human-approved). Backtested 2026-07-23 (see CLAUDE.md
+    and show a ranked table. Analysis only — this app places no orders.
+    `ftmo_runner.py` trades off this same model, but against FTMO's own
+    universe rather than this watchlist. Backtested 2026-07-23 (see CLAUDE.md
     empirical findings): near-zero information coefficient, 50% hit rate —
     no measurable forecasting skill found in the one honest post-cutoff
     window available. Kept for reference/re-testing, not because it's
@@ -704,105 +701,98 @@ def chart_view(data: dict, settings: dict):
         console.print(f"[yellow]Readout unavailable: {e}[/yellow]")
 
 
-def ibkr_menu(settings: dict):
-    """Connect to the IBKR PAPER account via ibkr_service and inspect it.
-    Read-only by design: no orders can be placed from this app until a
-    strategy + approval loop exist."""
+def ftmo_menu(settings: dict):
+    """Read-only look at the FTMO venue: account, rule verdict, positions.
+
+    Read-only on purpose, and it is not the same "read-only" the old IBKR menu
+    claimed. That one had no order path to reach; this one sits beside a runner
+    that trades unattended ~20 times a day, so the restraint is deliberate: an
+    interactive terminal is the wrong place to hand-place a trade on an account
+    whose limits are measured on equity including floating P&L. Arming and
+    disarming lives in menu 8; placing lives in ftmo_runner.py alone.
+
+    Everything shown comes from `ftmo_rules.evaluate()` by way of
+    `api.ftmo_api.snapshot()` — the identical call the web dashboard makes, so
+    the terminal and the browser cannot disagree about whether the account is
+    safe.
+    """
     try:
-        import ibkr_service as ibs
-    except ImportError:
-        console.print("[red]ib_async not installed — run: pip install ib_async[/red]")
+        from api import ftmo_api
+    except ImportError as e:
+        console.print(f"[red]FTMO modules unavailable: {e}[/red]")
         return
 
-    port = settings.get("ibkr_port", 7497)
     console.print(Panel(
-        f"Connecting to IBKR on 127.0.0.1:[bold]{port}[/bold] (paper trading port).\n"
-        "[dim]Requires TWS or IB Gateway running locally with the API enabled\n"
-        "(Edit → Global Configuration → API → Settings).[/dim]",
-        title="IBKR", border_style="cyan"))
-    try:
-        ib = ibs.connect(port=port, client_id=settings.get("ibkr_client_id", 7))
-    except Exception as e:
-        console.print(f"[red]Could not connect: {e}[/red]")
-        console.print("[dim]Is TWS/IB Gateway open and logged into the PAPER account? "
-                      f"Is the API enabled and the socket port set to {port}?[/dim]")
-        return
-    console.print("[green]Connected (paper).[/green]")
+        "Connecting to cTrader. [dim]The first call opens the session and can\n"
+        "take a few seconds; credentials come from secrets/ctrader.env.[/dim]",
+        title="FTMO", border_style="cyan"))
 
     try:
-        while True:
-            sub = Prompt.ask(
-                "IBKR: [bold]1[/bold]=account summary  [bold]2[/bold]=positions  "
-                "[bold]3[/bold]=live 15-min bars  [bold]4[/bold]=disconnect & back",
-                choices=["1", "2", "3", "4"], default="4")
-            if sub == "1":
-                acct = {v.tag: v.value for v in ib.accountSummary()
-                        if v.tag in ("NetLiquidation", "TotalCashValue", "BuyingPower",
-                                     "GrossPositionValue", "AvailableFunds")}
-                t = Table(title="Account summary (paper)", header_style="bold cyan")
-                t.add_column("Metric"); t.add_column("Value", justify="right")
-                for k, v in acct.items():
-                    t.add_row(k, f"${float(v):,.2f}")
-                console.print(t)
-            elif sub == "2":
-                poss = ib.positions()
-                if not poss:
-                    console.print("[dim]No open positions.[/dim]")
-                else:
-                    t = Table(title="Open positions", header_style="bold cyan")
-                    for col in ("Symbol", "Type", "Position", "Avg cost"):
-                        t.add_column(col, justify="right")
-                    for p in poss:
-                        t.add_row(p.contract.symbol, p.contract.secType,
-                                  f"{p.position:,.0f}", f"{p.avgCost:,.2f}")
-                    console.print(t)
-            elif sub == "3":
-                kind = Prompt.ask("Asset class", choices=["stock", "forex", "future", "crypto"],
-                                  default="stock")
-                sym = Prompt.ask("Symbol", default={"stock": "AAPL", "forex": "EURUSD",
-                                                    "future": "MGC", "crypto": "BTC"}[kind]).upper()
-                if kind == "stock":
-                    contract = ibs.stock(sym)
-                elif kind == "forex":
-                    contract = ibs.forex_pair(sym)
-                elif kind == "crypto":
-                    contract = ibs.crypto(sym)
-                else:
-                    expiry = Prompt.ask("Expiry (YYYYMM)", default="202612")
-                    exchange = Prompt.ask("Exchange", default="COMEX")
-                    contract = ibs.future(sym, expiry, exchange)
-                try:
-                    df = ibs.get_15min_bars(ib, contract, duration="1 D")
-                except Exception as e:
-                    console.print(f"[red]Data request failed: {e}[/red]")
-                    continue
-                if df is None or len(df) == 0:
-                    console.print("[yellow]No bars returned (market data subscription "
-                                  "may be needed for this asset).[/yellow]")
-                    continue
-                t = Table(title=f"{sym} — last 10 bars (15 min)", header_style="bold cyan")
-                for col in ("time", "open", "high", "low", "close"):
-                    t.add_column(col, justify="right")
-                for _, r in df.tail(10).iterrows():
-                    t.add_row(str(r["date"]), f"{r['open']:.4f}", f"{r['high']:.4f}",
-                              f"{r['low']:.4f}", f"{r['close']:.4f}")
-                console.print(t)
-                if Confirm.ask("Plot session chart?", default=True):
-                    try:
-                        import plotext as plt
-                        plt.clear_figure()
-                        plt.plot(df["close"].tolist())
-                        plt.title(f"{sym} 15-min close (today)")
-                        plt.theme("dark")
-                        plt.plotsize(min(120, plt.terminal_width() or 100), 20)
-                        plt.show()
-                    except ImportError:
-                        console.print("[red]plotext not installed.[/red]")
-            else:
-                break
-    finally:
-        ib.disconnect()
-        console.print("[dim]Disconnected from IBKR.[/dim]")
+        snap = ftmo_api.snapshot()
+    except Exception as e:
+        console.print(f"[red]Could not reach the venue: {e}[/red]")
+        return
+
+    conn = snap.get("connection") or {}
+    if not conn.get("ready"):
+        console.print(f"[red]Not connected: {conn.get('error') or conn.get('status')}[/red]")
+        return
+
+    acct = snap.get("account")
+    if acct:
+        t = Table(title=f"FTMO account {conn.get('account_id')}", header_style="bold cyan")
+        t.add_column("Metric"); t.add_column("Value", justify="right")
+        t.add_row("Balance", f"${acct['balance']:,.2f}")
+        # Equity, not balance: every FTMO limit is measured on equity INCLUDING
+        # floating P&L, so this is the number that can fail the account.
+        t.add_row("Equity (incl. floating)", f"${acct['equity']:,.2f}")
+        t.add_row("Floating P&L", f"${acct['floating']:+,.2f}")
+        if acct.get("unpricedPositions"):
+            t.add_row("[yellow]Unpriced positions[/yellow]",
+                      f"[yellow]{acct['unpricedPositions']}[/yellow]")
+        console.print(t)
+        if acct.get("unpricedPositions"):
+            console.print("[yellow]Equity above is INCOMPLETE, not flat — some "
+                          "positions have no quote yet.[/yellow]")
+
+    v = snap.get("verdict")
+    if v:
+        posture = v.get("posture", "?")
+        colour = {"OK": "green", "BLOCKED": "yellow",
+                  "FLATTEN": "red", "BREACHED": "red"}.get(posture, "white")
+        t = Table(title="Rule engine", header_style="bold cyan")
+        t.add_column("Limit"); t.add_column("Used", justify="right")
+        t.add_column("Soft", justify="right"); t.add_column("Hard", justify="right")
+        for name, key in (("Daily loss", "daily"), ("Max drawdown", "drawdown")):
+            lim = v[key]
+            t.add_row(name, f"${lim['used']:,.2f}",
+                      f"${lim['soft']:,.2f}", f"${lim['hard']:,.2f}")
+        console.print(t)
+        console.print(f"Posture: [{colour}]{posture}[/{colour}]  "
+                      f"[dim]{'; '.join(v.get('reasons') or []) or 'ok'}[/dim]")
+
+    positions = snap.get("positions") or []
+    if not positions:
+        console.print("[dim]Flat — no open positions.[/dim]")
+        return
+
+    t = Table(title=f"Open positions ({len(positions)})", header_style="bold cyan")
+    for col in ("Symbol", "Side", "Volume", "Entry", "Mark", "Stop", "P&L", "Stop?"):
+        t.add_column(col, justify="right" if col not in ("Symbol", "Side", "Stop?") else "left")
+    for p in positions:
+        # A missing mark is a dash, never 0 — an unquoted position is unknown,
+        # not worthless.
+        dash = "[dim]—[/dim]"
+        mark = f"{p['mark']:,.5f}" if p.get("mark") is not None else dash
+        stop = f"{p['stopLoss']:,.5f}" if p.get("stopLoss") is not None else dash
+        pnl = (f"[green]+${p['pnl']:,.2f}[/green]" if (p.get("pnl") or 0) > 0
+               else f"[red]${p['pnl']:,.2f}[/red]" if p.get("pnl") is not None
+               else dash)
+        t.add_row(p["symbol"], p["side"], str(p["volume"]),
+                  f"{p['entryPrice']:,.5f}", mark, stop, pnl,
+                  "[green]covered[/green]" if p.get("protected")
+                  else "[red]UNPROTECTED[/red]")
+    console.print(t)
 
 
 def edit_settings(settings: dict):
@@ -821,12 +811,9 @@ def edit_settings(settings: dict):
             f"momentum: cash filter)\n"
             f"7. Momentum: [bold]top {settings.get('momentum_top_n', 3)}[/bold] of watchlist, "
             f"[bold]{settings.get('momentum_lookback_m', 12)}-month[/bold] lookback\n"
-            f"8. IBKR: port [bold]{settings.get('ibkr_port', 7497)}[/bold], "
-            f"client id [bold]{settings.get('ibkr_client_id', 7)}[/bold] "
-            f"[dim](7497=TWS paper, 4002=Gateway paper)[/dim]\n"
-            f"9. Back to main menu",
+            f"8. Back to main menu",
             title="Settings", border_style="cyan"))
-        choice = Prompt.ask("Change which", choices=[str(i) for i in range(1, 10)], default="9")
+        choice = Prompt.ask("Change which", choices=[str(i) for i in range(1, 9)], default="8")
         if choice == "1":
             # Deliberately NOT editable here. The watchlist is stored as groups
             # (settings["watchlist_groups"]) with settings["tickers"] derived
@@ -881,24 +868,6 @@ def edit_settings(settings: dict):
                 settings["momentum_top_n"], settings["momentum_lookback_m"] = n, lb
             else:
                 console.print("[red]N must fit the watchlist and lookback must be 1-24 months.[/red]")
-        elif choice == "8":
-            p = IntPrompt.ask("IBKR socket port (7497 TWS paper / 4002 Gateway paper)",
-                              default=settings.get("ibkr_port", 7497))
-            if p in (7496, 4001):
-                console.print("[red]That's a LIVE port. This app only connects to paper "
-                              "accounts — port unchanged.[/red]")
-            elif p in (7497, 4002):
-                settings["ibkr_port"] = p
-            elif 1024 <= p <= 65535 and Confirm.ask(
-                    f"[yellow]{p} is not a standard IBKR paper port (7497/4002). "
-                    f"Use it anyway?[/yellow]", default=False):
-                settings["ibkr_port"] = p
-            else:
-                console.print(f"[red]{p} rejected — port unchanged "
-                              f"({settings.get('ibkr_port', 7497)}).[/red]")
-            settings["ibkr_client_id"] = IntPrompt.ask(
-                "Client id (any small integer, unique per connected app)",
-                default=settings.get("ibkr_client_id", 7))
         else:
             save_settings(settings)
             console.print("[green]Settings saved.[/green]")
@@ -914,11 +883,11 @@ MENU = """[bold cyan]1[/bold cyan]. SMA backtest — out-of-sample (2019 → now
 [bold cyan]5[/bold cyan]. Chart view (candlesticks + indicators: trend, volatility, volume, S/R)
 [bold cyan]6[/bold cyan]. Momentum rotation backtest (portfolio)   [dim]the strategy that earned it[/dim]
 [bold cyan]7[/bold cyan]. Kronos forecast (research agent)   [dim]backtested, no edge found — analysis only[/dim]
-[bold cyan]8[/bold cyan]. Autotrade toggle   [dim yellow]EXPERIMENTAL — unattended, no edge shown[/dim yellow]
+[bold cyan]8[/bold cyan]. FTMO autotrade (arm/disarm)   [dim yellow]UNATTENDED — no edge shown in any IC screen[/dim yellow]
 [bold cyan]9[/bold cyan]. Watchlist (named groups, validated symbols)   [dim]what everything else trades/researches[/dim]
-[bold cyan]10[/bold cyan]. Settings (SMA windows, costs, risk engine, momentum, IBKR)
+[bold cyan]10[/bold cyan]. Settings (SMA windows, costs, risk engine, momentum)
 [bold cyan]11[/bold cyan]. Refresh price data (force re-download)
-[bold cyan]12[/bold cyan]. IBKR paper account (connect, positions, live 15-min bars)
+[bold cyan]12[/bold cyan]. FTMO venue (account, rule verdict, open positions)   [dim]read-only[/dim]
 [bold cyan]13[/bold cyan]. Quit"""
 
 
@@ -931,32 +900,30 @@ def _show_watchlist(groups: dict):
     for name, syms in groups.items():
         table.add_row(name, str(len(syms)), ", ".join(syms) if syms else "[dim]empty[/dim]")
     console.print(table)
-    console.print("[dim]Every group's tickers are merged (deduped) into one traded universe — "
-                  "that union is what\nthe research agent, Kronos, paper_trader and autotrade all "
-                  "read as settings['tickers'].[/dim]")
+    console.print("[dim]Every group's tickers are merged (deduped) into one research universe — "
+                  "that union is what\nthe research agent, Kronos and the backtests read as "
+                  "settings['tickers']. FTMO trades its own universe.[/dim]")
 
 
 def watchlist_menu(settings: dict):
     """Edit the watchlist as named groups, with symbols validated on the way in.
 
-    Groups mirror how the owner organizes watchlists in IBKR, but are NOT
-    synced from it: the TWS API exposes no watchlist endpoint (see
-    watchlist.py's docstring). This is the place the list is maintained.
+    This is the RESEARCH universe, not the traded one: it feeds the research
+    agent, Kronos and the backtests, all of which read yfinance daily bars.
+    What FTMO can actually trade is a separate set of CFDs derived from the
+    venue's own symbol capture (`ftmo_signal.build_universe`).
 
-    Two guards this menu exists to provide, over the old raw comma-separated
-    string edit: every added symbol is validated against yfinance AND against
-    what the order path can actually trade (US stocks), and removing a symbol
-    you hold a position in is warned about loudly — paper_trader.py filters
-    holdings by the watchlist, so a removed ticker's position becomes
-    invisible to it and stops being managed."""
+    The guard this menu provides over the old raw comma-separated string edit:
+    every added symbol is validated against yfinance and against what can be
+    meaningfully researched, and anything dropped is REPORTED rather than
+    silently discarded."""
     groups = wl.get_groups(settings)
 
     while True:
         console.print()
         _show_watchlist(groups)
-        if settings.get("autotrade", {}).get("enabled"):
-            console.print("[yellow]Autotrade is ON — anything added here becomes eligible "
-                          "for unattended orders on the next hourly run.[/yellow]")
+        # No "autotrade is ON" warning here: this list no longer feeds the
+        # order path. The FTMO runner ranks the venue's own universe.
 
         choice = Prompt.ask(
             "1=add  2=remove  3=new group  4=rename group  5=delete group  6=back",
@@ -1001,25 +968,12 @@ def watchlist_menu(settings: dict):
             if not present:
                 continue
 
-            # A removed ticker you still hold becomes invisible to paper_trader
-            # (it filters holdings by the watchlist), so the position would sit
-            # there unmanaged. Check before, not after.
-            with console.status("[bold cyan]Checking open positions on IBKR..."):
-                held = wl.held_symbols(settings)
-            if held is None:
-                console.print("[yellow]Could not reach IBKR — open positions UNKNOWN. "
-                              "If you hold any of these, paper_trader will stop\n"
-                              "managing them (its stop stays, but nothing will exit "
-                              "it).[/yellow]")
-            else:
-                clash = [s for s in present if s in held]
-                if clash:
-                    console.print(f"[bold red]You hold open positions in: "
-                                  f"{', '.join(clash)}[/bold red]")
-                    console.print("[red]Removing them from the watchlist makes paper_trader "
-                                  "blind to those positions — it will neither\nmanage nor exit "
-                                  "them. Close the positions first, or keep them listed.[/red]")
-
+            # No open-position check here any more, and that is a real change
+            # rather than an oversight. It existed because paper_trader filtered
+            # live IBKR holdings by this list, so removing a held ticker made
+            # its position invisible and unmanaged. Nothing filters positions by
+            # the watchlist now — FTMO positions are reconciled against the
+            # venue itself by ftmo_closes.py, which reads what is actually open.
             if not Confirm.ask(f"Remove {', '.join(present)} from the watchlist?", default=False):
                 continue
             for name in groups:
@@ -1081,69 +1035,75 @@ def watchlist_menu(settings: dict):
             return
 
 
-def autotrade_menu(settings: dict):
-    """View/toggle autotrade_runner.py's unattended-hourly-rebalance
-    switch. This app never places an order itself — flipping this on/off
-    just writes trader_settings.json's "autotrade" block, which a separate
-    launchd job (com.tradingbotapp.autotrade.plist, hourly during NYSE
-    hours) reads before deciding whether to trade. See
-    autotrade_runner.py's own docstring for the full picture.
+def ftmo_autotrade_menu(settings: dict):
+    """Arm or disarm the unattended FTMO runner.
 
-    EXPERIMENTAL: both signals offered here were screened at this exact
-    hourly cadence (KronosAI/kronos_ic_hourly.py, 2026-07-24) and showed
-    NO measurable edge — momentum-hourly IC -0.037/48.5% hit rate,
-    Kronos-hourly IC -0.081/46.4% hit rate (336 pooled pairs, both
-    indistinguishable from noise). Turning this on runs either signal
-    live on the PAPER account as a deliberate experiment, per the owner's
-    explicit choice — not because either is validated. See CLAUDE.md."""
-    autotrade = settings.get("autotrade", {"enabled": False, "signal": sp.DEFAULT_SIGNAL})
-    state = "[green]ON[/green]" if autotrade.get("enabled") else "[red]OFF[/red]"
-    cur_sig = sp.resolve_signal(settings)
-    sig_warn = ("  [red](DISABLED — autotrade will refuse to fire)[/red]"
-                if cur_sig in sp.DISABLED_SIGNALS and not sp.momentum_opt_in(settings) else "")
+    This app places nothing. Flipping this writes `trader_settings.json`'s
+    `ftmo.autotrade` block, which `ftmo_runner.py` re-reads on every wakeup, so
+    the change takes effect from the next firing without touching launchd. The
+    same switch is on the web dashboard's header, and both go through the same
+    settings key so they cannot disagree.
+
+    A missing key reads as OFF. That direction fails safe, but it fails
+    QUIETLY — `trader_settings.json` is tracked in git, so a stray
+    `git checkout .` silently disarms the runner. Check the flag before
+    concluding the bot is running.
+
+    ARMED AGAINST THIS PROJECT'S OWN EVIDENCE, deliberately and with the
+    owner's knowledge (CLAUDE.md rule 9, the third documented exception to the
+    evidence rule). All four asset classes failed their IC screen twice — at a
+    20-day horizon on 2026-08-03 and again at 5 days on 2026-08-08 — with no
+    |t| above 1.55. Directional hit rates sit at 49.6% / 54.7% / 50.4% / 50.8%
+    against a 50% chance rate. The rule engine, the per-trade and portfolio
+    risk caps and the server-side stop are enforced regardless: arming removes
+    the human approval step, never a limit.
+    """
+    block = (settings.get("ftmo") or {}).get("autotrade") or {}
+    enabled = bool(block.get("enabled", False))
+    state = "[green]ARMED[/green]" if enabled else "[red]DISARMED[/red]"
+
     console.print(Panel(
-        f"Current state: {state}   Signal: [bold]{cur_sig}[/bold]{sig_warn}\n\n"
-        "[dim]Unattended hourly rebalancing via a separate launchd job "
-        "(autotrade_runner.py) — no y/n prompt when on, RiskGuard still\n"
-        "fully enforced. Both signals (momentum-hourly, kronos-hourly) "
-        "showed NO measurable edge in a 2026-07-24 IC screen (see\n"
-        "CLAUDE.md) — this is a deliberate live paper experiment, not a "
-        "validated strategy. Paper account only.[/dim]",
-        title="Autotrade [yellow]EXPERIMENTAL[/yellow]", border_style="yellow"))
+        f"Current state: {state}   Signal: [bold]{sp.resolve_signal(settings)}[/bold]\n"
+        f"Risk/trade: [bold]{block.get('risk_pct', 1.0)}%[/bold]   "
+        f"Top-N: [bold]{block.get('top_n', '?')}[/bold]   "
+        f"Product: [bold]{block.get('product', '2step')}[/bold]\n\n"
+        "[dim]Unattended Kronos trading on FTMO via launchd "
+        "(com.tradingbotapp.ftmo, hourly at :30). The runner only trades\n"
+        "inside 16:30-11:30 Europe/Sofia, every day except Sunday — the "
+        "schedule is a deliberate superset of that window.\n\n"
+        "Every asset class FAILED its IC screen, twice. This is armed as a "
+        "deliberate exception (CLAUDE.md rule 9), not\n"
+        "because an edge was shown. Simulated capital; the rule engine and "
+        "every risk cap stay enforced either way.[/dim]",
+        title="FTMO autotrade [yellow]UNATTENDED[/yellow]", border_style="yellow"))
 
-    action = Prompt.ask("1=toggle on/off  2=change signal  3=back",
-                        choices=["1", "2", "3"], default="3")
-    if action == "1":
-        autotrade["enabled"] = not autotrade.get("enabled", False)
-        settings["autotrade"] = autotrade
-        save_settings(settings)
-        new_state = "ON" if autotrade["enabled"] else "OFF"
-        console.print(f"[bold]Autotrade is now {new_state}.[/bold]")
-        if autotrade["enabled"]:
-            console.print("[yellow]Reminder: unattended, no edge shown in testing, "
-                          "paper account only.[/yellow]")
-    elif action == "2":
-        sig = Prompt.ask("Signal", choices=list(sp.KNOWN_SIGNALS),
-                         default=sp.resolve_signal(settings))
-        autotrade["signal"] = sig
-        settings["autotrade"] = autotrade
-        save_settings(settings)
-        console.print(f"[bold]Autotrade signal set to {sig}.[/bold]")
-        if sig in sp.DISABLED_SIGNALS and not sp.momentum_opt_in(settings):
-            # Saved, but say plainly that it won't actually trade — a setting
-            # that looks applied and silently does nothing is the failure mode
-            # this whole project keeps getting bitten by.
-            console.print("[red]Note: this signal is DISABLED (owner instruction, "
-                          "2026-07-28).[/red]\n[red]autotrade_runner will refuse to fire "
-                          "and text you instead of placing orders. To really enable it, add "
-                          '"allow_momentum": true to the autotrade block.[/red]')
+    action = Prompt.ask("1=arm/disarm  2=back", choices=["1", "2"], default="2")
+    if action != "1":
+        return
+
+    if not enabled and not Confirm.ask(
+            "Arm the runner? It will place real orders on the FTMO account "
+            "with no approval step", default=False):
+        console.print("[dim]Left disarmed.[/dim]")
+        return
+
+    block["enabled"] = not enabled
+    ftmo_block = dict(settings.get("ftmo") or {})
+    ftmo_block["autotrade"] = block
+    settings["ftmo"] = ftmo_block
+    save_settings(settings)
+    console.print(f"[bold]FTMO autotrade is now "
+                  f"{'ARMED' if block['enabled'] else 'DISARMED'}.[/bold]")
+    if block["enabled"]:
+        console.print("[yellow]Unattended, no edge shown in any IC screen, "
+                      "simulated capital.[/yellow]")
 
 
 def main():
     console.print(Panel.fit(
         "[bold]Trader App[/bold] — SMA crossover backtester\n"
-        "[dim]This app places no orders itself. Item 8 (Autotrade) toggles a separate\n"
-        "unattended background job that does — see that menu before enabling it.[/dim]",
+        "[dim]This app places no orders itself. Item 8 arms a separate unattended job\n"
+        "on FTMO that does — read that menu before arming it.[/dim]",
         border_style="cyan"))
 
     # Catch the wrong-interpreter case at startup rather than letting the user
@@ -1183,7 +1143,7 @@ def main():
             elif choice == "7":
                 kronos_menu(settings)
             elif choice == "8":
-                autotrade_menu(settings)
+                ftmo_autotrade_menu(settings)
             elif choice == "9":
                 watchlist_menu(settings)
                 data = load_all_data(settings)  # the traded universe may have changed
@@ -1193,7 +1153,7 @@ def main():
             elif choice == "11":
                 data = load_all_data(settings, force=True)
             elif choice == "12":
-                ibkr_menu(settings)
+                ftmo_menu(settings)
             elif choice == "13":
                 break
         except (EOFError, KeyboardInterrupt):

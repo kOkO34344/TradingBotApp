@@ -2,12 +2,12 @@
 """
 api/ftmo_api.py — the FTMO venue's read surface for the web backend.
 
-The counterpart to `ib_hub.py`. Same division of labour as the rest of `api/`:
+The venue's read surface. Same division of labour as the rest of `api/`:
 this is a THIN WRAPPER. It owns no risk logic, no sizing and no thresholds —
 `ftmo_rules` decides, `ftmo_sizing` sizes, `ftmo_session` transports, and this
 file turns their output into JSON. The browser path and the terminal path must
 not be able to disagree about a limit, which is the same reason the IBKR side
-keeps order placement in `ibkr_service`.
+keeps order placement in `ftmo_runner` and `ftmo_session`.
 
 BLOCKING, ON PURPOSE. `ftmo_session` runs Twisted on its own thread and every
 one of its methods blocks the caller. FastAPI handlers therefore have to reach
@@ -31,13 +31,14 @@ import logging
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 BASE_DIR = Path(__file__).resolve().parent.parent
 if str(BASE_DIR) not in sys.path:
     sys.path.insert(0, str(BASE_DIR))
 
+import ftmo_audit as fa          # noqa: E402
 import ftmo_rules as fr          # noqa: E402
 import ftmo_runner as runner     # noqa: E402
 import ftmo_service as svc       # noqa: E402
@@ -84,6 +85,24 @@ def get_session(autostart: bool = True) -> fs.FTMOSession | None:
             _state.update(status="error", error=str(e).splitlines()[0])
             _session = None
             return None
+
+
+def shutdown() -> None:
+    """Drop the shared session on process exit. Never raises.
+
+    Called from the app's lifespan teardown. A failure here must not turn a
+    clean shutdown into a traceback — the process is going away either way,
+    and the venue closes the socket when it does.
+    """
+    global _session
+    with _lock:
+        s, _session = _session, None
+        _state.update(status="idle", error=None, connected_at=None)
+    if s is not None:
+        try:
+            s.stop()
+        except Exception:                                     # noqa: BLE001
+            log.debug("FTMO session did not stop cleanly", exc_info=True)
 
 
 def _universe_symbols(specs: dict) -> list[str]:
@@ -579,6 +598,217 @@ def all_symbols() -> list[dict]:
     )
 
 
+# ----------------------------------------------------------------- timeline
+#
+# The night band's data. One SESSION — 16:30 Sofia through 11:30 the next
+# morning — reconstructed from the audit trail, slot by slot.
+#
+# THE SESSION AXIS IS THE TRADING WINDOW, NOT THE FTMO DAY, and they are two
+# genuinely different boundaries: the window is Europe/Sofia and the FTMO day
+# rolls at 00:00 Europe/Prague, an hour apart. One session therefore spans two
+# audit files. Reading `ftmo_audit/<today>.jsonl` and calling it "last night"
+# would silently drop everything before 01:00 — which is most of the session.
+#
+# WHAT DID NOT HAPPEN IS THE POINT. A slot the window was open for, with no
+# audit record in it, is a firing that never ran: the Mac was asleep. Those
+# are reported as `missed` rather than omitted, because 22 consecutive silent
+# failures is exactly the thing this band exists to make visible. Omitting
+# them would draw a tidy line through a night when nothing was watching.
+
+def _session_bounds(now: datetime) -> tuple[datetime, datetime]:
+    """The most recent session that has opened, as (start, end) in Sofia.
+
+    A session opens at 16:30 and closes at 11:30 the following morning, so
+    "which session am I in" has three answers and only one of them is today's:
+    before 11:30 the live session opened YESTERDAY, and in the 11:30-16:30 gap
+    the most recent one has already closed.
+    """
+    local = now.astimezone(runner.TRADING_TZ)
+    open_today = local.replace(hour=runner.WINDOW_OPEN.hour,
+                               minute=runner.WINDOW_OPEN.minute,
+                               second=0, microsecond=0)
+    start = open_today if local >= open_today else open_today - timedelta(days=1)
+    end = (start + timedelta(days=1)).replace(
+        hour=runner.WINDOW_CLOSE.hour, minute=runner.WINDOW_CLOSE.minute)
+    return start, end
+
+
+def _read_audit_day(day: date, directory: Path | None = None) -> list[dict]:
+    """One day's audit records. A missing file is silence, not an error.
+
+    A file that exists but holds a broken line is skipped line-by-line rather
+    than abandoned: a truncated final write (the process died mid-append) must
+    not cost us the whole night's history.
+    """
+    root = Path(directory) if directory is not None else fa.AUDIT_DIR
+    path = root / f"{day.isoformat()}.jsonl"
+    out: list[dict] = []
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for line in text.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            rec = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(rec, dict):
+            out.append(rec)
+    return out
+
+
+def _parse_ts(raw) -> datetime | None:
+    """An audit `ts` as an aware datetime, or None if it is unusable.
+
+    A naive timestamp is REFUSED rather than assumed to be local — the same
+    stance `ftmo_runner.within_trading_window` takes, and for the same reason:
+    host-local is not the venue's clock, and this file is read on whatever
+    machine happens to be running the dashboard.
+    """
+    if not isinstance(raw, str):
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw)
+    except ValueError:
+        return None
+    return parsed if parsed.tzinfo is not None else None
+
+
+def timeline(now: datetime | None = None,
+             directory: Path | None = None) -> dict:
+    """The most recent session, slot by slot, for the night band.
+
+    Pure apart from the audit files and the clock, so the selftest can drive
+    it against a fixture directory with no venue and no credentials.
+    """
+    moment = now or datetime.now(runner.TRADING_TZ)
+    start, end = _session_bounds(moment)
+
+    # Both calendar dates the session touches. `ftmo_day` rolls at Prague
+    # midnight, so a session that opens 16:30 Sofia can land records under
+    # either date — and the day before, when the boundary and the window
+    # disagree at the edges.
+    records: list[tuple[datetime, dict]] = []
+    seen: set[int] = set()
+    for offset in (-1, 0, 1):
+        day = (start + timedelta(days=offset)).date()
+        for rec in _read_audit_day(day, directory):
+            when = _parse_ts(rec.get("ts"))
+            if when is None or not (start <= when <= end):
+                continue
+            key = id(rec)
+            if key in seen:
+                continue
+            seen.add(key)
+            records.append((when, rec))
+    records.sort(key=lambda pair: pair[0])
+
+    evaluations = [(w, r) for w, r in records
+                   if r.get("kind") == "RUNNER_EVALUATION"]
+    plans = [(w, r) for w, r in records if r.get("kind") == "RUNNER_PLAN"]
+
+    # Hourly at :30, the same cadence launchd wakes the runner on. The window
+    # test is the runner's own function rather than a copy of the rule — a
+    # second implementation of "except Sunday, wrapping midnight" is how the
+    # band and the runner would come to disagree about the same night.
+    slots = []
+    slot = start
+    while slot <= end:
+        allowed, why = runner.within_trading_window(slot)
+        fired = [(w, r) for w, r in evaluations if slot <= w < slot + timedelta(hours=1)]
+        planned = [(w, r) for w, r in plans if slot <= w < slot + timedelta(hours=1)]
+        # Four states, and `forced` is not a decoration. A record inside a
+        # CLOSED slot did not come from the schedule — it is a --force run, a
+        # --reconcile, or a plan previewed from the dashboard. Calling that
+        # "ran" would put a firing on the band at an hour the runner is not
+        # allowed to trade, and then the band would be evidence for something
+        # that never happened.
+        if fired:
+            state = "ran" if allowed else "forced"
+        elif allowed:
+            state = "missed"
+        else:
+            state = "closed"
+        slots.append({
+            "at": slot.isoformat(),
+            "label": slot.strftime("%H:%M"),
+            "state": state,
+            "reason": why,
+            # Deduped, order preserved. Two plans in one slot is real and is
+            # reported as `firings`; repeating the same four symbols twice is
+            # not information, it just reads as a bigger trade.
+            "entries": _dedupe(s for _, p in planned
+                               for s in (p.get("entries") or [])),
+            "exits": _dedupe(s for _, p in planned
+                             for s in (p.get("exits") or [])),
+            "firings": len(fired),
+        })
+        slot += timedelta(hours=1)
+
+    trace = [{
+        "at": w.isoformat(),
+        "equity": _f(r.get("equity")),
+        "dailyUsed": _f(r.get("daily_loss_used")),
+        "drawdownUsed": _f(r.get("drawdown_used")),
+        "openPositions": r.get("open_positions"),
+        "breached": bool(r.get("breached")),
+        "mustFlatten": bool(r.get("must_flatten")),
+    } for w, r in evaluations]
+
+    # Thresholds come from the LAST evaluation of the session, not from a
+    # constant here. `ftmo_rules` owns them, the daily floor moves with the
+    # balance, and a dashboard that draws its own idea of "hard" is how the
+    # band and the engine end up disagreeing about whether the account is safe.
+    last = evaluations[-1][1] if evaluations else {}
+    limits = {
+        "dailySoft": _f(last.get("daily_soft")),
+        "dailyFlatten": _f(last.get("daily_flatten")),
+        "dailyHard": _f(last.get("daily_hard")),
+        "drawdownSoft": _f(last.get("drawdown_soft")),
+        "drawdownFlatten": _f(last.get("drawdown_flatten")),
+        "drawdownHard": _f(last.get("drawdown_hard")),
+        "floorEquity": _f(last.get("drawdown_floor_equity")),
+    }
+
+    counts = {state: sum(1 for s in slots if s["state"] == state)
+              for state in ("ran", "forced", "missed", "closed")}
+    return {
+        "start": start.isoformat(),
+        "end": end.isoformat(),
+        "timezone": str(runner.TRADING_TZ),
+        "now": moment.astimezone(runner.TRADING_TZ).isoformat(),
+        "slots": slots,
+        "trace": trace,
+        "limits": limits,
+        "counts": counts,
+    }
+
+
+def _dedupe(items) -> list[str]:
+    """Unique, order preserved."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        text = str(item)
+        if text not in seen:
+            seen.add(text)
+            out.append(text)
+    return out
+
+
+def _f(value) -> float | None:
+    """A number, or None. Never 0 for "missing" — rule 1 of this UI."""
+    if isinstance(value, bool) or value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
 def selftest() -> int:
     """Offline. No venue, no credentials, no session.
 
@@ -626,6 +856,120 @@ def selftest() -> int:
     print("a symbol is not given a class it has not earned:")
     check("a symbol outside the traded universe reports no class",
           asset_class_of("NOT_A_REAL_SYMBOL_XYZ") == "")
+
+    # ------------------------------------------------------------- timeline
+    import tempfile
+
+    tz = runner.TRADING_TZ
+
+    print("a session is the trading window, not the calendar day:")
+    # Thursday 2026-08-06 at 02:00 — after midnight, so the live session
+    # opened the PREVIOUS evening. Getting this wrong is the whole bug the
+    # band exists to avoid: it would read an empty file and draw a quiet night.
+    s, e = _session_bounds(datetime(2026, 8, 6, 2, 0, tzinfo=tz))
+    check("before 11:30, the session opened yesterday at 16:30",
+          (s.date(), s.hour, s.minute) == (date(2026, 8, 5), 16, 30))
+    check("and closes this morning at 11:30",
+          (e.date(), e.hour, e.minute) == (date(2026, 8, 6), 11, 30))
+    s2, _ = _session_bounds(datetime(2026, 8, 6, 20, 0, tzinfo=tz))
+    check("after 16:30, the session is tonight's",
+          s2.date() == date(2026, 8, 6))
+    s3, e3 = _session_bounds(datetime(2026, 8, 6, 13, 0, tzinfo=tz))
+    check("inside the 11:30-16:30 gap, the last session has already closed",
+          s3.date() == date(2026, 8, 5) and e3 < datetime(2026, 8, 6, 13,
+                                                          tzinfo=tz))
+
+    print("a naive audit timestamp is refused, never assumed to be local:")
+    check("naive parses to None", _parse_ts("2026-08-06T01:30:00") is None)
+    check("aware parses", _parse_ts("2026-08-06T01:30:00+02:00") is not None)
+    check("nonsense parses to None", _parse_ts("not a time") is None)
+
+    print("missing is None, never zero:")
+    check("None stays None", _f(None) is None)
+    check("a bool is not a number", _f(True) is None)
+    check("a string number converts", _f("12.5") == 12.5)
+
+    with tempfile.TemporaryDirectory() as tmp:
+        root = Path(tmp)
+        # One evaluation in the 18:30 slot of the Wed 2026-08-05 session.
+        rec = {"kind": "RUNNER_EVALUATION", "ts": "2026-08-05T18:31:00+03:00",
+               "equity": 25_001.17, "daily_loss_used": 0.73,
+               "drawdown_used": 0.0, "daily_soft": 1187.5,
+               "daily_flatten": 1218.75, "daily_hard": 1250.0,
+               "open_positions": 1}
+        plan = {"kind": "RUNNER_PLAN", "ts": "2026-08-05T18:31:00+03:00",
+                "entries": ["SOLUSD"], "exits": ["ETHUSD"]}
+        (root / "2026-08-05.jsonl").write_text(
+            json.dumps(rec) + "\n" + json.dumps(plan) + "\n"
+            + "{ this line is truncated garbage\n", encoding="utf-8")
+
+        t = timeline(now=datetime(2026, 8, 6, 11, 0, tzinfo=tz), directory=root)
+        states = {s["label"]: s["state"] for s in t["slots"]}
+        check("the session runs 16:30 to 11:30 — 20 hourly slots",
+              len(t["slots"]) == 20)
+        check("a slot with an evaluation in it reports `ran`",
+              states.get("18:30") == "ran")
+        check("an open slot with NO record reports `missed`, not silence — "
+              "that is the sleeping Mac, and it is the point",
+              states.get("19:30") == "missed")
+        check("a truncated final line does not cost the rest of the night",
+              len(t["trace"]) == 1)
+        check("the trace carries equity, not a placeholder",
+              t["trace"][0]["equity"] == 25_001.17)
+        check("thresholds come from the audit record, not from a constant",
+              t["limits"]["dailyHard"] == 1250.0)
+        check("a plan's entries reach the slot that placed them",
+              next(s["entries"] for s in t["slots"]
+                   if s["label"] == "18:30") == ["SOLUSD"])
+        check("counts add up to the slot count",
+              sum(t["counts"].values()) == len(t["slots"]))
+
+        # Saturday evening into Sunday morning: the evening leg trades, the
+        # morning leg does not. Encoded here because "except Sunday" applies
+        # to the calendar day, so the session is half open and half closed —
+        # the exact case a naive range check gets wrong.
+        sat = timeline(now=datetime(2026, 8, 9, 11, 0, tzinfo=tz), directory=root)
+        sat_states = {s["label"]: s["state"] for s in sat["slots"]}
+        check("Saturday's evening leg is open",
+              sat_states.get("18:30") in {"ran", "missed"})
+        check("Sunday morning is closed, in the same session",
+              sat_states.get("09:30") == "closed")
+
+        # A --force run, a --reconcile or a dashboard preview writes audit
+        # records at hours the schedule may not trade. Sunday 2026-08-09.
+        (root / "2026-08-09.jsonl").write_text(json.dumps(
+            {"kind": "RUNNER_EVALUATION", "ts": "2026-08-09T02:53:00+03:00",
+             "equity": 25_001.0}) + "\n", encoding="utf-8")
+        forced = timeline(now=datetime(2026, 8, 9, 11, 0, tzinfo=tz),
+                          directory=root)
+        f_states = {s["label"]: s["state"] for s in forced["slots"]}
+        check("a record inside a CLOSED slot reports `forced`, never `ran` — "
+              "it did not come from the schedule",
+              f_states.get("02:30") == "forced")
+
+        print("two plans in one slot are counted, not concatenated:")
+        (root / "2026-08-11.jsonl").write_text("\n".join(json.dumps(r) for r in [
+            {"kind": "RUNNER_EVALUATION", "ts": "2026-08-10T18:31:00+03:00"},
+            {"kind": "RUNNER_EVALUATION", "ts": "2026-08-10T18:41:00+03:00"},
+            {"kind": "RUNNER_PLAN", "ts": "2026-08-10T18:31:00+03:00",
+             "entries": ["SOLUSD", "LTCUSD"]},
+            {"kind": "RUNNER_PLAN", "ts": "2026-08-10T18:41:00+03:00",
+             "entries": ["SOLUSD", "LTCUSD"]},
+        ]) + "\n", encoding="utf-8")
+        dup = timeline(now=datetime(2026, 8, 11, 11, 0, tzinfo=tz),
+                       directory=root)
+        slot1830 = next(s for s in dup["slots"] if s["label"] == "18:30")
+        check("the same symbol twice is listed once",
+              slot1830["entries"] == ["SOLUSD", "LTCUSD"])
+        check("but the second firing is still visible as a count",
+              slot1830["firings"] == 2)
+
+        empty = timeline(now=datetime(2030, 1, 5, 11, 0, tzinfo=tz),
+                         directory=root)
+        check("a night with no audit file is an empty trace, not an error",
+              empty["trace"] == [])
+        check("and its thresholds are None rather than zero",
+              empty["limits"]["dailyHard"] is None)
 
     print()
     if failures:

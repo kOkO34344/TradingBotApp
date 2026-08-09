@@ -20,7 +20,7 @@ API_PORT=8000
 WEB_PORT=3000
 
 # Same reason trader_app.sh pins the venv: `python3` on this machine resolves
-# to conda base, which has pandas and ib_async but not the rest, so the app
+# to conda base, which has pandas and yfinance but not the rest, so the app
 # starts and then fails somewhere confusing.
 if [ ! -x "$VENV_PY" ]; then
   echo "ERROR: $VENV_PY not found. Create the venv first:"

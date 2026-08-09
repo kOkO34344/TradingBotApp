@@ -25,7 +25,7 @@ Usage (from KronosAI/):
     python3 run_kronos_backtest_notify.py --sample-count 5 --seed 7
     (any args are passed straight through to kronos_backtest.py)
 
-Or via the shell wrapper (same pattern as reflect_on_trades.sh):
+Or via the shell wrapper (same pattern as ftmo_runner.sh):
     ./run_kronos_backtest_notify.sh
     ./run_kronos_backtest_notify.sh --sample-count 5
 

@@ -29,23 +29,16 @@
   "momentum_top_n": 3,
   "rotation_margin_pct": 1.0,
   "momentum_lookback_m": 12,
-  "ibkr_port": 4002,
-  "ibkr_client_id": 9,
-  "autotrade": {
-    "enabled": false,
-    "signal": "kronos",
-    "allow_momentum": false
-  },
   "signal": "kronos",
   "ftmo": {
     "autotrade": {
-      "enabled": false,
-      "risk_pct": 1.0,
+      "enabled": true,
+      "risk_pct": 3.0,
       "rotation_margin_pct": 1.0,
       "top_n": 4,
       "sample_count": 10,
       "product": "2step",
-      "buffer_pct": 0.2,
+      "buffer_pct": 0.05,
       "initial_capital": 25000.0
     }
   }

@@ -1,11 +1,32 @@
 ---
 tags: [infrastructure, broker, execution]
-status: "retired in place 2026-08-02 — monitoring only, 3 positions open"
+status: "HISTORICAL — venue and code REMOVED 2026-08-09"
 connection_verified: 2026-07-21
-last_updated: 2026-08-02
+last_updated: 2026-08-09
 ---
 
 # IBKR Integration: Connection & Execution
+
+> [!danger] HISTORICAL — the IBKR code was REMOVED on 2026-08-09
+> Everything below describes a venue that no longer exists in this project.
+> `ibkr_service.py`, `paper_trader.py`, `reflect_on_trades.py`,
+> `autotrade_runner.py`, six `api/` modules, three web screens and two launchd
+> jobs were all deleted at the owner's instruction. Nothing in the codebase
+> dials IB Gateway.
+>
+> **Three positions were presumed OPEN at removal and could not be verified** —
+> JNJ(19), DIS(52), AMZN(21), last confirmed 2026-08-02. Gateway had been
+> refusing connections for about a week, so the monitor had been failing every
+> 30 minutes and watching nothing. Their stops live at the broker; what was
+> given up is the record. **They were not closed first.**
+>
+> This note is kept because the incidents it documents produced most of the
+> project's non-negotiable rules — the DAY-stop expiry, the GOOGL close nobody
+> recorded, the half-executed rebalance, the notional cap that trapped
+> winners. Those lessons are live hazards on FTMO too. The 46 `venue=ibkr`
+> rows remain in `trade_journal.csv` and are still served by the Ledger
+> screen. See [[FTMO Venue]].
+
 
 > [!important] RETIRED IN PLACE — 2026-08-02
 > FTMO is the trading venue now (see [[FTMO Venue]]). IBKR places **no new

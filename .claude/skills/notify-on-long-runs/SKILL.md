@@ -28,17 +28,14 @@ Other notification points already wired in (do NOT wrap these in
 `run_notify.sh` too — they'd double-notify or spam a no-op poller):
 - `run_research_agent_watchlist.sh` — loops the whole watchlist, sends
   ONE consolidated direction+confidence digest instead of one per ticker.
-- `reflect_on_trades.py` — texts on every newly-closed position it finds
-  (win/loss + reflection status). Runs every 30 min via launchd and is a
-  no-op most runs, so this notification lives INSIDE the script,
-  conditional on an actual close — never wrap the whole script.
-- `ibkr_service.py`'s `journal()` — texts whenever RiskGuard actually
-  BLOCKS an order (real journal writes only, not the `--selftest` path).
-- `paper_trader.py` — one consolidated text after a real (approved)
-  rebalance executes, listing what was bought/sold.
-- `autotrade_runner.py` — same convention as `paper_trader.py` above (one
-  consolidated text per executed rebalance, tagged `-hourly`), plus an
-  alert on any error. Silent on no-op cycles — see the `autotrade` skill.
+- `ftmo_runner.py` — one consolidated text per firing that actually traded,
+  listing entries and exits, plus an alert on any error or limit breach.
+  Silent on no-op cycles. It wakes ~20x a day and is a no-op most of them,
+  so the notification lives INSIDE the script, conditional on a real event —
+  never wrap the whole script.
+- `ftmo_closes.py` (via the runner's `--reconcile`) — texts on every
+  position it finds closed without the runner, with the venue's own closing
+  price and P&L.
 - `daily_digest.py` — two modes, one script:
   - `--mode morning` (default) via `com.tradingbotapp.dailydigest.plist`,
     07:30 local — "plan the day": due-today/freshness flags + Work Queue
@@ -53,5 +50,5 @@ Other notification points already wired in (do NOT wrap these in
   quote them directly. Manual run: `./daily_digest.sh [morning|evening]`.
 
 If you add a new recurring/polling script, give it its own conditional
-`send_telegram()` call at the actual event, the same way
-`reflect_on_trades.py` does — don't put a blanket wrapper around a poller.
+`send_telegram()` call at the actual event, the same way `ftmo_runner.py`
+does — don't put a blanket wrapper around a poller.

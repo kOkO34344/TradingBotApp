@@ -263,11 +263,23 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--classes", default=",".join(UNIVERSES),
                     help=f"comma-separated: {','.join(UNIVERSES)}")
+    ap.add_argument("--pred-len", type=int, default=PRED_LEN,
+                    help="daily bars ahead. Default 20 — the horizon EVERY "
+                         "existing screen in this project was measured at. "
+                         "Pass 5 to screen the shortened horizon; the two are "
+                         "not comparable to each other's published numbers.")
     ap.add_argument("--sample-count", type=int, default=DEFAULT_SAMPLE_COUNT)
     ap.add_argument("--n-checkpoints", type=int, default=24)
     ap.add_argument("--seed", type=int, default=42)
     ap.add_argument("--refresh", action="store_true", help="refetch price data")
     args = ap.parse_args()
+
+    # Rebind the module global rather than threading pred_len through six
+    # functions. The default is unchanged, so an argument-free run still
+    # reproduces the 2026-08-03 numbers exactly; only an explicit --pred-len
+    # moves it, and the header below prints whichever was used so an output
+    # can never be mistaken for the other horizon's.
+    globals()["PRED_LEN"] = args.pred_len
 
     torch.manual_seed(args.seed)
     np.random.seed(args.seed)

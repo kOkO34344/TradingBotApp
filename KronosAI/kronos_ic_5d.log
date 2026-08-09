@@ -1,0 +1,188 @@
+Loading Kronos predictor (first run downloads from Hugging Face)...
+Predictor ready on device: mps
+seed=42  sample_count=10  LOOKBACK=400  PRED_LEN=5
+
+==============================================================
+ASSET CLASS: indices  (10 instruments)
+==============================================================
+  24 checkpoints: 2024-07-01 -> 2026-05-01
+    [1/24] 2024-07-01
+    [2/24] 2024-07-30
+    [3/24] 2024-08-27
+    [4/24] 2024-09-25
+    [5/24] 2024-10-23
+    [6/24] 2024-11-20
+    [7/24] 2024-12-19
+    [8/24] 2025-01-22
+    [9/24] 2025-02-20
+    [10/24] 2025-03-20
+    [11/24] 2025-04-17
+    [12/24] 2025-05-16
+    [13/24] 2025-06-16
+    [14/24] 2025-07-16
+    [15/24] 2025-08-13
+    [16/24] 2025-09-11
+    [17/24] 2025-10-09
+    [18/24] 2025-11-06
+    [19/24] 2025-12-05
+    [20/24] 2026-01-06
+    [21/24] 2026-02-04
+    [22/24] 2026-03-05
+    [23/24] 2026-04-02
+    [24/24] 2026-05-01
+
+--- indices: Kronos ---
+  pooled pairs        240  (across 24 dates — NOT independent)
+  pooled Spearman IC  +0.177
+  directional hit     49.6%   (chance 50%)
+  mean date-wise IC   +0.052   t=+0.61 over 24 dates
+  -> no skill detected
+
+--- indices: momentum baseline (matched horizon) ---
+  pooled pairs        240  (across 24 dates — NOT independent)
+  pooled Spearman IC  -0.007
+  directional hit     60.8%   (chance 50%)
+  mean date-wise IC   +0.069   t=+0.64 over 24 dates
+  -> no skill detected
+
+==============================================================
+ASSET CLASS: fx  (8 instruments)
+==============================================================
+  24 checkpoints: 2024-07-01 -> 2026-06-02
+    [1/24] 2024-07-01
+    [2/24] 2024-07-31
+    [3/24] 2024-08-29
+    [4/24] 2024-09-30
+    [5/24] 2024-10-29
+    [6/24] 2024-11-27
+    [7/24] 2024-12-30
+    [8/24] 2025-01-30
+    [9/24] 2025-03-03
+    [10/24] 2025-04-01
+    [11/24] 2025-05-01
+    [12/24] 2025-06-02
+    [13/24] 2025-07-02
+    [14/24] 2025-07-31
+    [15/24] 2025-08-29
+    [16/24] 2025-09-30
+    [17/24] 2025-10-29
+    [18/24] 2025-11-28
+    [19/24] 2025-12-30
+    [20/24] 2026-01-30
+    [21/24] 2026-03-03
+    [22/24] 2026-04-01
+    [23/24] 2026-05-01
+    [24/24] 2026-06-02
+
+--- fx: Kronos ---
+  pooled pairs        192  (across 24 dates — NOT independent)
+  pooled Spearman IC  +0.169
+  directional hit     54.7%   (chance 50%)
+  mean date-wise IC   -0.064   t=-0.69 over 24 dates
+  -> no skill detected
+
+--- fx: momentum baseline (matched horizon) ---
+  pooled pairs        192  (across 24 dates — NOT independent)
+  pooled Spearman IC  -0.252
+  directional hit     43.8%   (chance 50%)
+  mean date-wise IC   -0.051   t=-0.72 over 24 dates
+  -> no skill detected
+
+==============================================================
+ASSET CLASS: commodities  (10 instruments)
+==============================================================
+  24 checkpoints: 2024-07-01 -> 2026-06-02
+    [1/24] 2024-07-01
+    [2/24] 2024-07-31
+    [3/24] 2024-08-29
+    [4/24] 2024-09-30
+    [5/24] 2024-10-29
+    [6/24] 2024-11-27
+    [7/24] 2024-12-30
+    [8/24] 2025-01-30
+    [9/24] 2025-03-03
+    [10/24] 2025-04-01
+    [11/24] 2025-05-01
+    [12/24] 2025-06-02
+    [13/24] 2025-07-02
+    [14/24] 2025-07-31
+    [15/24] 2025-08-29
+    [16/24] 2025-09-30
+    [17/24] 2025-10-29
+    [18/24] 2025-11-28
+    [19/24] 2025-12-30
+    [20/24] 2026-01-30
+    [21/24] 2026-03-03
+    [22/24] 2026-04-01
+    [23/24] 2026-05-01
+    [24/24] 2026-06-02
+
+--- commodities: Kronos ---
+  pooled pairs        240  (across 24 dates — NOT independent)
+  pooled Spearman IC  +0.007
+  directional hit     50.4%   (chance 50%)
+  mean date-wise IC   -0.017   t=-0.21 over 24 dates
+  -> no skill detected
+
+--- commodities: momentum baseline (matched horizon) ---
+  pooled pairs        240  (across 24 dates — NOT independent)
+  pooled Spearman IC  +0.023
+  directional hit     49.2%   (chance 50%)
+  mean date-wise IC   +0.090   t=+0.99 over 24 dates
+  -> no skill detected
+
+==============================================================
+ASSET CLASS: crypto  (10 instruments)
+==============================================================
+  24 checkpoints: 2024-07-01 -> 2026-06-14
+    [1/24] 2024-07-01
+    [2/24] 2024-08-01
+    [3/24] 2024-09-01
+    [4/24] 2024-10-02
+    [5/24] 2024-11-02
+    [6/24] 2024-12-03
+    [7/24] 2025-01-03
+    [8/24] 2025-02-03
+    [9/24] 2025-03-06
+    [10/24] 2025-04-06
+    [11/24] 2025-05-07
+    [12/24] 2025-06-07
+    [13/24] 2025-07-08
+    [14/24] 2025-08-08
+    [15/24] 2025-09-08
+    [16/24] 2025-10-09
+    [17/24] 2025-11-09
+    [18/24] 2025-12-10
+    [19/24] 2026-01-10
+    [20/24] 2026-02-10
+    [21/24] 2026-03-13
+    [22/24] 2026-04-13
+    [23/24] 2026-05-14
+    [24/24] 2026-06-14
+
+--- crypto: Kronos ---
+  pooled pairs        240  (across 24 dates — NOT independent)
+  pooled Spearman IC  -0.006
+  directional hit     50.8%   (chance 50%)
+  mean date-wise IC   +0.103   t=+1.45 over 24 dates
+  -> no skill detected
+
+--- crypto: momentum baseline (matched horizon) ---
+  pooled pairs        240  (across 24 dates — NOT independent)
+  pooled Spearman IC  -0.117
+  directional hit     42.1%   (chance 50%)
+  mean date-wise IC   +0.045   t=+0.62 over 24 dates
+  -> no skill detected
+
+==============================================================
+SUMMARY — rule 9 gate
+==============================================================
+class           Kronos IC      t     hit   momo IC  verdict
+indices            +0.052  +0.61   49.6%    +0.069  no skill detected
+fx                 -0.064  -0.69   54.7%    -0.051  no skill detected
+commodities        -0.017  -0.21   50.4%    +0.090  no skill detected
+crypto             +0.103  +1.45   50.8%    +0.045  no skill detected
+
+Rule 9: a class may be enabled only if it PASSED its own screen.
+'no skill detected' is a fail, not a maybe. Do not enable on a
+configured-but-unscreened class, and do not enable on UNRELIABLE.

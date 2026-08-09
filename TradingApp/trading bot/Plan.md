@@ -6,6 +6,14 @@ last_synced: 2026-07-21
 
 # Building your own investing/trading agent — a real plan
 
+> [!note] Superseded in its specifics (2026-08-09)
+> The five-phase shape still holds. What changed: Phase 3 is no longer IBKR
+> paper trading with a human approval loop — that venue was removed — it is
+> unattended trading on FTMO's simulated Challenge capital. Phase 4 (real
+> capital) remains locked and is not reachable from any code path that exists.
+> See [[00 MOC - Trading Bot Vault]] for current status.
+
+
 ## Status against this plan (as of 2026-07-21)
 
 **A note on phase numbering before this list:** the project's own `CLAUDE.md` (its live working memory) has started using "Phase 2" to mean the IBKR/broker-infrastructure hardening work, and treats the SMA/momentum backtesting as evidence already banked rather than a numbered phase of its own. This note keeps this **original** document's numbering (Phase 2 = one-strategy backtesting) for internal consistency, since that's what this document is. Just don't be surprised if `CLAUDE.md` or a future session uses "Phase 2" to mean something else — check which document is being referenced.

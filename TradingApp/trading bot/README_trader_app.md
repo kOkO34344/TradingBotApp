@@ -35,9 +35,9 @@ First launch downloads ~16 years of daily data for 11 tickers (takes ~30 seconds
 | 4 | Deep dive one ticker: full stats, every individual trade, equity curve chart drawn in the terminal |
 | 5 | **Chart view** — candlestick charts (daily 120 bars or 15-min 5 days) with selectable indicator sets: trend (SMA overlays + MACD and RSI panels), volatility (Bollinger bands), volume (volume bars + session VWAP on 15m), structure (computed swing support/resistance lines). Ends with a numeric readout — the exact numbers the research agent sees, from the same `indicators.py` module |
 | 6 | **Momentum rotation backtest** — portfolio-level: each month hold the top-N tickers by trailing 12-month return. The only strategy family that beat SPY in testing (~18.5% CAGR vs 16% for SPY, 2019→now, with a third less drawdown). Shows holdings by month + equity curve vs SPY |
-| 7 | Settings: tickers, SMA windows, per-trade cost, starting cash, date ranges, **risk engine** (for SMA: 200-day trend filter + 2×ATR trailing stop + fixed % risk per trade; for momentum: dual-momentum cash filter — go to cash instead of holding negative-momentum names), momentum top-N/lookback, IBKR port/client id — saved to `trader_settings.json` |
+| 7 | Settings: tickers, SMA windows, per-trade cost, starting cash, date ranges, **risk engine** (for SMA: 200-day trend filter + 2×ATR trailing stop + fixed % risk per trade; for momentum: dual-momentum cash filter — go to cash instead of holding negative-momentum names), momentum top-N/lookback — saved to `trader_settings.json` |
 | 8 | Force re-download of price data |
-| 9 | **IBKR paper account** — connects through `ibkr_service.py` to TWS/IB Gateway (must be running with API enabled): account summary, open positions, live 15-min bars for any stock/forex/future/crypto symbol with a session chart. **Read-only by design** — the app cannot place orders; that stays locked until a strategy + approval loop exist. The settings menu refuses live ports (7496/4001) outright. |
+| 9 | **FTMO venue** — reads the live account through `api/ftmo_api.py`: balance, equity including floating P&L, the rule engine's verdict against all three limits, and open positions with their stops. **Read-only by design** — this app places nothing. `ftmo_runner.py` is the only order path, and menu 8 arms or disarms it. |
 | 10 | Quit |
 
 ## Shared indicators module (`indicators.py`)
@@ -52,22 +52,28 @@ One source of truth for all technical math, used by both the chart view (what yo
 - Tested end-to-end: all 8 menu paths, invalid inputs (fast SMA ≥ slow, unknown tickers, short date windows) handled without crashing.
 - Momentum caveat to keep in mind: the ~18.5% CAGR is on a hand-picked 10-mega-cap watchlist, which flatters the result (these are companies we already know survived and thrived). A fair version would use a broad universe (e.g., S&P 500 constituents as of each date). Treat the number as "momentum is worth pursuing," not "momentum earns 18.5%."
 
-## IBKR connection layer (`ibkr_service.py`)
+## Trading venue (`ftmo_*.py`)
 
-Foundation for live/paper trading through Interactive Brokers — one API for stocks, forex, futures (incl. commodities like Micro Gold `MGC`), and crypto.
+IBKR was the venue until 2026-08-02 and its code was removed on 2026-08-09.
+FTMO, via the cTrader Open API, is the only one now — ten modules at the repo
+root carrying **579 offline checks** between them, none of which need
+credentials or a connection.
 
-- Requires TWS or IB Gateway running locally with the API enabled (`Edit → Global Configuration → API → Settings`). Paper ports: 7497 (TWS) / 4002 (Gateway).
-- `python3 ibkr_service.py` smoke-tests the connection: pulls 15-min bars for AAPL, EURUSD, and BTC from your paper account.
-- Safety: `connect()` refuses live ports (7496/4001) unless you explicitly pass `allow_live=True`. Keep it that way until months of paper evidence exist.
-- What it contains: contract builders (`stock`, `forex_pair`, `future`, `crypto` — commodities are just futures, e.g. `future("MGC", "202612", "COMEX")` for Micro Gold), 15-min bar pull (`get_15min_bars`) and live streaming (`stream_15min_bars`), and order placement (`place_bracket_order` preferred, `place_market_order` restricted).
-- **Phase 2 hardening — every order path now goes through three layers, in code:**
-  1. *Paper verification*: `verify_paper_account()` checks the account id looks like a paper account (starts with `D`) and refuses otherwise unless `allow_live=True`.
-  2. *RiskGuard*: limits in `risk_limits.json` (auto-created with defaults: $5,000 max order notional, 5 max open positions, $300 daily-loss circuit breaker, stop required). Blocked orders never reach the broker and are journaled with the reason. Changing limits means editing the JSON — an explicit, visible act.
-  3. *Trade journal*: every submit, block, and fill appends to `trade_journal.csv`. If it isn't in the journal, it didn't happen.
-- `place_bracket_order` is the default entry mechanism: limit entry + stop (+ optional target) placed atomically, so no position can exist without its stop. Bare `place_market_order` is refused unless `allow_no_stop=True` is passed deliberately.
-- `python3 ibkr_service.py --selftest` — 18 offline checks (contract builders, data-type routing, all RiskGuard block/allow paths, journal roundtrip, bracket validation), no TWS needed. All passing as delivered. The connected smoke test (`python3 ibkr_service.py`) still requires TWS/Gateway on your machine and places no orders. It has **no strategy logic** — nothing trades until a signal engine is wired in and you approve the design.
-- Asset-class data quirk handled in code: forex history uses MIDPOINT, crypto uses AGGTRADES, everything else TRADES.
-- Futures expire — contracts like `MGC 202612` must be rolled to the next month periodically. Not yet automated; flagged for the strategy loop.
+- `ftmo_rules.py` decides (limits, three thresholds, both products),
+  `ftmo_sizing.py` sizes, `ftmo_session.py` transports, `ftmo_audit.py` records
+  why, `ftmo_closes.py` detects positions that closed on their own.
+- **Every limit is measured on equity INCLUDING floating P&L**, so the account
+  can fail with no order placed. That is why this venue has a continuous
+  monitor rather than a pre-trade gate.
+- **Every entry carries a stop on the same request as the entry**, applied from
+  the actual fill so slippage cannot widen real risk, and since 2026-08-08 a
+  take-profit too. Stops are verified by reading the venue back — never
+  inferred from an order having been sent.
+- `python3 ftmo_service.py --probe` checks connectivity read-only.
+  `python3 ftmo_runner.py --force --dry-run` runs the whole pipeline and places
+  nothing.
+
+Read the `ftmo` skill before touching any of it.
 
 ## Research agent (`research_agent.py`) — Phase 1, no execution
 

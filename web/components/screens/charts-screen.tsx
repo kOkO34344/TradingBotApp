@@ -41,7 +41,7 @@ import {
   type IndicatorCatalogEntry,
 } from "@/lib/api";
 import { useFtmoStream } from "@/lib/use-ftmo";
-import { useFetch } from "@/lib/use-live";
+import { useFetch } from "@/lib/use-fetch";
 import { DASH, fmtPct, fmtPrice, fmtTime, pnlClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -120,7 +120,7 @@ function readPrefs(): ChartPrefs {
   }
 }
 
-export default function ChartsPage() {
+export function ChartsScreen() {
   const ftmo = useFtmoStream();
   const [symbolInput, setSymbolInput] = useState(DEFAULT_PREFS.symbol);
   const [symbol, setSymbol] = useState(DEFAULT_PREFS.symbol);
@@ -479,7 +479,7 @@ export default function ChartsPage() {
  * existed because IBKR reports a stop as a SEPARATE order that can be missing,
  * DAY-scoped, or unknowable when `reqAllOpenOrders` wedges. An FTMO stop is a
  * field on the position itself, returned in the same frame, so "unknown" is
- * not a state this venue can be in — and rendering an amber UNKNOWN that can
+ * not a state this venue can be in — and rendering an UNKNOWN state that can
  * never occur would be inventing doubt rather than reporting it.
  */
 

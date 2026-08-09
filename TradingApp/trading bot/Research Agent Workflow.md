@@ -6,6 +6,14 @@ status: "Live, ungraded"
 
 # Research Agent Workflow
 
+> [!note] Unaffected by the venue change (2026-08-09)
+> This workflow is venue-independent — it reads yfinance and writes to
+> `research_log/`. The only stale detail: post-trade reflections were written
+> by `reflect_on_trades.py`, which was removed with IBKR. The FTMO counterpart
+> is `ftmo_closes.py`, and it is better positioned — cTrader returns the actual
+> closing deal, so a detected close carries the venue's own price and P&L.
+
+
 ## What It Does
 
 `research_agent.py` is a standalone Python script that:

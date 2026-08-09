@@ -1,10 +1,22 @@
 ---
 tags: [roadmap, next-steps, project-management]
-status: "Live — prioritized action queue"
-last_updated: 2026-08-02
+status: "Live — prioritized action queue. Rewritten 2026-08-09 after the IBKR removal."
+last_updated: 2026-08-09
 ---
 
 # Next Build Steps — Prioritized Action Queue
+
+> [!important] Re-prioritized 2026-08-09
+> Anything below about IBKR, `paper_trader.py`, `reflect_on_trades.py` or
+> RiskGuard is obsolete — that venue was removed. The queue that matters now:
+>
+> 1. **Confirm the runner actually fires.** 12 missed firings last session.
+>    The `caffeinate -i` wrapper is unverified under the real condition.
+> 2. **Grow the graded-call book.** Still 14 notes, all dated 2026-07-25.
+> 3. **Wire a launchd job for `ftmo_runner.py --reconcile`**, so closes are
+>    detected between firings rather than only when the runner happens to run.
+> 4. Re-run the broad-universe momentum test that has never been run.
+
 
 > [!important] Rewritten 2026-08-06 — the machinery is FINISHED and ARMED
 > Everything mechanical on the list below is now done. The FTMO runner is

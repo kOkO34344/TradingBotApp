@@ -8,7 +8,7 @@ quotes into `ftmo_monitor`, and can place an order in the middle of all that.
 This module is that connection.
 
 THREADING, AND WHY NOT THE ASYNCIO REACTOR. The cTrader SDK is Twisted; the
-FastAPI backend and `ib_async` are asyncio. The obvious marriage is Twisted's
+FastAPI backend is asyncio. The obvious marriage is Twisted's
 asyncio reactor, and `ftmo_service.install_asyncio_reactor()` exists for it.
 This module deliberately does NOT use it: it runs the DEFAULT reactor on its
 own daemon thread with `installSignalHandlers=False`, and callers hand work in
@@ -18,7 +18,7 @@ That choice buys isolation. A shared asyncio reactor means a slow protobuf
 round trip and a slow HTTP request are competing for one event loop, and a
 bug in either stalls the other — including stalling the equity monitor, which
 is the one thing on this venue that must never stall. It also mirrors what
-`api/trader_worker.py` already does for IBKR's synchronous order calls, so the
+a dedicated worker thread does for any synchronous order call, so the
 project has one threading story rather than two.
 
 Consequence to respect: **every public method here blocks the calling thread.**
@@ -110,6 +110,24 @@ def quantize_relative_stop(distance: float, digits: int) -> int:
     return (raw // step) * step
 
 
+def quantize_relative_take_profit(distance: float, digits: int) -> int:
+    """Round a take-profit DISTANCE down onto the venue's precision grid.
+
+    `relativeTakeProfit` rides the SAME 1e5 wire scale and the SAME symbol
+    precision grid as `relativeStopLoss`, and is refused with the same
+    `INVALID_REQUEST: ... invalid precision` error. Delegates rather than
+    reimplements so the two can never drift apart — the 2026-08-07 rejections
+    happened because a distance that looked correct was not expressible.
+
+    Rounds DOWN, i.e. very slightly CLOSER to entry. The direction matters
+    less here than it does for the stop: a target one tick nearer can only
+    make the position close sooner and cannot cost money, whereas rounding a
+    STOP the wrong way widens real risk past the sizer's cap. Kept the same
+    direction anyway so there is one rule to remember, not two.
+    """
+    return quantize_relative_stop(distance, digits)
+
+
 class SessionError(RuntimeError):
     """The session is not usable, or the venue refused something."""
 
@@ -175,6 +193,36 @@ def validate_stop(side: str, entry_price: float, stop_price: float) -> None:
         raise SessionError(
             f"SELL stop {stop_price} is at or below entry {entry_price} — it "
             f"would close the position on fill")
+
+
+def validate_take_profit(side: str, entry_price: float,
+                         take_profit_price: float) -> None:
+    """Refuse a take-profit that is missing, non-positive, or on the wrong side.
+
+    The mirror of `validate_stop`, and it exists for a sharper reason than
+    symmetry. A take-profit is derived from Kronos's predicted return, and a
+    top-N candidate can carry a NEGATIVE prediction — the 2026-08-07 21:32
+    rebalance entered EURUSD at a predicted -0.15%. Applied naively that
+    produces a "target" BELOW entry on a long, which the venue would treat as
+    an immediate profitable exit and close at a loss on fill. A wrong-sided
+    take-profit is therefore the same class of error as a wrong-sided stop,
+    not a cosmetic one.
+    """
+    side = side.upper()
+    if side not in ("BUY", "SELL"):
+        raise SessionError(f"side must be BUY or SELL, got {side!r}")
+    if take_profit_price is None or take_profit_price <= 0:
+        raise SessionError("take_profit_price must be a positive price")
+    if entry_price <= 0:
+        raise SessionError(f"entry_price must be positive, got {entry_price!r}")
+    if side == "BUY" and take_profit_price <= entry_price:
+        raise SessionError(
+            f"BUY take-profit {take_profit_price} is at or below entry "
+            f"{entry_price} — it would close the position on fill, at a loss")
+    if side == "SELL" and take_profit_price >= entry_price:
+        raise SessionError(
+            f"SELL take-profit {take_profit_price} is at or above entry "
+            f"{entry_price} — it would close the position on fill, at a loss")
 
 
 def market_open_now(spec: dict, now_utc=None) -> bool | None:
@@ -450,6 +498,56 @@ class FTMOSession:
             self.positions_cache = out
         return list(out.values())
 
+    def deals_for_position(self, position_id: int, from_ms: int,
+                           to_ms: int) -> list[dict]:
+        """Every deal the venue recorded against one position.
+
+        This is how a close that nobody here placed gets a REAL price and a
+        REAL P&L instead of an inferred one. A stop or take-profit firing on
+        its own produces a closing deal carrying `closePositionDetail`, with
+        the gross profit, swap and commission the account was actually charged.
+
+        Money fields are scaled by the deal's own `moneyDigits`, NOT by the
+        1e5 wire scale that prices use — two different scalings in one message,
+        and mixing them up misstates a P&L by 1000x. `executionPrice` is a
+        plain double and is not scaled at all.
+
+        The window is required rather than defaulted because cTrader caps how
+        far back one request may reach; callers ask about a position they know
+        the age of.
+        """
+        payload = self._send("ProtoOADealListByPositionIdReq",
+                             positionId=int(position_id),
+                             fromTimestamp=int(from_ms), toTimestamp=int(to_ms))
+        out = []
+        for d in getattr(payload, "deal", []):
+            money_scale = float(10 ** (getattr(d, "moneyDigits", 2) or 2))
+            row = {
+                "deal_id": d.dealId,
+                "position_id": d.positionId,
+                "volume": d.volume,
+                "filled_volume": getattr(d, "filledVolume", 0),
+                "side": "BUY" if d.tradeSide == 1 else "SELL",
+                "execution_price": getattr(d, "executionPrice", 0.0) or 0.0,
+                "execution_ms": getattr(d, "executionTimestamp", 0) or 0,
+                "commission": (getattr(d, "commission", 0) or 0) / money_scale,
+                "closed": False,
+            }
+            detail = getattr(d, "closePositionDetail", None)
+            if detail is not None and d.HasField("closePositionDetail"):
+                ds = float(10 ** (getattr(detail, "moneyDigits", 2) or 2))
+                row.update({
+                    "closed": True,
+                    "entry_price": getattr(detail, "entryPrice", 0.0) or 0.0,
+                    "gross_profit": (getattr(detail, "grossProfit", 0) or 0) / ds,
+                    "swap": (getattr(detail, "swap", 0) or 0) / ds,
+                    "close_commission": (getattr(detail, "commission", 0) or 0) / ds,
+                    "balance_after": (getattr(detail, "balance", 0) or 0) / ds,
+                    "closed_volume": getattr(detail, "closedVolume", 0) or 0,
+                })
+            out.append(row)
+        return sorted(out, key=lambda r: r["execution_ms"])
+
     def unprotected_positions(self) -> list[Position]:
         """Open positions with no server-side stop. Should always be empty.
 
@@ -458,6 +556,19 @@ class FTMOSession:
         of this project learned that distinction expensively.
         """
         return [p for p in self.refresh_positions() if not p.protected]
+
+    def untargeted_positions(self) -> list[Position]:
+        """Open positions with no server-side take-profit.
+
+        Separate from `unprotected_positions` on purpose, and the two must not
+        be merged into one "incomplete position" check. A missing STOP is a
+        rule-2 breach and an open-ended loss; a missing TARGET costs upside on
+        a position that is still fully protected. Reporting them through one
+        channel would either cry wolf about targets or, far worse, let a naked
+        stop hide inside a routine-looking warning.
+        """
+        return [p for p in self.refresh_positions()
+                if not (p.take_profit is not None and p.take_profit > 0)]
 
     def trendbars(self, symbol: str, period: str = "D1",
                   count: int = 500) -> list[dict]:
@@ -501,7 +612,7 @@ class FTMOSession:
         """Cross-check the bar series against the live quote, and RAISE on a
         mismatch rather than trading on a mis-scaled price.
 
-        Directly modelled on `paper_trader.get_net_liquidation_usd`, which
+        Directly modelled on the retired IBKR equity conversion, which
         verifies IBKR's FX direction against an independent quote and raises,
         because an inverted rate misstated equity by ~29% and would have
         mis-sized every order. The failure here is the same shape and worse:
@@ -553,17 +664,28 @@ class FTMOSession:
 
     def place_market(self, symbol: str, side: str, volume: int,
                      stop_price: float, reference_price: float,
+                     take_profit_price: float | None = None,
                      label: str = "kronos", timeout_s: float = 30.0) -> dict:
         """Market order with a SERVER-SIDE stop attached in the same request.
 
-        `reference_price` is only used to validate the stop's side — it is not
-        sent, and it does not price the order. Pass the current quote.
+        `reference_price` is only used to validate the stop's and target's
+        side — it is not sent, and it does not price the order. Pass the
+        current quote.
 
         Refuses rather than defaults on a missing or wrong-sided stop. The
         stop travels as a field on the order itself, so unlike an IBKR bracket
         there is no window in which the position exists unprotected.
+
+        `take_profit_price` is optional HERE and required by the path that
+        decides positions (`ftmo_signal.plan_orders` will not emit an entry
+        without one). The asymmetry is deliberate: a stop is a rule-2 invariant
+        that no caller may skip, whereas a target is a strategy choice, and
+        `ftmo_smoke_order.py` deliberately places the smallest possible probe
+        trade with nothing else attached to it.
         """
         validate_stop(side, reference_price, stop_price)
+        if take_profit_price is not None:
+            validate_take_profit(side, reference_price, take_profit_price)
         spec = self.specs.get(symbol)
         if spec is None:
             raise SessionError(f"{symbol!r} is not in the symbol capture")
@@ -602,15 +724,33 @@ class FTMOSession:
                 f"{symbol} tick ({step / SPOT_SCALE:g}) — refusing an order "
                 f"whose stop would collapse onto its entry")
 
+        # The target rides the same request, on the same grid, for the same
+        # reason: a MARKET order cannot carry an absolute takeProfit either.
+        extra = {}
+        relative_tp = None
+        if take_profit_price is not None:
+            tp_distance = abs(take_profit_price - reference_price)
+            relative_tp = quantize_relative_take_profit(tp_distance,
+                                                        spec["digits"])
+            if relative_tp <= 0:
+                step = stop_grid_step(spec["digits"])
+                raise SessionError(
+                    f"take-profit distance {tp_distance!r} is smaller than one "
+                    f"{symbol} tick ({step / SPOT_SCALE:g}) — refusing rather "
+                    f"than sending an order whose target sits on its entry")
+            extra["relativeTakeProfit"] = relative_tp
+
         payload = self._send(
             "ProtoOANewOrderReq", timeout_s=timeout_s,
             symbolId=spec["symbol_id"], orderType=1,
             tradeSide=1 if side.upper() == "BUY" else 2,
             volume=volume, relativeStopLoss=relative, label=label,
-            comment=f"ftmo/{label}")
+            comment=f"ftmo/{label}", **extra)
         return {"sent": True, "symbol": symbol, "side": side.upper(),
                 "volume": volume, "stop_loss": stop_price,
                 "relative_stop_loss": relative,
+                "take_profit": take_profit_price,
+                "relative_take_profit": relative_tp,
                 "response": type(payload).__name__}
 
     def close_position(self, position_id: int, volume: int) -> dict:
@@ -626,13 +766,36 @@ class FTMOSession:
         return {"closed": True, "position_id": position_id, "volume": volume,
                 "response": type(payload).__name__}
 
-    def amend_stop(self, position_id: int, stop_price: float) -> dict:
+    def amend_stop(self, position_id: int, stop_price: float,
+                   take_profit_price: float | None = None) -> dict:
+        """Move a position's stop, and optionally its target.
+
+        **`ProtoOAAmendPositionSLTPReq` sets the whole SL/TP pair.** Sending it
+        with only `stopLoss` populated is how you would silently CLEAR a target
+        that is already attached — which matters as of 2026-08-08, when every
+        entry started carrying one. `take_profit_price` therefore defaults to
+        None meaning "leave it alone", and the current value is read back from
+        the venue and re-sent rather than omitted.
+
+        Nothing calls this yet. It is written this way now because the failure
+        would be invisible: the amend would succeed, the stop would be correct,
+        and the target would just be gone.
+        """
         if stop_price is None or stop_price <= 0:
             raise SessionError("amend_stop requires a positive stop price")
-        payload = self._send("ProtoOAAmendPositionSLTPReq",
-                             positionId=position_id, stopLoss=stop_price)
+        keep_tp = take_profit_price
+        if keep_tp is None:
+            existing = next((p for p in self.refresh_positions()
+                             if p.position_id == position_id), None)
+            if existing is not None and existing.take_profit:
+                keep_tp = existing.take_profit
+        fields = {"positionId": position_id, "stopLoss": stop_price}
+        if keep_tp:
+            fields["takeProfit"] = keep_tp
+        payload = self._send("ProtoOAAmendPositionSLTPReq", **fields)
         return {"amended": True, "position_id": position_id,
-                "stop_loss": stop_price, "response": type(payload).__name__}
+                "stop_loss": stop_price, "take_profit": keep_tp,
+                "response": type(payload).__name__}
 
     def on_execution(self, fn) -> None:
         """Register a callback for ProtoOAExecutionEvent. Fires on the reactor
@@ -686,6 +849,50 @@ def selftest() -> int:
           validate_stop("BUY", 100.0, 98.0) is None)
     check("a valid short stop passes",
           validate_stop("SELL", 100.0, 102.0) is None)
+
+    print("take-profit validation (owner decision 2026-08-08):")
+    check("a missing take-profit is refused",
+          raises(lambda: validate_take_profit("BUY", 100.0, 0), "positive"))
+    check("a None take-profit is refused",
+          raises(lambda: validate_take_profit("BUY", 100.0, None), "positive"))
+    check("BUY target below entry refused (closes at a LOSS on fill)",
+          raises(lambda: validate_take_profit("BUY", 100.0, 99.0), "at a loss"))
+    check("BUY target exactly at entry refused",
+          raises(lambda: validate_take_profit("BUY", 100.0, 100.0), "at a loss"))
+    check("SELL target above entry refused",
+          raises(lambda: validate_take_profit("SELL", 100.0, 101.0), "at a loss"))
+    check("a bad side is refused, not guessed",
+          raises(lambda: validate_take_profit("HOLD", 100.0, 110.0),
+                 "BUY or SELL"))
+    check("a valid long target passes",
+          validate_take_profit("BUY", 100.0, 110.0) is None)
+    check("a valid short target passes",
+          validate_take_profit("SELL", 100.0, 90.0) is None)
+    # The live case this guard exists for: EURUSD was entered at a predicted
+    # -0.15% on 2026-08-07, which as a target is BELOW entry on a long.
+    check("the EURUSD -0.15% shape is caught (the reason this check exists)",
+          raises(lambda: validate_take_profit("BUY", 1.16000,
+                                              1.16000 * (1 - 0.0015)),
+                 "at a loss"))
+
+    print("relativeTakeProfit rides the SAME grid as the stop:")
+    check("a target distance quantises exactly as a stop distance does",
+          all(quantize_relative_take_profit(d, dg)
+              == quantize_relative_stop(d, dg)
+              for d, dg in [(4.50286, 2), (0.18629, 3), (118.32, 2),
+                            (0.00552, 5)]))
+    check("every quantised target lands on its symbol's grid",
+          all(quantize_relative_take_profit(d, dg) % stop_grid_step(dg) == 0
+              for d, dg in [(279.56, 2), (0.18629, 3), (1.0 / 7, 5)]))
+    check("a sub-tick target collapses to 0 so the caller must refuse it",
+          quantize_relative_take_profit(0.004, 2) == 0)
+    check("place_market refuses a sub-tick target rather than sending it bare",
+          "take-profit distance" in inspect.getsource(FTMOSession.place_market))
+    check("place_market validates the target's side before sending",
+          "validate_take_profit" in inspect.getsource(FTMOSession.place_market))
+    check("stops and targets are reported through SEPARATE read-backs",
+          FTMOSession.unprotected_positions is not
+          FTMOSession.untargeted_positions)
 
     print("price scaling is FIXED at 1e5, not per-symbol digits:")
     check("a 5-digit FX price", abs(scale_price(115_512) - 1.15512) < 1e-9)
@@ -783,6 +990,10 @@ def selftest() -> int:
                  "not connected"))
     check("amend_stop refuses a non-positive stop",
           raises(lambda: s.amend_stop(1, 0), "positive"))
+    check("amend_stop preserves an existing target instead of clearing it",
+          "takeProfit" in inspect.getsource(FTMOSession.amend_stop)
+          and "existing.take_profit" in inspect.getsource(
+              FTMOSession.amend_stop))
 
     print("disconnect does not fabricate fresh data:")
     s2 = FTMOSession(env={"CTRADER_HOST": "demo"}, specs=specs)

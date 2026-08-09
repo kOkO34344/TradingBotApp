@@ -20,13 +20,31 @@
  */
 
 import { useEffect, useRef, useState } from "react";
-import { Loader2, Search, Star, TriangleAlert } from "lucide-react";
+import { Search, Star, TriangleAlert } from "lucide-react";
 
-import { api, type SymbolSuggestion } from "@/lib/api";
 import { cn } from "@/lib/utils";
 
-const DEBOUNCE_MS = 180;
 const MIN_CHARS = 1;
+
+/**
+ * One row in the dropdown.
+ *
+ * Defined here rather than in `lib/api.ts` since 2026-08-09: it used to be an
+ * API response type from IBKR's `reqMatchingSymbols`, and that endpoint went
+ * with the venue. Suggestions are now built by the caller from the FTMO symbol
+ * capture, so the shape belongs to this component.
+ */
+export interface SymbolSuggestion {
+  /** The exact string the chart will receive. */
+  query: string;
+  symbol: string;
+  label: string;
+  description: string;
+  secType: string;
+  exchange: string;
+  currency: string;
+  source: string;
+}
 
 export function SymbolSearch({
   value,
@@ -41,26 +59,23 @@ export function SymbolSearch({
   onSubmit: (query: string) => void;
   className?: string;
   /**
-   * Optional replacement for the built-in IBKR contract search.
+   * Where suggestions come from. REQUIRED since 2026-08-09.
    *
-   * The FTMO chart passes one so this box searches the instruments that venue
-   * actually carries. Without it the box happily suggested `SPY` and `NVDA` —
-   * IBKR contracts that resolve fine and then fail at the venue with
-   * `not in the symbol capture`, which reads as a broken chart rather than as
-   * a symbol that was never available.
+   * It was optional, falling back to IBKR's `reqMatchingSymbols`. That
+   * fallback happily suggested `SPY` and `NVDA` — contracts that resolved
+   * fine and then failed at FTMO with `not in the symbol capture`, which
+   * reads as a broken chart rather than as a symbol that was never
+   * available. With one venue there is one right answer, so the caller
+   * always supplies it.
    *
    * Synchronous because the caller already holds the list; there is no reason
    * to make a network round trip per keystroke to filter 202 strings.
    */
-  suggest?: (query: string) => SymbolSuggestion[];
+  suggest: (query: string) => SymbolSuggestion[];
 }) {
   const [open, setOpen] = useState(false);
-  const [remoteResults, setResults] = useState<SymbolSuggestion[]>([]);
-  const [remoteNote, setNote] = useState<string | null>(null);
-  const [loading, setLoading] = useState(false);
   const [active, setActive] = useState(0);
   const boxRef = useRef<HTMLDivElement>(null);
-  const requestId = useRef(0);
   const suppress = useRef(false);
 
   const query = value.trim();
@@ -69,60 +84,14 @@ export function SymbolSearch({
   // commit, which cascades renders (and eslint's react-hooks rule flags it).
   const canSearch = query.length >= MIN_CHARS;
 
-  // With a local suggester the list is a pure function of what is typed, so it
-  // is computed here rather than mirrored into state by an effect. That keeps
-  // one source of truth and avoids the cascading render the effect version
-  // caused. The remote path still needs state, because its answer arrives
-  // later than the keystroke that asked for it.
-  const localResults =
-    suggest && canSearch ? suggest(query) : suggest ? [] : null;
-  const results = localResults ?? remoteResults;
+  // The list is a pure function of what is typed, so it is computed here
+  // rather than mirrored into state by an effect. That keeps one source of
+  // truth and avoids a cascading render. There is no debounce and no
+  // in-flight state any more: filtering 202 strings is synchronous, so the
+  // stale-response race the remote path had cannot occur.
+  const results = canSearch ? suggest(query) : [];
   const note =
-    localResults === null
-      ? remoteNote
-      : localResults.length === 0 && canSearch
-        ? "No matching FTMO instrument."
-        : null;
-
-  useEffect(() => {
-    if (suppress.current) {
-      // Just picked a row — don't immediately re-search its own text.
-      suppress.current = false;
-      return;
-    }
-    if (!canSearch) return;
-
-    // A local suggester needs no effect at all — see `results` below, which
-    // derives from it during render. Writing it into state here would be a
-    // cascading render, and the value is already available synchronously.
-    if (suggest) return;
-
-    const id = ++requestId.current;
-    const timer = setTimeout(() => {
-      setLoading(true);
-      api
-        .searchSymbols(query)
-        .then((res) => {
-          // A stale response must never replace a newer one.
-          if (id !== requestId.current) return;
-          setResults(res.results);
-          setNote(res.note);
-          setActive(0);
-          setOpen(true);
-        })
-        .catch(() => {
-          if (id !== requestId.current) return;
-          setResults([]);
-          setNote("Symbol search is unavailable — type the symbol directly.");
-          setOpen(true);
-        })
-        .finally(() => {
-          if (id === requestId.current) setLoading(false);
-        });
-    }, DEBOUNCE_MS);
-
-    return () => clearTimeout(timer);
-  }, [query, canSearch, suggest]);
+    canSearch && results.length === 0 ? "No matching FTMO instrument." : null;
 
   useEffect(() => {
     const onDocClick = (e: MouseEvent) => {
@@ -169,9 +138,6 @@ export function SymbolSearch({
   return (
     <div ref={boxRef} className={cn("relative", className)}>
       <Search className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-      {loading && (
-        <Loader2 className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 animate-spin text-muted-foreground" />
-      )}
       <input
         value={value}
         onChange={(e) => {
@@ -181,9 +147,7 @@ export function SymbolSearch({
         }}
         onKeyDown={onKeyDown}
         onFocus={() => results.length > 0 && setOpen(true)}
-        placeholder={
-          suggest ? "EURUSD · US30.cash · XAUUSD" : "AAPL · EUR.USD · BTC-USD · ES=F"
-        }
+        placeholder="EURUSD · US30.cash · XAUUSD"
         spellCheck={false}
         autoComplete="off"
         aria-label="Symbol"

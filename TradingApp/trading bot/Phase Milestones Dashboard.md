@@ -1,10 +1,20 @@
 ---
 tags: [project-management, phases, roadmap]
-status: "FTMO ARMED and trading unattended from 2026-08-06 despite all 4 classes failing IC; first 38 real grades show no detectable skill"
-last_updated: 2026-08-06
+status: "FTMO armed and unattended; IBKR removed 2026-08-09. 12 of last session's 20 firings left no audit record — the sleep problem is not confirmed fixed."
+last_updated: 2026-08-09
 ---
 
 # Phase Milestones Dashboard
+
+> [!warning] Two things this dashboard must not be read as saying
+> 1. **IBKR is gone, not paused.** Its code, routes, screens and launchd jobs
+>    were removed on 2026-08-09. Any milestone below that mentions paper
+>    positions, RiskGuard or Gateway is history.
+> 2. **"Armed" is not "working".** The night band shows 12 of last session's
+>    20 scheduled firings left no audit record. The `caffeinate -i` fix in
+>    `ftmo_runner.sh` has never been verified under the real failure condition,
+>    because an agent session holds the Mac awake by itself.
+
 
 > [!important] 2026-08-02 — the venue changed
 > FTMO replaced IBKR as the trading venue (owner decision). IBKR is **retired
