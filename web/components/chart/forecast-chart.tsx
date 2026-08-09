@@ -27,6 +27,11 @@
  *  and the UI says so. */
 export const MAX_DRAWN_PATHS = 24;
 
+/** History bars kept visible beside the fan. Enough to read the forecast
+ *  against recent price action, few enough that the forecast is not a sliver
+ *  at the right edge. */
+const HISTORY_BARS_IN_FAN = 14;
+
 import { useEffect, useRef } from "react";
 import {
   AreaSeries,
@@ -262,8 +267,8 @@ export function FanChart({
     if (band.length > 1) {
       const hi = chart.addSeries(AreaSeries, {
         lineColor: "transparent",
-        topColor: alpha(pred, 0.16),
-        bottomColor: alpha(pred, 0.16),
+        topColor: alpha(pred, 0.24),
+        bottomColor: alpha(pred, 0.24),
         priceLineVisible: false,
         lastValueVisible: false,
         crosshairMarkerVisible: false,
@@ -310,7 +315,20 @@ export function FanChart({
       med.setData(band.map((b) => ({ time: b.time, value: b.mid })));
     }
 
-    chart.timeScale().fitContent();
+    // ZOOM TO THE FORECAST, do not fitContent().
+    //
+    // `fitContent()` fits five months of daily history against a five-day
+    // forecast, which puts the entire fan in the last ~8% of the width — the
+    // paths become a scribble and the P10-P90 ribbon is too small to see at
+    // all. That was the actual readability problem here; line width was a
+    // symptom. Showing a short run-up plus the whole forecast gives the fan
+    // most of the canvas while keeping enough history to read it against.
+    const tail = Math.min(history.length, HISTORY_BARS_IN_FAN);
+    chart.timeScale().setVisibleLogicalRange({
+      from: history.length - tail,
+      to: history.length + steps + 1,
+    });
+
     return () => chart.remove();
   }, [history, series]);
 

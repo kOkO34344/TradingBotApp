@@ -333,8 +333,17 @@ export const kronos = {
     post<Job<KronosResult>>("/api/kronos/run", opts),
   monteCarlo: (ticker: string, paths: number) =>
     post<Job<MonteCarloResult>>("/api/kronos/montecarlo", { ticker, paths }),
-  latest: (kind = "kronos") =>
-    request<{ job: Job<KronosResult> | null; running: Job | null }>(
+  /**
+   * The most recent completed run of a job kind.
+   *
+   * Generic in the result, because the `kind` decides what comes back:
+   * "kronos" yields a `KronosResult`, "kronos-mc" a `MonteCarloResult`. It
+   * used to be hardcoded to the former, which meant the Monte Carlo caller
+   * had to cast through `unknown` — a cast that would have kept compiling if
+   * either shape ever changed.
+   */
+  latest: <T = KronosResult>(kind = "kronos") =>
+    request<{ job: Job<T> | null; running: Job | null }>(
       `/api/kronos/latest?kind=${encodeURIComponent(kind)}`
     ),
 };

@@ -59,13 +59,23 @@ export function KronosScreen() {
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
 
   // Load whatever the last completed run was, so reopening the page doesn't
-  // mean paying for another inference.
+  // mean paying for another inference. BOTH panels restore — the forecast and
+  // the Monte Carlo are each a couple of minutes of GPU time, and losing one
+  // of them on a refresh while the other survived was an inconsistency you
+  // would only notice by paying for it twice.
   useEffect(() => {
     kronos
       .latest()
       .then(({ job: last, running }) => {
         if (running) setJob(running as Job<KronosResult>);
         else if (last) setJob(last);
+      })
+      .catch(() => {});
+    kronos
+      .latest<MonteCarloResult>("kronos-mc")
+      .then(({ job: last, running }) => {
+        if (running) setMcJob(running as Job<MonteCarloResult>);
+        else if (last) setMcJob(last);
       })
       .catch(() => {});
   }, []);

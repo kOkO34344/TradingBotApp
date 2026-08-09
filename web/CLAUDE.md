@@ -142,7 +142,23 @@ changing anything structural.
     scramble would leave the equity readout mid-effect roughly a third of the
     time it is on screen. If it ever does get built, scope it to status WORDS
     only — never to a number.
-18. **Tab selection lives in the URL** (`components/url-tabs.tsx`). Six of the
+18. **A forecast chart must be ZOOMED to the forecast, never `fitContent()`.**
+    The Monte Carlo fan showed five months of daily history against a five-day
+    forecast, which put the whole fan in the last ~8% of the width — the paths
+    were a scribble and the P10-P90 ribbon was invisible. Line width was a
+    symptom, not the cause. `FanChart` sets an explicit visible logical range
+    of `HISTORY_BARS_IN_FAN` (14) plus the forecast. Verified by screenshot,
+    which is the only way this class of bug shows up.
+19. **You can review this UI without the Chrome extension.** Headless Chrome
+    from a shell screenshots any route and the PNG can be read directly:
+    `"/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" \
+    --headless=new --disable-gpu --hide-scrollbars --virtual-time-budget=8000 \
+    --window-size=1600,1400 --screenshot=out.png http://localhost:3000/watch`
+    Use `sips -c <h> <w> --cropOffset <top> 0` to crop into a panel. Two real
+    bugs were found this way that every typecheck had passed: the fan zoom
+    above, and closed wakeup cells rendered so dark they read as a GAP in the
+    rail rather than as shut hours.
+20. **Tab selection lives in the URL** (`components/url-tabs.tsx`). Six of the
     old eight routes are tabs now, and `/backtests` has to keep landing on the
     backtests table. It also means every panel is reachable over HTTP, which
     is the only way to exercise a Base UI panel without a browser — see the

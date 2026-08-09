@@ -373,7 +373,12 @@ function SlotCell({ slot }: { slot: FtmoSlot }) {
           "border hairline border-primary/70 bg-primary/15",
         slot.state === "missed" &&
           "border hairline border-unknown/70 bg-unknown/10 annunciator-lit",
-        slot.state === "closed" && "bg-muted/50"
+        // Visible, not invisible. `bg-muted/50` on the near-black ground was
+        // indistinguishable from the page, so a run of closed hours read as a
+        // GAP in the rail — as though the band had failed to render — rather
+        // than as "the window was shut here". A closed hour is information.
+        slot.state === "closed" &&
+          "border hairline border-white/[0.07] bg-white/[0.05]"
       )}
     >
       {/* A missed slot is struck through: it is not an empty hour, it is an
