@@ -80,3 +80,5 @@ timestamp,event,symbol,sec_type,action,quantity,price,stop,target,status,detail,
 2026-08-08T18:32:40,SUBMIT,LTCUSD,cfd,BUY,10300,45.58000,43.15714,46.52951,sending,crypto; kronos pred +2.08%; risk $249.55; reward $97.80,ftmo
 2026-08-08T18:32:41,REJECTED,LTCUSD,cfd,BUY,10300,45.58000,43.15714,46.52951,rejected,SYMBOL_HAS_HOLIDAY: Symbols has a holiday right now,ftmo
 2026-08-09T02:54:30,BLOCKED,,cfd,,,,,,skipped,"NZDUSD: NO TRADE: minimum volume 100000 (1000 units) would risk 4.70, over the 1.42 allowed — refusing rather than sizing up",ftmo
+2026-08-09T16:48:14,BLOCKED,,cfd,,,,,,skipped,"AUDUSD: refusing — a BUY needs a positive forecast to derive a target from, got -0.17% — no take-profit exists on the profitable side (ranked into the top 4 on a forecast of -0.17%)",ftmo
+2026-08-09T16:48:14,BLOCKED,,cfd,,,,,,skipped,"GBPUSD: refusing — a BUY needs a positive forecast to derive a target from, got -0.33% — no take-profit exists on the profitable side (ranked into the top 4 on a forecast of -0.33%)",ftmo

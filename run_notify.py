@@ -5,13 +5,13 @@ wrapper. Works from any session (this chat, Claude Code, a plain terminal)
 for any one-shot script: backtests (sma_crossover_backtest.py,
 orb_backtest.py, strategy_shootout.py, variant_experiments.py,
 broad_universe_momentum.py, KronosAI/kronos_backtest.py), a single
-research_agent.py ticker run, paper_trader.py --dry-run, or anything else
+research_agent.py ticker run, a backtest, or anything else
 that runs once and exits.
 
-NOT for recurring/polling jobs (reflect_on_trades.py, launchd interval
+NOT for recurring/polling jobs (ftmo_runner.py, launchd interval
 jobs) — those get a conditional notify hook fired only on an actual
 event, wired directly into the script itself, or this wrapper would text
-on every no-op poll (reflect_on_trades.py runs every 30 min and is a
+on every no-op poll (ftmo_runner.py wakes ~20x a day and is a
 no-op almost every time). See CLAUDE.md's automation section.
 
 What it sends, via TelegramBot/notify.py:

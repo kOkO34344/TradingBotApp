@@ -23,7 +23,7 @@ import { useMemo, useState } from "react";
 import { AlertTriangle, Ban, Filter } from "lucide-react";
 
 import { api, type JournalRow } from "@/lib/api";
-import { useFetch, useLive } from "@/lib/use-live";
+import { useFetch } from "@/lib/use-fetch";
 import { DASH, fmtPrice, fmtQty } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
@@ -49,10 +49,9 @@ const EVENT_STYLES: Record<string, string> = {
 };
 
 export function JournalScreen() {
-  const live = useLive();
   const journal = useFetch(
     () => api.journal({ limit: 2000 }),
-    [live.revisions.fills, live.revisions.orders]
+    []
   );
   const [query, setQuery] = useState("");
   const [eventFilter, setEventFilter] = useState<string | null>(null);

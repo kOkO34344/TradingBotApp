@@ -5,7 +5,7 @@ Ad hoc CLI for eyeballing Kronos forecasts against the real watchlist
 (trader_settings.json) — the toy CSV smoke test lives in
 kronos_smoke_test.py. Thin wrapper around kronos_agent.forecast_tickers();
 see that module's docstring for the sample_count stabilization findings
-and how this feeds paper_trader.py / trader_app.py.
+and how this feeds ftmo_runner.py / trader_app.py.
 
 Usage:
   python3 kronos_watchlist_forecast.py                        forecast all watchlist tickers

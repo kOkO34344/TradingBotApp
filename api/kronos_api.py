@@ -6,7 +6,7 @@ does that. The point is to show how much the ranking MOVES between runs,
 because CLAUDE.md records that it moves enough to change which orders get
 placed:
 
-    Two `paper_trader.py --dry-run` runs ~30 minutes apart, same closed-market
+    Two dry-run rotation proposals ~30 minutes apart, same closed-market
     data, same sample_count, produced different top-3s: [AMZN, MSFT, GOOGL]
     then [AMZN, MSFT, DIS]. Run 1 proposed BUY MSFT + BUY GOOGL (~$50k) and
     SELL DIS; run 2 proposed BUY MSFT only and HOLD DIS.
@@ -45,7 +45,7 @@ DEFAULT_DRAWS = 3
 MAX_DRAWS = 10
 # Matches kronos_agent.DEFAULT_SAMPLE_COUNT. The ranking shown here has to be
 # the ranking the project would actually act on, so it averages the same
-# number of internal samples paper_trader does. sample_count=1 is a single
+# number of internal samples the live path does. sample_count=1 is a single
 # noisy draw — useful for the Monte Carlo fan, misleading for a ranking.
 DEFAULT_SAMPLE_COUNT = 10
 # A rank-N/N+1 gap at or below this (in predicted % return) is treated as
@@ -62,7 +62,7 @@ def _import_agent():
     """Import lazily and translate the usual failure into something useful.
 
     A missing torch here almost always means the wrong interpreter rather
-    than a missing package — conda base has pandas/ib_async but not torch,
+    than a missing package — conda base has pandas/yfinance but not torch,
     which is the exact trap documented in CLAUDE.md.
     """
     try:

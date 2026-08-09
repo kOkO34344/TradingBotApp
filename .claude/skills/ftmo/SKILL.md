@@ -80,9 +80,9 @@ can fail with no order placed and nothing realised — an overnight gap on a
 position already held is sufficient.
 
 This is why the FTMO path gets a continuous monitor rather than a pre-trade
-gate. `RiskGuard.check()` reads IBKR's realised `RealizedPnL` and only when an
+gate. The retired IBKR guard read that broker's realised P&L, and only when an
 order is being placed; it provably cannot see this. The 2026-07-23 GOOGL
-stop-out moved the IBKR account $422 with nothing running and was invisible for
+stop-out moved that account $422 with nothing running and was invisible for
 two days. On a $25,000 FTMO account with a $1,250 hard daily limit, the same
 blind spot is a failed account rather than a reporting gap.
 
@@ -200,7 +200,7 @@ GAP through the stop now costs about twice as much, and at `buffer_pct` 0.05
 there is only $31.25 of reserve under the daily cliff. The two changes of
 2026-08-09 interact in that one specific place.
 
-Not a copy of `paper_trader.size_position()` — a "unit" means something
+Not a copy of the retired share-based sizer — a "unit" means something
 different per instrument (100,000 base units per FX lot, an ounce of gold, a
 share of a stock CFD, an index point), and the quote currency is frequently not
 the account currency. **`quote_to_account_rate` has NO default** and a
@@ -338,9 +338,12 @@ modules in this skill:
   "except Sunday" applies to the Sofia calendar day, so Saturday evening runs
   and Sunday morning does not. Checked before the audit log opens and before
   torch is imported, so out-of-window wakeups are free.
-- It is armed by `ftmo.autotrade.enabled`, **its own toggle**. IBKR's
-  `autotrade.enabled` cannot arm it, and there is a selftest asserting that.
-  Disarm from `/ftmo`, or unload the launchd job.
+- It is armed by `ftmo.autotrade.enabled`. That key was deliberately separate
+  from IBKR's when both venues existed, and a selftest still asserts an
+  unrelated `autotrade` block cannot arm it — worth keeping now that a stale
+  `autotrade.enabled` could linger in an old settings file. Disarm from the
+  header switch on the web UI, from `trader_app.py` menu 8, or by unloading
+  the launchd job.
 - It calls `ftmo_signal.plan_orders()` — and so does the web preview
   (`api/ftmo_api.plan`). Keep it that way. The moment the browser computes a
   rank, a size or a stop of its own, there are two implementations of the risk

@@ -6,9 +6,6 @@ numpy
 rich
 plotext
 
-# IBKR live/paper connection layer (ibkr_service.py)
-ib_async
-
 # Research agent (research_agent.py)
 claude-agent-sdk
 lxml
@@ -26,8 +23,7 @@ lxml
 #
 # Do NOT "fix" the downgrade by dropping yfinance. It is the data source behind
 # grade_calls.py (the only route to graded evidence, rule 5), every backtest,
-# and the independent FX cross-check in paper_trader.get_net_liquidation_usd
-# that stops a wrong-direction ExchangeRate misstating equity by ~29%.
+# and every IC screen this project has run.
 ctrader-open-api
 
 # Twisted needs service_identity for proper TLS hostname verification — without

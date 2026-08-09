@@ -9,7 +9,12 @@ const nextConfig: NextConfig = {
   // The eight screens became four on 2026-08-09. These keep every old URL
   // working — bookmarks, the browser's history, and any link written into a
   // commit message or the vault. Permanent, because the old routes are not
-  // coming back: they are sections now, not pages.
+  // coming back.
+  //
+  // The three IBKR ones (/dashboard, /positions, /rebalance) point at the
+  // nearest surviving screen rather than 404ing. Their venue was removed the
+  // same day, so there is no equivalent content — but a dead bookmark that
+  // lands somewhere useful beats one that looks like a broken app.
   async redirects() {
     return [
       { source: "/ftmo", destination: "/watch", permanent: true },
@@ -18,7 +23,7 @@ const nextConfig: NextConfig = {
       // The six that became tabs carry `?tab=`, so an old bookmark lands on
       // the screen it used to be rather than on whichever tab sorts first.
       { source: "/kronos", destination: "/signal?tab=forecast", permanent: true },
-      { source: "/rebalance", destination: "/signal?tab=rotation", permanent: true },
+      { source: "/rebalance", destination: "/signal?tab=plan", permanent: true },
       { source: "/charts", destination: "/market", permanent: true },
       { source: "/journal", destination: "/ledger?tab=journal", permanent: true },
       { source: "/backtests", destination: "/ledger?tab=backtests", permanent: true },

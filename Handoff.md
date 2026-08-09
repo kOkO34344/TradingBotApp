@@ -4,23 +4,25 @@ For Koko, and for whichever session picks this up next. Written at the end of
 a long session; everything below was verified against the live paper account,
 not inferred.
 
-> [!warning] SUPERSEDED IN PART — read this first (updated 2026-08-05)
-> This document is a **point-in-time handoff from 2026-07-28** and several of
-> its facts have since changed. The *reasoning* in sections 2 and 3 is still
-> worth reading; the *state* is not current. What changed:
+> [!danger] SUPERSEDED — historical document (updated 2026-08-09)
+> This is a **point-in-time handoff from 2026-07-28**, kept because the
+> *reasoning* in sections 2 and 3 is still worth reading. **The state it
+> describes is not current, and the venue it describes no longer exists.**
 >
-> - **The venue changed.** FTMO replaced IBKR for new orders on 2026-08-02.
->   IBKR is retired in place, monitoring only. The FTMO venue **connected**
->   2026-08-05 (account 48137229, $25,000, FULL_ACCESS).
-> - **AAPL has closed.** The open IBKR positions are now **JNJ, DIS, AMZN** —
->   three, not four. See the table below.
+> - **IBKR was removed entirely on 2026-08-09** — the modules, the API routes,
+>   the web screens and both launchd jobs. It had been retired in place since
+>   2026-08-02. FTMO (account 48137229, $25,000 simulated) is the only venue.
+> - **The three IBKR positions (JNJ, DIS, AMZN) were presumed still open when
+>   the code was deleted** and could not be re-verified — Gateway had been
+>   refusing connections for about a week. Their stops live at the broker; what
+>   was given up is the record. Do not read this file as evidence they closed.
 > - **Grading is no longer 0.** The first 38 real grades landed 2026-08-03:
 >   26% correct against a 39% chance base rate, p=0.13 — no detectable skill,
 >   on a sample closer to one observation than to 38.
-> - **All four FTMO asset classes were IC-screened 2026-08-03 and all four
->   failed.** There is currently no asset class the bot is cleared to trade.
-> - The "immediate next action" below (a supervised Kronos rebalance on IBKR)
->   **no longer applies** — IBKR places no new orders.
+> - **All four FTMO asset classes failed their IC screen twice** (2026-08-03 at
+>   20 days, 2026-08-08 at 5 days). The path was armed anyway on 2026-08-06 as
+>   a deliberate, recorded override — CLAUDE.md rule 9.
+> - Every "immediate next action" below is obsolete.
 >
 > Current state of record lives in `CLAUDE.md` and the vault's
 > `00 MOC - Trading Bot Vault.md`. Prefer those over this file.

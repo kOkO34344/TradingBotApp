@@ -1,4 +1,4 @@
-"""Watchlist management — named groups, validated symbols, one traded universe.
+"""Watchlist management — named groups, validated symbols, one research universe.
 
 The watchlist used to be a flat `settings["tickers"]` list edited as a raw
 comma-separated string. This module makes it structured and validated:
@@ -7,34 +7,34 @@ comma-separated string. This module makes it structured and validated:
     settings["tickers"]          = deduped union of every group  (DERIVED)
 
 `watchlist_groups` is the SOURCE OF TRUTH; `tickers` is regenerated from it
-on every save. That split is deliberate: `paper_trader.py`, `autotrade_runner.py`,
-`run_research_agent_watchlist.py`, `kronos_agent.py` and `trader_app.py` all read
+on every save. That split is deliberate: `run_research_agent_watchlist.py`,
+`kronos_agent.py`, the backtest scripts and `trader_app.py` all read
 `settings["tickers"]` and keep working unchanged — grouping is an editing and
 reporting convenience layered on top, not a new contract they have to learn.
 
-Groups mirror how the owner organizes watchlists in IBKR. They are NOT synced
-from IBKR automatically: the TWS API exposes no watchlist endpoint (verified
-against ib_async 2.1.0 — there is `reqScannerData`, `reqPositions`,
-`reqContractDetails`, but nothing that reads a TWS watchlist; they are a
-client-side UI feature). Auto-sync would need IBKR's separate Client Portal
-Web API — a second gateway, browser login and session keepalive — which was
-considered and deliberately not built. Editing happens here instead.
+THIS IS THE RESEARCH UNIVERSE, NOT THE TRADED ONE (2026-08-09). It was both
+until IBKR was removed. FTMO's tradeable universe is a different set of
+instruments entirely — CFDs named `EURUSD`, `US30.cash`, `NATGAS.cash` — and it
+is derived from the venue's own symbol capture by `ftmo_signal.build_universe`,
+not from anything here. Keeping the two apart is the honest arrangement:
+researching AAPL on yfinance daily bars is a real activity, and pretending the
+list also describes what can be bought would be the kind of quiet mismatch this
+project keeps getting bitten by.
 
-Two safety properties this module enforces, both learned the hard way
-elsewhere in this project:
+One safety property this module enforces:
 
-1. **Symbols are validated before they enter the list.** The traded universe
-   is the list `paper_trader`/`autotrade_runner` rank and buy from, so a typo
-   or an instrument yfinance cannot serve (forex, futures, foreign listings)
-   must never reach it. Unsupported symbols are dropped and REPORTED, never
-   silently discarded — same precedent as `broad_universe_momentum.py`.
+**Symbols are validated before they enter the list.** A typo, or an instrument
+yfinance cannot serve properly, must never reach the list the research agent
+and Kronos read. Unsupported symbols are dropped and REPORTED, never silently
+discarded — same precedent as `broad_universe_momentum.py`.
 
-2. **Removing a ticker you hold a position in is guarded.** `paper_trader.py`
-   filters current holdings with `if sym in tickers` — so dropping a held
-   symbol from the watchlist makes its position INVISIBLE to the trader,
-   which then neither manages nor exits it. The position keeps its GTC stop
-   but nothing else will ever touch it. `held_symbols()` exists so callers
-   can warn before that happens.
+(The old second property — guarding removal of a symbol you held — went with
+IBKR. It existed because `paper_trader.py` filtered live holdings with
+`if sym in tickers`, so a removed ticker's position became invisible and
+stopped being managed. Nothing filters positions by this list any more: FTMO
+positions are reconciled against the venue itself by `ftmo_closes.py`, which
+reads what is actually open rather than what is configured. If any consumer
+ever starts filtering holdings by the watchlist again, put the guard back.)
 """
 from __future__ import annotations
 
@@ -47,11 +47,6 @@ import yfinance as yf
 warnings.filterwarnings("ignore")
 
 APP_DIR = Path(__file__).parent
-
-# Client id for the read-only position check. Distinct from every other
-# tool so a watchlist edit can never collide with a running trader:
-# 7=trader_app, 9=paper_trader, 11=reflect_on_trades, 13=autotrade_runner.
-POSITION_CHECK_CLIENT_ID = 15
 
 DEFAULT_GROUP = "Core"
 
@@ -104,10 +99,11 @@ def group_of(groups: dict[str, list[str]], symbol: str) -> list[str]:
 # ------------------------------------------------------- symbol validation
 
 def normalize_symbol(raw: str) -> str:
-    """Best-effort IBKR-style symbol -> yfinance symbol.
+    """Best-effort broker-style symbol -> yfinance symbol.
 
-    IBKR writes class shares with a space or dot (`BRK B`, `BRK.B`) where
-    yfinance wants a dash (`BRK-B`). Everything else is just cleaned up.
+    Most data sources and brokers write class shares with a space or dot
+    (`BRK B`, `BRK.B`) where yfinance wants a dash (`BRK-B`). Everything else
+    is just cleaned up.
     """
     s = raw.strip().upper()
     if not s:
@@ -131,28 +127,35 @@ _PAIR_SUFFIXES = {"USD", "EUR", "GBP", "JPY", "CHF", "CAD", "AUD", "USDT", "BTC"
 
 
 def pipeline_supported(sym: str) -> str | None:
-    """Reason `sym` can't go through this project's order path, or None if fine.
+    """Reason `sym` can't be researched by this project, or None if fine.
 
-    The execution path (`ibkr_service.place_bracket_order`) submits US `STK`
-    contracts. yfinance will happily serve foreign listings and crypto pairs,
-    so "the data fetches" is NOT sufficient — a symbol that fetches but can't
-    be routed as a US stock would pass validation and then fail (or worse,
-    fill wrong) at execution. Checked before the network call: it's cheaper
-    and gives a more precise reason than an empty DataFrame would.
+    The bar was "IBKR can route it as a US stock" until 2026-08-09. That
+    reason left with IBKR, but the CHECK stays, because a better one was
+    already sitting in this project's evidence: **yfinance reports volume as
+    identically ZERO for spot FX pairs and serves foreign listings and futures
+    with gaps and holidays a US session does not have** — and Kronos, which is
+    the main consumer of this list, conditions on volume. Scoring a model on a
+    dead input returns a confident artifact, which is exactly why the asset-
+    class IC screen had to use CME futures rather than spot FX.
+
+    So this is no longer "the order path can't fill it"; it is "the research
+    would be measuring nothing". Same symbols dropped, an honest reason.
+
+    Checked before the network call: cheaper, and a more precise reason than
+    an empty DataFrame would give.
     """
     if "." in sym:
         suffix = sym.rsplit(".", 1)[1]
         if suffix in _PAIR_SUFFIXES:
-            # IBKR writes FX pairs as EUR.USD — a dot, but not an exchange.
-            return "FX pair — pipeline trades US stocks only"
+            return "FX pair — yfinance reports zero volume; Kronos needs volume"
         # yfinance marks non-US listings with an exchange suffix: 9988.HK,
         # ASML.AS, VOD.L. US listings carry no suffix.
-        return f"foreign listing ({suffix}) — pipeline trades US stocks only"
+        return f"foreign listing ({suffix}) — research universe is US-listed"
     if "-" in sym and sym.rsplit("-", 1)[1] in _PAIR_SUFFIXES:
-        return "FX/crypto pair — pipeline trades US stocks only"
+        return "FX/crypto pair — yfinance volume is unreliable for these"
     if "=" in sym:
         # yfinance futures (ES=F) and FX (EURUSD=X)
-        return "future/FX contract — pipeline trades US stocks only"
+        return "future/FX contract — research universe is US-listed equities"
     return None
 
 
@@ -198,43 +201,10 @@ def validate_symbols(symbols: list[str]) -> tuple[list[str], list[tuple[str, str
     return ok, dropped
 
 
-# ------------------------------------------------------- position safety
-
-def held_symbols(settings: dict) -> set[str] | None:
-    """Symbols with a non-zero position on the paper account.
-
-    Returns `None` if IBKR is unreachable — the caller MUST treat that as
-    "unknown", not "nothing held".
-
-    Connects with `readonly=True`, so TWS/Gateway itself rejects any order
-    placement on this connection — the read-only guarantee is enforced at the
-    broker, not merely by this function happening not to call order methods.
-    """
-    try:
-        import ibkr_service as ibs
-    except Exception:
-        return None
-
-    ib = None
-    try:
-        ib = ibs.connect(port=settings.get("ibkr_port", 4002),
-                         client_id=POSITION_CHECK_CLIENT_ID, readonly=True)
-        ibs.verify_paper_account(ib)
-        return {p.contract.symbol for p in ib.positions() if p.position != 0}
-    except Exception:
-        return None
-    finally:
-        if ib is not None:
-            try:
-                ib.disconnect()
-            except Exception:
-                pass
-
-
 # ------------------------------------------------------------------ selftest
 
 def _selftest() -> None:
-    """Offline checks for the pure logic (no network, no IBKR)."""
+    """Offline checks for the pure logic (no network, no venue)."""
     print("watchlist.py selftest")
 
     # flatten: dedupes across groups, preserves first-appearance order
@@ -267,13 +237,14 @@ def _selftest() -> None:
     assert normalize_symbol("9988.HK") == "9988.HK"  # left alone, rejected later
     print("  normalize_symbol                ok")
 
-    # pipeline support — the checks that stop an untradeable symbol entering
-    # the universe paper_trader/autotrade buy from
+    # research support — the checks that stop a symbol yfinance cannot
+    # meaningfully serve from entering the universe Kronos and the research
+    # agent read
     assert pipeline_supported("AAPL") is None
-    assert pipeline_supported("BRK-B") is None          # class share, tradeable
+    assert pipeline_supported("BRK-B") is None          # class share, researchable
     assert "foreign listing" in pipeline_supported("9988.HK")
     assert "foreign listing" in pipeline_supported("ASML.AS")
-    assert "FX pair" in pipeline_supported("EUR.USD")    # IBKR-style FX, not an exchange
+    assert "FX pair" in pipeline_supported("EUR.USD")   # dotted FX, not an exchange
     assert "FX/crypto" in pipeline_supported("BTC-USD")
     assert "future/FX" in pipeline_supported("ES=F")
     assert "future/FX" in pipeline_supported("EURUSD=X")

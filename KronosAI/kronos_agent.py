@@ -5,23 +5,23 @@ Kronos as the project's quantitative research agent: forecasts each
 watchlist ticker's close price N trading days ahead and ranks the
 watchlist by predicted return. Shared by:
   - trader_app.py's "Kronos forecast" menu item (analysis only, no orders)
-  - paper_trader.py's `--signal kronos` path (feeds the same approval +
+  - ftmo_runner.py's ranking step (feeds the same sizing +
     execution pipeline momentum uses — ATR sizing, bracket orders,
     RiskGuard, trade journal are all untouched by which signal produced
     the ranking)
   - kronos_watchlist_forecast.py, the ad hoc CLI for eyeballing forecasts
 
 forecast_signal() returns the exact (top, data, ranked) shape as
-paper_trader.compute_signal() so callers don't need to know which signal
+the shared signal contract so callers don't need to know which signal
 produced it. `data[ticker]` keeps trader_app.fetch()'s original
 capitalized OHLCV columns (Open/High/Low/Close/Volume) since that's what
-indicators.atr() and paper_trader's sizing expect; only the internal copy
+indicators.atr() and ftmo_sizing expect; only the internal copy
 fed to Kronos itself is lower-cased.
 
 Always force-refetches through today into price_data_live/ (same dir
-paper_trader.py uses) rather than trader_app's price_data/ — that cache
+the live paths use) rather than trader_app's price_data/ — that cache
 is keyed only by ticker, not date range, and silently served stale/
-truncated history to whichever script asked first (see paper_trader.py's
+truncated history to whichever script asked first (see the live cache's
 LIVE_DATA_DIR comment for the incident this avoids).
 
 sample_count matters: a single sample (sample_count=1) is noisy — swung
@@ -31,7 +31,7 @@ Default here is 10 as a speed/stability tradeoff.
 
 Status: unvalidated. No backtest, no grade_calls.py-style calibration yet.
 Per CLAUDE.md rule 5 (autonomy earned by evidence, not capability), this
-stays opt-in — paper_trader.py still defaults to momentum rotation, the
+stays opt-in — see signal_policy.py for what may run, the
 one strategy that's actually earned Phase 3.
 """
 import sys
@@ -188,7 +188,7 @@ def _predict(names, df_list, x_ts_list, y_ts_list, pred_len, sample_count,
 
 def forecast_signal(settings: dict, pred_len: int = PRED_LEN,
                      sample_count: int = DEFAULT_SAMPLE_COUNT, verbose: bool = False):
-    """Same (top, data, ranked) contract as paper_trader.compute_signal():
+    """Same (top, data, ranked) contract the live signal path expects:
     ranked = predicted % change in close, `pred_len` trading days out,
     sorted descending; top = top-N tickers (dual-momentum-style "only
     buy positive" filter applied if settings['risk_engine'] is set)."""

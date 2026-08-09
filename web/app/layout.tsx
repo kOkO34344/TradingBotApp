@@ -38,7 +38,7 @@ const plexMono = IBM_Plex_Mono({
 
 export const metadata: Metadata = {
   title: "TradingBotApp",
-  description: "Watch station for the FTMO and IBKR trading venues",
+  description: "Watch station for the FTMO trading venue",
 };
 
 export default function RootLayout({

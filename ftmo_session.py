@@ -8,7 +8,7 @@ quotes into `ftmo_monitor`, and can place an order in the middle of all that.
 This module is that connection.
 
 THREADING, AND WHY NOT THE ASYNCIO REACTOR. The cTrader SDK is Twisted; the
-FastAPI backend and `ib_async` are asyncio. The obvious marriage is Twisted's
+FastAPI backend is asyncio. The obvious marriage is Twisted's
 asyncio reactor, and `ftmo_service.install_asyncio_reactor()` exists for it.
 This module deliberately does NOT use it: it runs the DEFAULT reactor on its
 own daemon thread with `installSignalHandlers=False`, and callers hand work in
@@ -18,7 +18,7 @@ That choice buys isolation. A shared asyncio reactor means a slow protobuf
 round trip and a slow HTTP request are competing for one event loop, and a
 bug in either stalls the other — including stalling the equity monitor, which
 is the one thing on this venue that must never stall. It also mirrors what
-`api/trader_worker.py` already does for IBKR's synchronous order calls, so the
+a dedicated worker thread does for any synchronous order call, so the
 project has one threading story rather than two.
 
 Consequence to respect: **every public method here blocks the calling thread.**
@@ -612,7 +612,7 @@ class FTMOSession:
         """Cross-check the bar series against the live quote, and RAISE on a
         mismatch rather than trading on a mis-scaled price.
 
-        Directly modelled on `paper_trader.get_net_liquidation_usd`, which
+        Directly modelled on the retired IBKR equity conversion, which
         verifies IBKR's FX direction against an independent quote and raises,
         because an inverted rate misstated equity by ~29% and would have
         mis-sized every order. The failure here is the same shape and worse:

@@ -2,12 +2,12 @@
 """
 api/ftmo_api.py — the FTMO venue's read surface for the web backend.
 
-The counterpart to `ib_hub.py`. Same division of labour as the rest of `api/`:
+The venue's read surface. Same division of labour as the rest of `api/`:
 this is a THIN WRAPPER. It owns no risk logic, no sizing and no thresholds —
 `ftmo_rules` decides, `ftmo_sizing` sizes, `ftmo_session` transports, and this
 file turns their output into JSON. The browser path and the terminal path must
 not be able to disagree about a limit, which is the same reason the IBKR side
-keeps order placement in `ibkr_service`.
+keeps order placement in `ftmo_runner` and `ftmo_session`.
 
 BLOCKING, ON PURPOSE. `ftmo_session` runs Twisted on its own thread and every
 one of its methods blocks the caller. FastAPI handlers therefore have to reach
@@ -85,6 +85,24 @@ def get_session(autostart: bool = True) -> fs.FTMOSession | None:
             _state.update(status="error", error=str(e).splitlines()[0])
             _session = None
             return None
+
+
+def shutdown() -> None:
+    """Drop the shared session on process exit. Never raises.
+
+    Called from the app's lifespan teardown. A failure here must not turn a
+    clean shutdown into a traceback — the process is going away either way,
+    and the venue closes the socket when it does.
+    """
+    global _session
+    with _lock:
+        s, _session = _session, None
+        _state.update(status="idle", error=None, connected_at=None)
+    if s is not None:
+        try:
+            s.stop()
+        except Exception:                                     # noqa: BLE001
+            log.debug("FTMO session did not stop cleanly", exc_info=True)
 
 
 def _universe_symbols(specs: dict) -> list[str]:

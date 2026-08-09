@@ -3,11 +3,10 @@
 /**
  * app-shell.tsx — the frame: tab strip, annunciator rail, kill switch.
  *
- * FOUR SCREENS, NOT EIGHT (2026-08-09). The old nav carried three dimmed IBKR
- * entries for a venue rule 9 retired, so a third of the app advertised a
- * broker that places no orders. Watch / Signal / Market / Ledger name what you
- * came to do; IBKR is a section at the foot of Watch, where "retired, three
- * positions still open" is a sentence rather than a permanently greyed tab.
+ * FOUR SCREENS (2026-08-09). Watch / Signal / Market / Ledger name what you
+ * came to do. It was eight, three of them a dimmed IBKR section for a venue
+ * that placed no orders; that venue was removed the same day and there is no
+ * second broker left for this shell to reason about.
  *
  * THE ANNUNCIATOR RAIL replaces a row of badges, and follows the aviation
  * convention it borrows from: a legend that is DARK has nothing to say. Only
@@ -17,11 +16,11 @@
  * distinction rule 2 of web/CLAUDE.md makes between UNKNOWN and UNPROTECTED,
  * for the same reason: they call for different actions.
  *
- * THE HEADER REPORTS FTMO, NOT IBKR (2026-08-07). FTMO is the venue that
- * trades; IBKR is retired in place and its web connection is off by default.
- * Reporting a retired venue's socket in the primary pill meant a healthy
+ * THE HEADER REPORTS ONE VENUE, and the lesson from when it reported two is
+ * worth keeping: a retired broker's socket in the primary pill meant a healthy
  * dashboard permanently displayed `ConnectionRefusedError [Errno 61] ... 4002`
- * on every screen while the venue that was working went unmentioned.
+ * on every screen while the venue that was working went unmentioned. Report
+ * the thing that can trade.
  *
  * The session timeline is fetched HERE and passed down, not fetched by the
  * night band. The rail's MISSED lamp and the band read the same audit trail,
@@ -41,26 +40,22 @@ import {
   type FtmoTimeline,
   type Status,
 } from "@/lib/api";
-import { useLive } from "@/lib/use-live";
 import { useFtmoStream, type FtmoPosition, type FtmoVerdict } from "@/lib/use-ftmo";
 import { cn } from "@/lib/utils";
 import { DASH } from "@/lib/format";
-import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { KillSwitch } from "@/components/kill-switch";
 
 const NAV = [
   { href: "/watch", label: "Watch", icon: Gauge, hint: "the account and the night" },
-  { href: "/signal", label: "Signal", icon: Activity, hint: "Kronos and the rotation" },
+  { href: "/signal", label: "Signal", icon: Activity, hint: "Kronos and the plan" },
   { href: "/market", label: "Market", icon: LineChart, hint: "prices and indicators" },
   { href: "/ledger", label: "Ledger", icon: BookOpen, hint: "journal and evidence" },
 ];
 
 interface ShellContext {
   status: Status | null;
-  /** True only when the backend verified a paper account. Gates every control. */
-  tradingAllowed: boolean;
-  gateReason: string;
+  statusError: string | null;
   refreshStatus: () => void;
   /** Last night's session. `null` until the first read lands. */
   timeline: FtmoTimeline | null;
@@ -69,8 +64,7 @@ interface ShellContext {
 
 const ShellCtx = createContext<ShellContext>({
   status: null,
-  tradingAllowed: false,
-  gateReason: "Still checking the account.",
+  statusError: null,
   refreshStatus: () => {},
   timeline: null,
   timelineError: null,
@@ -80,7 +74,6 @@ export const useShell = () => useContext(ShellCtx);
 
 export function AppShell({ children }: { children: React.ReactNode }) {
   const pathname = usePathname();
-  const live = useLive();
   const ftmo = useFtmoStream();
   const [status, setStatus] = useState<Status | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
@@ -104,7 +97,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [nonce, live.revisions.orders, live.connection?.connected]);
+  }, [nonce]);
 
   // The audit trail only changes when the runner fires, so once a minute is
   // ample — a tighter poll re-reads the same files ~20x for nothing.
@@ -131,24 +124,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
 
-  const conn = live.connection ?? status?.connection ?? null;
-  const backendUp = live.socketOpen || status !== null;
-  const gatewayUp = conn?.connected ?? false;
-  const paper = conn?.paper ?? false;
-
-  const tradingAllowed = Boolean(backendUp && gatewayUp && paper);
-  const gateReason = !backendUp
-    ? "The trading API isn't running. Start it with ./run_web.sh."
-    : !gatewayUp
-      ? conn?.error ?? "Not connected to IB Gateway."
-      : !paper
-        ? `Account ${conn?.account ?? "unknown"} is not a verified paper account. Controls are disabled.`
-        : "";
-
-  // IBKR's web connection is off by default (rule 9). When it is, the whole
-  // IBKR apparatus is a statement about a venue nobody is asking anything of,
-  // so it is reported quietly and never as a fault.
-  const ibkrDisabled = conn?.disabled ?? false;
+  // "Is the backend there at all" is now a single question with a single
+  // answer: /api/status touches no broker, so it succeeds whenever the
+  // process is up. There is no second venue whose socket could confuse this.
+  const backendUp = status !== null;
 
   const ftmoReady = Boolean(ftmo.snap?.connection.ready);
   const ftmoAccount = ftmo.snap?.account?.accountId ?? null;
@@ -173,8 +152,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     <ShellCtx.Provider
       value={{
         status,
-        tradingAllowed,
-        gateReason,
+        statusError,
         refreshStatus: () => setNonce((n) => n + 1),
         timeline,
         timelineError,
@@ -212,29 +190,10 @@ export function AppShell({ children }: { children: React.ReactNode }) {
 
             <div className="ml-auto flex items-center gap-2">
               <FtmoBadge account={ftmoAccount} equity={ftmoEquity} />
-              {ibkrDisabled && (
-                <Badge
-                  variant="outline"
-                  className="silkscreen hidden border-border/70 px-1.5 py-0.5 lg:inline-flex"
-                  title={
-                    conn?.error ??
-                    "IBKR is retired for new orders (rule 9). Its open positions are still managed."
-                  }
-                >
-                  IBKR retired
-                </Badge>
-              )}
               {/* Deliberately NOT gated on any connection: a switch you cannot
                   reach when things are going wrong is not a switch. */}
               <KillSwitch
-                venue={ibkrDisabled ? "ftmo" : "ibkr"}
-                autotradeEnabled={
-                  ibkrDisabled
-                    ? (ftmoArmed ?? false)
-                    : (status?.autotrade.enabled ?? false)
-                }
-                disabled={ibkrDisabled ? false : !tradingAllowed}
-                disabledReason={gateReason}
+                armed={ftmoArmed}
                 onChanged={() => setNonce((n) => n + 1)}
               />
               <Button
@@ -259,28 +218,22 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             missed={timeline?.counts.missed ?? null}
           />
 
-          {/* Two conditions the rail is not loud enough for.
+          {/* One condition the rail is not loud enough for.
               A lamp with a tooltip is right for "this is worth a look"; it is
-              wrong for "nothing on this screen is real". Both of these mean
-              the latter, so they get a full-width strip and a sentence that
-              says what to do about it. */}
+              wrong for "nothing on this screen is real". A dead backend means
+              the latter, so it gets a full-width strip and a sentence that
+              says what to do about it.
+
+              The paper-account banner that used to sit beside this one was
+              IBKR's, and went with it. FTMO's Challenge capital is simulated
+              by the venue, so there is no live/paper distinction for this app
+              to police — the equivalent guard here is the arm toggle, which is
+              in the header and lit on the rail. */}
           {!backendUp && (
             <Banner tone="loss">
               <strong className="font-medium">Trading API offline</strong> — no
               screen on this app has live data. Start it with{" "}
               <code className="tabular">./run_web.sh</code>.
-            </Banner>
-          )}
-          {backendUp && gatewayUp && !paper && (
-            // Rule 1, on screen. The account gate already disables every
-            // control, but a disabled button explains nothing — this says
-            // which account and why, in the one situation where the app is
-            // connected to something it must not trade.
-            <Banner tone="loss">
-              <strong className="font-medium">
-                Account {conn?.account} is NOT a verified paper account
-              </strong>{" "}
-              — every trading control is disabled.
             </Banner>
           )}
         </header>

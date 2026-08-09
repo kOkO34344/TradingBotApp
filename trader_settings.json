@@ -29,13 +29,6 @@
   "momentum_top_n": 3,
   "rotation_margin_pct": 1.0,
   "momentum_lookback_m": 12,
-  "ibkr_port": 4002,
-  "ibkr_client_id": 9,
-  "autotrade": {
-    "enabled": false,
-    "signal": "kronos",
-    "allow_momentum": false
-  },
   "signal": "kronos",
   "ftmo": {
     "autotrade": {

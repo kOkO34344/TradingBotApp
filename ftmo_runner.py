@@ -2,7 +2,8 @@
 """
 ftmo_runner.py — unattended Kronos trading on the FTMO venue.
 
-The autotrade path for FTMO. `autotrade_runner.py` is its IBKR counterpart and
+The autotrade path for FTMO, and the only order path this project has.
+It replaced an IBKR counterpart (`autotrade_runner.py`, removed 2026-08-09) and
 the two are deliberately separate scripts: they talk to different brokers, have
 different limit models, and must be armable independently. A single toggle
 covering both would mean turning FTMO on could not be done without also
@@ -23,7 +24,7 @@ all four as well. Rule 9 says Kronos may only trade a class that passed its own
 screen, so on the evidence this script should fire on nothing.
 
 It runs anyway, on the owner's explicit instruction. **That is the THIRD
-deliberate exception to rule 5**, after `autotrade_runner.py` (rule 7) and the
+deliberate exception to rule 5**, after the retired IBKR runner (rule 7) and the
 unattended FTMO path (rule 9), and it is recorded the same way in
 `ftmo_signal.py`. Flag it as an exception; it is not precedent and it is not a
 validated strategy. What autonomy removes is the human approval step, never a
@@ -99,7 +100,7 @@ PRAGUE = ZoneInfo("Europe/Prague")
 # morning, every day EXCEPT Sunday, in Sofia time.
 #
 # THIS CHECK IS AUTHORITATIVE; the launchd schedule is only a superset.
-# Exactly the arrangement `autotrade_runner.py` uses for NYSE hours, and for
+# Exactly the arrangement the retired IBKR runner used for NYSE hours, and for
 # the same reason: a plist encodes wall-clock local time and cannot express
 # "except Sunday" across a window that wraps midnight without 120 entries,
 # while `zoneinfo` handles the DST switch (EEST +03 -> EET +02) and the
@@ -507,7 +508,7 @@ def execute_plan(session, plan: dict, positions, audit, now,
     """Exits first, then entries, then verify every stop against the venue.
 
     Exits run before entries so the position-count cap has headroom freed
-    before anything tries to use it — the same ordering `paper_trader` uses on
+    before anything tries to use it — the same ordering the retired IBKR path used on
     the IBKR side and for the same reason.
     """
     by_symbol = {p.symbol: p for p in positions}

@@ -27,7 +27,7 @@ import {
   type BacktestFinding as Finding,
   type BacktestsResponse,
 } from "@/lib/api";
-import { useFetch } from "@/lib/use-live";
+import { useFetch } from "@/lib/use-fetch";
 import { DASH, fmtPct } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";

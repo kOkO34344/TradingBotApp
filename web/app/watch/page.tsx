@@ -14,22 +14,16 @@
  * limit in the browser is how the dashboard and the engine end up disagreeing
  * about whether the account is safe.
  *
- * IBKR lives at the foot of this page rather than in the nav. Rule 9 retired
- * it for new orders while three positions stay open and managed, so it is a
- * paragraph you can expand — not a permanently greyed tab implying a venue you
- * might trade.
+ * There is no second venue on this page. IBKR was retired on 2026-08-02 and
+ * removed entirely on 2026-08-09 — its modules, routes, screens and launchd
+ * jobs are gone. Its 46 journal rows remain in the Ledger, labelled `ibkr`,
+ * because an audit trail you prune when a venue is retired is not one.
  */
-
-import { useState } from "react";
-import { ChevronRight } from "lucide-react";
 
 import { useFtmoStream, type FtmoLimit, type FtmoPosition } from "@/lib/use-ftmo";
 import { DASH, fmtAge, fmtPrice, fmtSigned, fmtUsd, pnlClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { NightBand } from "@/components/night-band";
-import { Tabs, TabsContent, TabsList, TabsTrigger } from "@/components/ui/tabs";
-import { DashboardScreen } from "@/components/screens/dashboard-screen";
-import { PositionsScreen } from "@/components/screens/positions-screen";
 
 export default function WatchPage() {
   const { snap, ageMs, live } = useFtmoStream();
@@ -120,8 +114,6 @@ export default function WatchPage() {
           <PositionsTable rows={snap.positions} />
         )}
       </section>
-
-      <RetiredVenue />
     </div>
   );
 }
@@ -349,59 +341,6 @@ function Td({
     >
       {children}
     </td>
-  );
-}
-
-/**
- * IBKR, retired in place.
- *
- * Collapsed by default and drawn in muted chrome, never in the failure colour:
- * "deliberately not connected" is a configured state, not a fault. It stays
- * reachable because three positions are still open and still real, and a
- * screen you cannot find is a worse way to say "retired" than one that tells
- * you so when you open it.
- */
-function RetiredVenue() {
-  const [open, setOpen] = useState(false);
-  return (
-    <section className="module">
-      <button
-        onClick={() => setOpen((v) => !v)}
-        aria-expanded={open}
-        className="flex w-full items-center gap-2 px-4 py-2.5 text-left hover:bg-accent/30"
-      >
-        <ChevronRight
-          className={cn("size-3.5 text-muted-foreground transition-transform",
-                        open && "rotate-90")}
-        />
-        <span className="silkscreen">IBKR — retired</span>
-        <span className="text-xs text-muted-foreground">
-          no new orders (rule 9); open positions still managed by{" "}
-          <code className="tabular">reflect_on_trades.py</code>
-        </span>
-      </button>
-      {open && (
-        <Tabs defaultValue="positions" className="gap-0 border-t hairline border-border">
-          <TabsList
-            variant="line"
-            className="w-full justify-start gap-4 border-b hairline border-border px-4"
-          >
-            <TabsTrigger value="positions" className="silkscreen flex-none">
-              Positions &amp; stops
-            </TabsTrigger>
-            <TabsTrigger value="account" className="silkscreen flex-none">
-              Account
-            </TabsTrigger>
-          </TabsList>
-          <TabsContent value="positions">
-            <PositionsScreen />
-          </TabsContent>
-          <TabsContent value="account">
-            <DashboardScreen />
-          </TabsContent>
-        </Tabs>
-      )}
-    </section>
   );
 }
 

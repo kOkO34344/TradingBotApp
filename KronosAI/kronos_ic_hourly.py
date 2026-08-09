@@ -10,7 +10,7 @@ discussion).
 Why hourly, not 15/30-min: yfinance caps 15m/30m history at ~58-60 days
 (confirmed 2026-07-24) — too short for a meaningful pooled sample or an
 honest in/out-of-sample split. Hourly bars go back ~729 days via yfinance,
-no live IBKR connection needed. IBKR's own 15-min bars only reach ~1 year
+no live broker connection needed. A broker's own 15-min bars reach ~1 year
 per request (2-year request came back empty) — also confirmed 2026-07-24.
 
 Same pretraining-cutoff constraint as kronos_backtest.py applies here too:
@@ -66,7 +66,7 @@ def fetch_hourly(ticker: str, force: bool = False, cache_dir: Path = None) -> pd
     different dir for any live/frequently-refreshed caller (e.g.
     autotrade_signals.py) so a force=True live refresh never overwrites
     this backtest's cache out from under it (the exact bug documented in
-    paper_trader.py's LIVE_DATA_DIR comment, just for hourly bars)."""
+    the live-data cache convention, just for hourly bars)."""
     cache_dir = cache_dir or HOURLY_CACHE_DIR
     cache_path = cache_dir / f"{ticker}.csv"
     if cache_path.exists() and not force:

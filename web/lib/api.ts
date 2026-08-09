@@ -1,15 +1,19 @@
 /**
  * api.ts — typed client for the local FastAPI backend.
  *
- * The backend runs on 127.0.0.1:8000 and is never deployed (it holds a live
- * IB Gateway connection and can place orders). Everything here assumes
- * localhost; there is no auth layer because there is no network exposure.
+ * The backend runs on 127.0.0.1:8000 and is never deployed (it can arm the
+ * unattended FTMO runner). Everything here assumes localhost; there is no auth
+ * layer because there is no network exposure.
+ *
+ * FTMO is the only venue. The IBKR half of this client — account, positions,
+ * orders, bars, symbol search and the whole preview/execute write path — was
+ * removed on 2026-08-09 with the venue itself.
  *
  * Error handling is deliberate: the backend returns human-readable `detail`
  * strings written for Koko to read, and this client surfaces them verbatim
- * instead of collapsing them to "request failed". A 504 on the positions
- * endpoint means "IBKR didn't answer, state unknown", which is a different
- * thing from an error, and the UI needs to be able to tell them apart.
+ * instead of collapsing them to "request failed". A 503/504 means "the venue
+ * did not answer, state unknown", which is a different thing from an error,
+ * and the UI needs to be able to tell them apart.
  */
 
 export const API_BASE =
@@ -55,59 +59,13 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
   return (await res.json()) as T;
 }
 
+function post<T>(path: string, body: unknown): Promise<T> {
+  return request<T>(path, { method: "POST", body: JSON.stringify(body) });
+}
+
 /* ------------------------------------------------------------------ types */
 
-export interface ConnectionState {
-  connected: boolean;
-  account: string | null;
-  paper: boolean;
-  host: string;
-  port: number;
-  clientId: number;
-  connectedSince: number | null;
-  error: string | null;
-  attempts: number;
-  marketDataType: string;
-  /**
-   * True when the backend was told not to dial IB Gateway at all (rule 9
-   * retired the venue). Distinct from `connected: false`, which means it
-   * tried and failed. Never render this state as a fault.
-   */
-  disabled: boolean;
-}
-
-export interface RiskLimits {
-  max_order_notional_usd: number;
-  max_open_positions: number;
-  max_daily_loss_usd: number;
-  require_stop_attached: boolean;
-}
-
-export interface JournalSummary {
-  total: number;
-  byEvent: Record<string, number>;
-  superseded: number;
-  disputed: number;
-  blocked: number;
-  lastTimestamp: string | null;
-  path: string;
-}
-
-export interface Status {
-  connection: ConnectionState;
-  riskLimits: RiskLimits;
-  signal: { active: string; default: string; disabled: string[] };
-  autotrade: { enabled: boolean; signal: string; allowMomentum: boolean };
-  journal: JournalSummary;
-  marketOpen: boolean;
-  settings: {
-    riskPctPerTrade: number | null;
-    momentumTopN: number | null;
-    benchmark: string | null;
-    ibkrPort: number | null;
-  };
-}
-
+/** An OHLCV bar. Shared by the price chart and the Kronos forecast chart. */
 export interface Bar {
   time: number;
   open: number;
@@ -117,23 +75,15 @@ export interface Bar {
   volume: number | null;
 }
 
-export interface IndicatorPoint {
-  time: number;
-  value: number;
-}
-
-export interface IndicatorResult {
-  id: string;
-  key: string;
-  name: string;
-  pane: string;
-  params: Record<string, number>;
-  series: Record<string, IndicatorPoint[]>;
-  bounds: [number, number] | null;
-  guides: number[];
-  error: string | null;
-}
-
+/**
+ * A journal fill drawn on the chart.
+ *
+ * Which venue a row belongs to is load-bearing, not decoration: the journal
+ * holds both brokers and they share ticker spellings, so an IBKR AAPL share is
+ * not an FTMO AAPL CFD. The bars endpoint filters by venue before returning
+ * these — without that, one venue's fills get drawn on the other's chart,
+ * asserting a trade that never happened there.
+ */
 export interface TradeMarker {
   time: number;
   event: string;
@@ -155,24 +105,54 @@ export interface Levels {
   error: string | null;
 }
 
-export interface BarsResponse {
-  symbol: string;
-  label: string;
-  kind: string;
-  timeframe: string;
-  duration: string;
-  bars: Bar[];
-  count: number;
-  source: string;
-  delayed: boolean;
-  fetchedAt: number;
-  ageSeconds: number;
-  fromCache: boolean;
-  stale: boolean;
+export interface JournalSummary {
+  total: number;
+  byEvent: Record<string, number>;
+  superseded: number;
+  disputed: number;
+  blocked: number;
+  lastTimestamp: string | null;
+  path: string;
+}
+
+/**
+ * Everything the shell needs that is NOT on the FTMO socket.
+ *
+ * Deliberately venue-independent: it reads settings and a CSV, so it answers
+ * while cTrader is unreachable. Anything needing the venue comes over
+ * /ws/ftmo, which is allowed to be down.
+ */
+export interface Status {
+  venue: "ftmo";
+  signal: { active: string; default: string; disabled: string[] };
+  journal: JournalSummary;
+  /**
+   * Whether the runner is inside its 16:30-11:30 Sofia window right now.
+   * `open: null` means the window could not be evaluated — unknown, never
+   * "closed".
+   */
+  tradingWindow: { open: boolean | null; reason: string };
+  settings: {
+    riskPctPerTrade: number | null;
+    benchmark: string | null;
+  };
+}
+
+export interface IndicatorPoint {
+  time: number;
+  value: number;
+}
+
+export interface IndicatorResult {
+  id: string;
+  key: string;
+  name: string;
+  pane: string;
+  params: Record<string, number>;
+  series: Record<string, IndicatorPoint[]>;
+  bounds: [number, number] | null;
+  guides: number[];
   error: string | null;
-  indicators: IndicatorResult[];
-  levels: Levels | null;
-  markers: TradeMarker[];
 }
 
 export interface IndicatorCatalogEntry {
@@ -184,77 +164,6 @@ export interface IndicatorCatalogEntry {
   description: string;
   bounds: [number, number] | null;
   guides: number[];
-}
-
-export interface SymbolSuggestion {
-  /** The exact string to send to /api/bars if this row is chosen. */
-  query: string;
-  symbol: string;
-  label: string;
-  name?: string;
-  description: string;
-  secType: string;
-  exchange: string;
-  currency: string;
-  source: "watchlist" | "ibkr" | "ftmo";
-}
-
-export interface ResolvedSymbol {
-  key: string;
-  kind: string;
-  symbol: string;
-  currency: string;
-  exchange: string;
-  expiry: string;
-  label: string;
-}
-
-export interface StopOrder {
-  qty: number;
-  tif: string;
-  status: string;
-  /** Trigger price, added by the API for display; null if unavailable. */
-  price: number | null;
-}
-
-export interface Position {
-  symbol: string;
-  secType: string;
-  currency: string;
-  position: number;
-  avgCost: number;
-  marketPrice: number | null;
-  marketValue: number | null;
-  unrealizedPnl: number | null;
-  unrealizedPct: number | null;
-  account: string;
-  /** null means UNKNOWN — IBKR did not answer. Never render it as "no stop". */
-  protected: boolean | null;
-  protectionReason: string;
-  stops: StopOrder[];
-}
-
-export interface PositionsResponse {
-  positions: Position[];
-  count: number;
-  openOrdersError: string | null;
-}
-
-export interface OpenOrder {
-  orderId: number;
-  permId: number;
-  parentId: number;
-  symbol: string;
-  secType: string;
-  action: string;
-  orderType: string;
-  tif: string;
-  quantity: number;
-  limitPrice: number | null;
-  stopPrice: number | null;
-  status: string;
-  filled: number;
-  remaining: number;
 }
 
 export interface JournalRow {
@@ -277,29 +186,6 @@ export interface JournalRow {
   supersededBy: number | null;
   disputed: boolean;
   disputeNote: string;
-}
-
-export interface AccountSummary {
-  account: string | null;
-  paper: boolean;
-  netLiquidationUsd: number | null;
-  conversionError: string | null;
-  baseCurrency: string | null;
-  netLiquidation: Record<string, string>;
-  totalCash: Record<string, string>;
-  unrealizedPnl: number | null;
-  realizedPnl: number | null;
-  availableFunds: number | null;
-  buyingPower: number | null;
-  exchangeRates: Record<string, string>;
-}
-
-export interface Timeframe {
-  key: string;
-  barSize: string;
-  defaultDuration: string;
-  maxDuration: string;
-  seconds: number;
 }
 
 export interface BacktestRow {
@@ -357,28 +243,8 @@ export interface BacktestsResponse {
 
 export const api = {
   status: () => request<Status>("/api/status"),
-  account: () => request<AccountSummary>("/api/account"),
-  positions: () => request<PositionsResponse>("/api/positions"),
-  orders: () => request<{ orders: OpenOrder[]; count: number }>("/api/orders"),
-  timeframes: () =>
-    request<{ timeframes: Timeframe[]; default: string }>("/api/timeframes"),
   indicatorCatalog: () =>
     request<{ indicators: IndicatorCatalogEntry[] }>("/api/indicators/catalog"),
-  resolve: (q: string) =>
-    request<ResolvedSymbol>(`/api/symbols/resolve?q=${encodeURIComponent(q)}`),
-  searchSymbols: (q: string, limit = 12) =>
-    request<{
-      query: string;
-      results: SymbolSuggestion[];
-      brokerSearch: boolean;
-      note: string | null;
-    }>(`/api/symbols/search?q=${encodeURIComponent(q)}&limit=${limit}`),
-  watchlist: () =>
-    request<{
-      groups: { name: string; tickers: string[] }[];
-      tickers: string[];
-      resolved: ResolvedSymbol[];
-    }>("/api/symbols/watchlist"),
   journal: (params: { symbol?: string; event?: string; limit?: number } = {}) => {
     const q = new URLSearchParams();
     if (params.symbol) q.set("symbol", params.symbol);
@@ -390,106 +256,6 @@ export const api = {
     );
   },
   backtests: () => request<BacktestsResponse>("/api/backtests"),
-  bars: (opts: {
-    symbol: string;
-    timeframe?: string;
-    duration?: string;
-    rth?: boolean;
-    indicators?: string[];
-    levels?: boolean;
-    markers?: boolean;
-  }) => {
-    const q = new URLSearchParams({ symbol: opts.symbol });
-    if (opts.timeframe) q.set("timeframe", opts.timeframe);
-    if (opts.duration) q.set("duration", opts.duration);
-    if (opts.rth !== undefined) q.set("rth", String(opts.rth));
-    if (opts.indicators?.length) q.set("indicators", opts.indicators.join(","));
-    if (opts.levels !== undefined) q.set("levels", String(opts.levels));
-    if (opts.markers !== undefined) q.set("markers", String(opts.markers));
-    return request<BarsResponse>(`/api/bars?${q}`);
-  },
-};
-
-/* ------------------------------------------------------ write actions */
-
-/**
- * Every write is preview -> execute(token). The execute call carries only
- * the token: the backend reads the order parameters from the stored preview,
- * so the browser cannot show one order and submit a different one.
- */
-export interface TradePreview {
-  token: string;
-  kind: "flatten" | "reprotect" | "bracket" | "cancel";
-  symbol: string;
-  createdAt: number;
-  expiresInSeconds: number;
-  allowed: boolean;
-  reason: string;
-  steps: string[];
-  warnings?: string[];
-  ordersUnknown?: boolean;
-  // flatten
-  position?: number;
-  action?: string;
-  quantity?: number;
-  estimatedPrice?: number;
-  estimatedProceeds?: number;
-  ordersToCancel?: {
-    orderId: number;
-    type: string;
-    action: string;
-    qty: number;
-    tif: string;
-    status: string;
-    stopPrice: number | null;
-  }[];
-  // reprotect
-  stopPrice?: number;
-  currentPrice?: number;
-  tif?: string;
-  riskIfHit?: number;
-  distancePct?: number;
-  alreadyProtected?: boolean | null;
-  existingCoverage?: string;
-  // bracket
-  autoQuantity?: number;
-  quantitySource?: string;
-  marketPrice?: number;
-  entryLimit?: number;
-  stopSource?: string;
-  atr?: number;
-  notional?: number;
-  riskIfStopped?: number;
-  riskPctOfEquity?: number;
-  netLiquidationUsd?: number;
-  parentTif?: string;
-  stopTif?: string;
-  // cancel
-  orderId?: number;
-  orderType?: string;
-  isStop?: boolean;
-}
-
-function post<T>(path: string, body: unknown): Promise<T> {
-  return request<T>(path, { method: "POST", body: JSON.stringify(body) });
-}
-
-export const trade = {
-  previewFlatten: (symbol: string) =>
-    post<TradePreview>("/api/trade/flatten/preview", { symbol }),
-  previewReprotect: (symbol: string, stopPrice: number) =>
-    post<TradePreview>("/api/trade/reprotect/preview", { symbol, stopPrice }),
-  previewBracket: (opts: {
-    symbol: string;
-    action?: string;
-    quantity?: number | null;
-    stopPrice?: number | null;
-  }) => post<TradePreview>("/api/trade/bracket/preview", opts),
-  previewCancel: (orderId: number) =>
-    post<TradePreview>("/api/trade/cancel/preview", { orderId }),
-
-  execute: (kind: TradePreview["kind"], token: string) =>
-    post<Record<string, unknown>>(`/api/trade/${kind}/execute`, { token }),
 };
 
 /* ----------------------------------------------------------------- jobs */
@@ -674,8 +440,9 @@ export interface FtmoUniverseSymbol {
 /**
  * The FTMO chart payload.
  *
- * Deliberately NOT `BarsResponse`. That type carries IBKR-only fields —
- * `duration`, `fromCache`, `ageSeconds`, `stale` — which exist because IBKR
+ * Deliberately its own type. The retired IBKR bars response carried
+ * `duration`, `fromCache`, `ageSeconds` and `stale`, which existed because that
+ * broker
  * paces historical requests and is asked for a span of time. cTrader is asked
  * for a bar COUNT and has no such cache, so those fields would be invented
  * values a component could render as if they meant something.
@@ -787,62 +554,3 @@ export const ftmo = {
       {}
     ),
 };
-
-/* ------------------------------------------------------------ rebalance */
-
-export interface RebalanceBuy {
-  symbol: string;
-  qty: number;
-  entry: number;
-  stop: number;
-  price: number;
-  atr: number;
-}
-
-export interface RebalanceProposal {
-  jobId: string;
-  createdAt: number;
-  expiresInSeconds: number;
-  decided: boolean;
-  approved: boolean;
-  decidedBy: string | null;
-  signal: string;
-  top: string[];
-  top_n: number;
-  net_liq_usd: number;
-  sells: { symbol: string; quantity: number }[];
-  holds: { symbol: string; quantity: number }[];
-  buys: RebalanceBuy[];
-  ranking: { ticker: string; value: number; inTop: boolean }[];
-  rankLabel: string;
-  marketOpen: boolean;
-}
-
-export const rebalance = {
-  start: (dryRun = false) =>
-    post<Job<unknown>>("/api/rebalance/start", { dryRun }),
-  pending: (jobId?: string) =>
-    request<{ pending: RebalanceProposal | null; job: Job<unknown> | null }>(
-      `/api/rebalance/pending${jobId ? `?jobId=${jobId}` : ""}`
-    ),
-  decide: (jobId: string, approved: boolean) =>
-    post<{ jobId: string; approved: boolean }>("/api/rebalance/decide", {
-      jobId,
-      approved,
-    }),
-};
-
-/* ------------------------------------------------------------- websocket */
-
-export type WsMessage =
-  | { topic: "connection"; ts?: number; data: ConnectionState }
-  | { topic: "orderStatus"; ts: number; data: Record<string, unknown> }
-  | { topic: "execution"; ts: number; data: Record<string, unknown> }
-  | { topic: "position"; ts: number; data: Record<string, unknown> }
-  | { topic: "accountValue"; ts: number; data: Record<string, unknown> }
-  | { topic: "ibError"; ts: number; data: Record<string, unknown> }
-  | { topic: "ping"; ts: number; data: null };
-
-export function wsUrl(): string {
-  return `${API_BASE.replace(/^http/, "ws")}/ws`;
-}

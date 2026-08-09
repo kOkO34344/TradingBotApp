@@ -56,7 +56,7 @@ def load_knowledge() -> str:
 
 
 def load_reflections(ticker: str) -> str:
-    """Post-trade win/loss self-reviews for this ticker (see reflect_on_trades.py),
+    """Post-trade win/loss self-reviews for this ticker (see ftmo_closes.py),
     most recent first, capped. This is how past outcomes feed back into future
     theses instead of every research run starting from a blank slate."""
     if not REFLECTIONS_DIR.exists():

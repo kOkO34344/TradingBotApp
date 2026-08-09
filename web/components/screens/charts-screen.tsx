@@ -41,7 +41,7 @@ import {
   type IndicatorCatalogEntry,
 } from "@/lib/api";
 import { useFtmoStream } from "@/lib/use-ftmo";
-import { useFetch } from "@/lib/use-live";
+import { useFetch } from "@/lib/use-fetch";
 import { DASH, fmtPct, fmtPrice, fmtTime, pnlClass } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";

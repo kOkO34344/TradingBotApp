@@ -9,7 +9,7 @@ no reflection — the account changed and the record did not.
 
 This project has already paid for that hole once, on the other venue. GOOGL's
 GTC stop gapped through on 2026-07-23, the position closed, and NOTHING
-recorded it for two days. The fix there was `reflect_on_trades.py`'s two-tier
+recorded it for two days. The fix there was the IBKR monitor's two-tier
 close detection. This is the FTMO counterpart, and it is better positioned than
 its IBKR sibling in one specific way: cTrader will hand back the actual closing
 DEAL, so a detected close carries the venue's own price and P&L rather than a
@@ -36,7 +36,7 @@ Then ask for that position's deals and journal what actually happened.
 Three properties that are not negotiable
 ----------------------------------------
 1. **A read that failed is not an account that is flat.** Every "position
-   vanished" conclusion requires a SUCCESSFUL read. `reflect_on_trades.py`
+   vanished" conclusion requires a SUCCESSFUL read. The IBKR monitor
    journalled a phantom full liquidation against two positions that were open
    the whole time, because an empty best-effort position cache is
    indistinguishable from a flat account. cTrader differs from IBKR here — a

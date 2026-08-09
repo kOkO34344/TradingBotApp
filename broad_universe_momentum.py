@@ -44,7 +44,7 @@ OUT_OF_SAMPLE_START = "2019-01-01"
 SP500_URL = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 
 # Deliberately isolated from price_data/ — that shared cache gets silently
-# truncated to ~2yr by paper_trader.py's force-refetch of its ranking
+# truncated to ~2yr by the live ranking cache's force-refetch
 # universe (see broad_universe_momentum.py run of 2026-07-23, which caught
 # 10 mega-caps corrupted to 530 rows). Backtests must own their own cache.
 DATA_DIR = Path(__file__).parent / "price_data_backtest"

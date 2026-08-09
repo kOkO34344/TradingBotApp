@@ -17,7 +17,7 @@ passed its own screen, so on the evidence NOTHING here should fire.
 
 It runs anyway, on the owner's explicit instruction of 2026-08-05, given with
 that evidence stated. **That is a THIRD deliberate exception to rule 5, after
-`autotrade_runner.py` (rule 7) and the unattended FTMO path (rule 9). Flag it
+the retired IBKR runner (rule 7) and the unattended FTMO path (rule 9). Flag it
 that way; it is not precedent, and it is not a validated strategy.** What
 autonomy removes is the human approval step — never a limit. Every order still
 passes the rule engine, the sizer's per-trade and per-portfolio caps, and the
@@ -242,7 +242,7 @@ def momentum_rank(bars_by_symbol: dict, lookback: int = MOMENTUM_LOOKBACK_BARS,
 
     GATED. Raises `SignalDisabled` unless `allow_momentum=True` (rule 8). The
     gate is at the top of the computation rather than at the call sites, for
-    the same reason `paper_trader.compute_signal` puts it there: a gate a
+    the same reason the retired IBKR signal path put it there: a gate a
     caller has to remember is a gate that gets forgotten.
 
     **Read this before treating the output as "the 18.5% CAGR strategy".**
@@ -331,7 +331,7 @@ def apply_rotation_margin(held: list[str], ranked: list[Candidate],
                           margin_pct: float, n: int = TOP_N) -> list[str]:
     """Incumbents keep their slot unless beaten by more than `margin_pct`.
 
-    Same hysteresis `paper_trader.apply_rotation_margin` gives the IBKR path,
+    Same hysteresis the retired IBKR rotation used (removed 2026-08-09),
     and for the same measured reason: two runs 30 minutes apart on identical
     closed-market data produced different top-3s because two names sat ~1
     point apart. This suppresses churn; it does NOT create edge. The IC is

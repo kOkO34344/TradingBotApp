@@ -63,17 +63,17 @@ changing anything structural.
    deliberately; screens must null it out on error (see `chartData` in
    `components/screens/charts-screen.tsx`) or they attribute AAPL's price to
    whatever you just failed to load.
-9. **The market screen is an FTMO screen** (moved 2026-08-07). It reads
-   `/api/ftmo/bars`, not `/api/bars` — the IBKR path returned
-   `ConnectionRefusedError ... 4002` on every request once Gateway went down,
-   and rule 9 retired that venue, so it was never coming back. `/api/bars`
-   still exists and still works when Gateway is up; nothing was deleted.
+9. **Every screen reads FTMO.** There is one venue as of 2026-08-09; the IBKR
+   modules, routes, screens and WebSocket hub were removed. The chart moved to
+   `/api/ftmo/bars` two days earlier for the reason worth remembering: the
+   IBKR path returned `ConnectionRefusedError ... 4002` on every request once
+   Gateway went down, which made a working app look broken.
 10. **A lamp on the annunciator rail is not loud enough for "nothing here is
-    real".** The rail says "worth a look"; two conditions mean the whole app
-    is showing nothing true — the backend being down, and being connected to
-    an account that is not verified paper — and both get a full-width banner
-    with a sentence saying what to do. Rule 1 is a safety property, and a
-    disabled button explains nothing on its own.
+    real".** The rail says "worth a look"; a dead backend means the whole app
+    is showing nothing true, so it gets a full-width banner with a sentence
+    saying what to do. (The paper-account banner beside it was IBKR's and went
+    with the venue: FTMO Challenge capital is simulated by the broker, so there
+    is no live/paper distinction for this app to police.)
     This replaced a per-screen `isFtmoBacked()` banner scope on 2026-08-09.
     That list existed because a `startsWith("/ftmo")` test silently became the
     wrong question the moment a non-`/ftmo` route started reading from FTMO —
@@ -81,13 +81,14 @@ changing anything structural.
     four-route shell removed the need for it, but keep the lesson: **do not
     re-derive which venue a screen uses from its URL.**
 11. **Which venue a journal row belongs to is load-bearing, not decoration.**
-    The journal holds both brokers and they share ticker spellings: an IBKR
-    AAPL share is not an FTMO AAPL CFD. `markers_for()` takes a `venue`
-    filter and the charts screen passes it — without that, one venue's fills
-    are drawn on the other's chart, asserting a trade that never happened
-    there. Rows written before the venue column existed store `""` and are
-    IBKR by construction; they are displayed as `ibkr` but dimmed, because
-    that value was inferred from age rather than recorded.
+    The journal still holds both brokers — removing IBKR removed the code,
+    never the record — and they share ticker spellings: an IBKR AAPL share is
+    not an FTMO AAPL CFD. `markers_for()` takes a `venue` filter and the chart
+    passes it; without that, one venue's fills are drawn on the other's chart,
+    asserting a trade that never happened there. Rows written before the venue
+    column existed store `""` and are IBKR by construction; they display as
+    `ibkr` but dimmed, because that value was inferred from age rather than
+    recorded.
 12. **Both venues' event vocabularies have to be listed, or one disappears.**
     IBKR writes `RESULT`/`CLOSE_FILLED` with status `filled`; the FTMO runner
     writes `RESULT` with status `accepted` and `EXIT` for a rotation close.

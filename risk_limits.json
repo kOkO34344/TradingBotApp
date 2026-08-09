@@ -1,6 +1,0 @@
-{
-  "max_order_notional_usd": 50000,
-  "max_open_positions": 8,
-  "max_daily_loss_usd": 2000,
-  "require_stop_attached": true
-}

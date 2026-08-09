@@ -16,7 +16,7 @@ four correlated names across correlated asset classes is exactly how that
 happens. `ftmo_rules.max_position_risk_usd()` owns that budget; this module
 spends it.
 
-WHY THIS ISN'T paper_trader.size_position(). That one thinks in SHARES of a US
+WHY THIS ISN'T THE OLD SHARE SIZER. The retired IBKR sizer thought in SHARES of a US
 equity priced in the account currency, and clamps to a notional cap. Here a
 "unit" means something different per instrument — 100,000 base units for a
 standard FX lot, one ounce for gold, one share for a stock CFD, one index point
@@ -51,7 +51,7 @@ from dataclasses import dataclass
 
 import ftmo_rules as fr
 
-# Same multiple paper_trader.py uses, so the two venues place stops at the same
+# Same multiple the retired IBKR sizer used, so stops stayed at the same
 # distance for the same volatility and their results stay comparable.
 STOP_ATR_MULT = 2.0
 
