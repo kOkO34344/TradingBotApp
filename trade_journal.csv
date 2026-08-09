@@ -82,3 +82,5 @@ timestamp,event,symbol,sec_type,action,quantity,price,stop,target,status,detail,
 2026-08-09T02:54:30,BLOCKED,,cfd,,,,,,skipped,"NZDUSD: NO TRADE: minimum volume 100000 (1000 units) would risk 4.70, over the 1.42 allowed — refusing rather than sizing up",ftmo
 2026-08-09T16:48:14,BLOCKED,,cfd,,,,,,skipped,"AUDUSD: refusing — a BUY needs a positive forecast to derive a target from, got -0.17% — no take-profit exists on the profitable side (ranked into the top 4 on a forecast of -0.17%)",ftmo
 2026-08-09T16:48:14,BLOCKED,,cfd,,,,,,skipped,"GBPUSD: refusing — a BUY needs a positive forecast to derive a target from, got -0.33% — no take-profit exists on the profitable side (ranked into the top 4 on a forecast of -0.33%)",ftmo
+2026-08-09T17:15:27,NOTE,,cfd,,,,,,autotrade DISABLED,"FTMO autotrade turned OFF from the web UI. Signal: kronos. The rule engine, sizer and stop attachment stay enforced either way.",ftmo
+2026-08-09T17:15:34,NOTE,,cfd,,,,,,autotrade enabled,"FTMO autotrade turned ON from the web UI. Signal: kronos. The rule engine, sizer and stop attachment stay enforced either way.",ftmo

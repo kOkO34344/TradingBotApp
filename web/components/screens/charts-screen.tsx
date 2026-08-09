@@ -479,7 +479,7 @@ export function ChartsScreen() {
  * existed because IBKR reports a stop as a SEPARATE order that can be missing,
  * DAY-scoped, or unknowable when `reqAllOpenOrders` wedges. An FTMO stop is a
  * field on the position itself, returned in the same frame, so "unknown" is
- * not a state this venue can be in — and rendering an amber UNKNOWN that can
+ * not a state this venue can be in — and rendering an UNKNOWN state that can
  * never occur would be inventing doubt rather than reporting it.
  */
 

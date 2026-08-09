@@ -120,7 +120,7 @@ export function ForecastChart({
     );
 
     if (forecast.length) {
-      // One flat amber colour for every predicted bar — not green/red by
+      // One flat signal colour for every predicted bar — not green/red by
       // direction. Colouring a forecast like a real candle invites reading
       // it as one.
       const fc = chart.addSeries(CandlestickSeries, {

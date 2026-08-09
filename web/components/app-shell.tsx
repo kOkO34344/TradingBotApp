@@ -11,7 +11,7 @@
  * THE ANNUNCIATOR RAIL replaces a row of badges, and follows the aviation
  * convention it borrows from: a legend that is DARK has nothing to say. Only
  * a lit legend means something, so a quiet rail is a quiet account and it
- * reads at a glance from across the room. It distinguishes caution (amber)
+ * reads at a glance from across the room. It distinguishes caution (magenta)
  * from warning (red) rather than collapsing both into "bad" — the same
  * distinction rule 2 of web/CLAUDE.md makes between UNKNOWN and UNPROTECTED,
  * for the same reason: they call for different actions.
@@ -251,7 +251,7 @@ export function AppShell({ children }: { children: React.ReactNode }) {
  * so the rail is quiet when the account is quiet and anything glowing is worth
  * walking over to read.
  *
- * `null` is a third state everywhere it can occur and is drawn amber, never
+ * `null` is a third state everywhere it can occur and is drawn magenta, never
  * dark: "we have not heard" must not be able to look like "all clear". A dark
  * BREACHED lamp on a dashboard that never reached the venue would be the most
  * dangerous pixel in this app.

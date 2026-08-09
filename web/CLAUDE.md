@@ -39,9 +39,16 @@ changing anything structural.
    never `0`. A green "No exposure" tile over three live positions is the
    same failure class as the phantom liquidation this project already had.
 2. **Stop protection has three states**: covered (green), unprotected (red),
-   and UNKNOWN (amber, `protected === null`). Never collapse unknown into
-   unprotected — a wedged `reqAllOpenOrders` is missing information, not a
-   negative answer.
+   and UNKNOWN (magenta, `protected === null`). Never collapse unknown into
+   unprotected — a read that timed out is missing information, not a negative
+   answer.
+   **UNKNOWN is magenta and must stay out of the warm family.** The Ember
+   theme's signal colour is burnt orange (~45°), which sits between loss-red
+   (~25°) and the amber this used to be (~82°) — close enough that a caution
+   chip and a button could read as the same class of thing. Magenta (~345°) is
+   65° clear of loss on the other side of the wheel. It is unusual for
+   "caution" and that was accepted deliberately; do not "fix" it back to amber
+   without moving the signal colour first.
 3. **No indicator math in JavaScript.** Everything comes from
    `indicators.py` via `/api/indicators`. This is a root-CLAUDE.md rule that
    explicitly names the web dashboard.
@@ -95,7 +102,15 @@ changing anything structural.
     `journal_api`'s `FILL_EVENTS`/`FILLED_STATUSES` knew only IBKR's until
     2026-08-07, so every FTMO fill scored zero chart markers — correctly
     journalled, and undrawable.
-13. **A firing that did not happen must be drawn, not omitted.** The night
+13. **A `bg-*` utility on a `.plate` is INVISIBLE, and that is structural.**
+    Chamfered plates are built from two negative-z pseudo-elements rather than
+    a border, because `clip-path` clips a border away at exactly the corners
+    the chamfer creates. The element's own background paints below negative-z
+    descendants, so `::after` covers it completely. Tint a child, or use a
+    plain bordered box — a coloured callout is not a panel and does not need to
+    be one. Same reason anything that must escape a plate's bounds has to be
+    portalled: `clip-path` clips descendants.
+14. **A firing that did not happen must be drawn, not omitted.** The night
     band's `missed` cells are hours the trading window was open and the runner
     left no audit record — the Mac asleep on battery. 22 consecutive silent
     failures went unnoticed for 19 hours on this project, so a band that
@@ -104,7 +119,7 @@ changing anything structural.
     inside a CLOSED slot came from `--force`, `--reconcile` or a dashboard
     preview, and drawing it as a scheduled firing would make the band evidence
     for something that never happened.
-14. **Tab selection lives in the URL** (`components/url-tabs.tsx`). Six of the
+15. **Tab selection lives in the URL** (`components/url-tabs.tsx`). Six of the
     old eight routes are tabs now, and `/backtests` has to keep landing on the
     backtests table. It also means every panel is reachable over HTTP, which
     is the only way to exercise a Base UI panel without a browser — see the

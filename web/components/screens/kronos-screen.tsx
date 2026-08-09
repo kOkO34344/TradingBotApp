@@ -322,7 +322,7 @@ export function KronosScreen() {
                 forecast={chart.forecast}
               />
               <p className="text-xs text-muted-foreground">
-                Amber bars are model output, not prices. This is one draw —
+                Tinted bars are model output, not prices. This is one draw —
                 the range column above shows where the other draws landed.
               </p>
             </Card>

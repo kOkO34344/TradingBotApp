@@ -64,7 +64,7 @@ marked, and one cell per hourly wakeup.
 
 **The wakeup lane is the reason it exists.** A slot the window was open for
 with no audit record is a firing that never ran, and it is drawn struck and
-amber rather than left blank. This project lost 22 consecutive firings to the
+magenta rather than left blank. This project lost 22 consecutive firings to the
 Mac sleeping on battery and did not notice for 19 hours; the band is where that
 becomes visible in one glance. A record inside a *closed* slot is `forced` — a
 `--force` run, a `--reconcile`, or a plan previewed from this dashboard — and
@@ -106,6 +106,11 @@ state, never as "disarmed". The rule was learned on stop protection: on
 2026-07-29 a wedged broker answered position requests normally while the
 open-orders request timed out, and conflating "did not answer" with "no stop"
 would have shown four naked positions that were fully protected the whole time.
+
+Unknown is **magenta**, deliberately outside the warm family. The signal colour
+is burnt orange, which sits between loss-red and the amber this used to be —
+too close for a distinction this load-bearing. Magenta takes a moment to learn
+and is unmistakable once you have.
 
 **2. A pending request never renders as a fact.**
 Tiles show `—` until the venue has actually answered. An in-flight positions

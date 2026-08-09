@@ -24,7 +24,7 @@
  *
  * WHAT DID NOT HAPPEN IS THE POINT. A slot the window was open for with no
  * audit record is a firing that never ran — the Mac was asleep — and it is
- * drawn as a struck amber cell, not as a gap. 22 consecutive silent failures
+ * drawn as a struck magenta cell, not as a gap. 22 consecutive silent failures
  * went unnoticed for 19 hours on this project; a band that quietly omitted
  * them would draw a tidy line through a night when nothing was watching.
  *
@@ -48,7 +48,7 @@ export function NightBand() {
 
   if (error) {
     return (
-      <section className="module p-4">
+      <section className="plate p-4">
         <Lane>Night band</Lane>
         <p className="mt-2 text-sm text-loss">
           Couldn&apos;t read the audit trail: {error}
@@ -59,7 +59,7 @@ export function NightBand() {
 
   if (!data) {
     return (
-      <section className="module p-4">
+      <section className="plate p-4">
         <Lane>Night band</Lane>
         <p className="mt-2 text-sm text-muted-foreground">
           Reading the audit trail.
@@ -87,7 +87,7 @@ export function NightBand() {
   const { dailySoft, dailyFlatten, dailyHard } = data.limits;
 
   return (
-    <section className="module overflow-hidden">
+    <section className="plate overflow-hidden">
       <BandHeader data={data} />
 
       <div className="space-y-4 px-4 pt-3 pb-4">
