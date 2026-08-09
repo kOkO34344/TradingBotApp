@@ -563,13 +563,26 @@ hole exactly where the unattended closes are.
    DAY stop looks fine for hours and then silently vanishes at the session
    close. History (the GOOGL and AAPL closes, the half-executed rebalance, the
    Gateway wedges) and the operational runbook are in the **`ibkr` skill**.
-5. **Web UI — BUILT 2026-08-01.** `api/` (FastAPI) + `web/` (Next.js 16,
-   shadcn/Base UI, lightweight-charts). Start with `./run_web.sh`, open
-   http://localhost:3000. **Local only — never deploy it and never bind
-   0.0.0.0:** it holds a live Gateway connection and can place orders, so
-   there is no auth layer because there is no network exposure. Full
-   rationale in `web/README.md` (architecture, screen list, write-action
-   mechanics); UI-specific rules in `web/CLAUDE.md`.
+5. **Web UI — BUILT 2026-08-01, restructured to four screens 2026-08-09.**
+   `api/` (FastAPI) + `web/` (Next.js 16, shadcn/Base UI, lightweight-charts).
+   Start with `./run_web.sh`, open http://localhost:3000. **Local only — never
+   deploy it and never bind 0.0.0.0:** it holds a live Gateway connection and
+   can place orders, so there is no auth layer because there is no network
+   exposure. Full rationale in `web/README.md` (architecture, screen list,
+   write-action mechanics); UI-specific rules in `web/CLAUDE.md`.
+   - **Watch / Signal / Market / Ledger**, down from eight routes. The old nav
+     carried three dimmed IBKR entries for a venue rule 9 retired, so a third
+     of the app advertised a broker that places no orders; IBKR is now a
+     collapsed drawer at the foot of Watch. Every old URL redirects, and the
+     six that became tabs carry `?tab=` so a bookmark lands where it used to.
+   - **The night band** on `/watch` is the one new capability, not just a
+     restyle: `/api/ftmo/timeline` reconstructs a full session (16:30→11:30
+     Sofia) from `ftmo_audit/*.jsonl` and draws one cell per hourly wakeup.
+     **A firing that was due and did not happen is drawn, not omitted** — the
+     22 consecutive sleep failures of 2026-08-08 went unnoticed for 19 hours,
+     and this is where that becomes visible at a glance. It reads the audit
+     files off disk with no venue session, so it still answers when the broker
+     is unreachable.
    - **The backend is a thin wrapper on purpose.** Order placement, sizing,
      RiskGuard, journalling and indicator math stay in `ibkr_service.py` /
      `paper_trader.py` / `indicators.py`. The browser path and the terminal
@@ -585,9 +598,9 @@ hole exactly where the unattended closes are.
      send another. Entries are bracket-only.
    - Still true, and still worth weighing: more research/trading cycles is
      the evidence this project is gated on; a dashboard is not.
-   - The UI is IBKR-only and stays that way for now — FTMO has no browser
-     surface yet. Deciding whether it gets one is a later call, not an
-     assumed requirement.
+   - FTMO now has the browser surface and IBKR is the secondary one — the
+     reverse of how this was built. Order placement is still IBKR-only; the
+     FTMO screens read, arm/disarm and preview, and place nothing.
 6. **FTMO venue — IN PROGRESS. CONNECTED 2026-08-05.** New trading venue per
    rule 9. Five modules, selftested offline (**294 checks**, no credentials
    needed): `ftmo_rules.py`, `ftmo_monitor.py`, `ftmo_sizing.py`,

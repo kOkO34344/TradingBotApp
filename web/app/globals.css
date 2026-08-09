@@ -4,6 +4,18 @@
 
 @custom-variant dark (&:is(.dark *));
 
+/* ============================================================ NIGHT WATCH
+   This panel is read by one person, usually in the morning, about a robot
+   that traded alone overnight against limits that can kill the account with
+   no order placed. It is not a trading terminal — nobody trades here. It is a
+   watch-keeper's station: what happened, how close did it come, what next.
+
+   Every choice below follows from that. Cold ink so a lit screen at 2am is
+   not a lamp. One signal colour for interaction, so that anything coloured is
+   either something you can press or something that means something. And the
+   meaning colours — profit, loss, caution — are never spent on chrome, which
+   is what lets an UNPROTECTED position read as alarming on a quiet screen. */
+
 @theme inline {
   --color-profit: var(--profit);
   --color-loss: var(--loss);
@@ -14,9 +26,9 @@
   --color-chart-down: var(--chart-down);
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-inter-tight);
-  --font-mono: var(--font-jetbrains-mono);
-  --font-heading: var(--font-inter-tight);
+  --font-sans: var(--font-archivo);
+  --font-mono: var(--font-plex-mono);
+  --font-heading: var(--font-archivo);
   --color-sidebar-ring: var(--sidebar-ring);
   --color-sidebar-border: var(--sidebar-border);
   --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
@@ -55,115 +67,108 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* Light theme. Amber is the only saturated UI colour; every other accent is
-   reserved for meaning — profit, loss, and "state unknown". Keeping the
-   palette that narrow is what lets an unprotected position read as alarming
-   on a screen that is otherwise grey. */
+/* Light. Same hues, re-lit — not a different design. The toggle exists
+   because this app is also read at midday, and a dark panel in a bright room
+   is as hard to read as a bright one at night. */
 :root {
-  --background: oklch(0.995 0.002 85);
-  --foreground: oklch(0.16 0.01 60);
+  --background: oklch(0.985 0.004 268);
+  --foreground: oklch(0.19 0.02 268);
   --card: oklch(1 0 0);
-  --card-foreground: oklch(0.16 0.01 60);
+  --card-foreground: oklch(0.19 0.02 268);
   --popover: oklch(1 0 0);
-  --popover-foreground: oklch(0.16 0.01 60);
-  --primary: oklch(0.62 0.155 62);
-  --primary-foreground: oklch(0.99 0.01 85);
-  --secondary: oklch(0.96 0.008 80);
-  --secondary-foreground: oklch(0.24 0.02 60);
-  --muted: oklch(0.96 0.006 80);
-  --muted-foreground: oklch(0.52 0.02 65);
-  --accent: oklch(0.95 0.03 80);
-  --accent-foreground: oklch(0.28 0.05 60);
-  --destructive: oklch(0.577 0.245 27.325);
-  --border: oklch(0.9 0.008 75);
-  --input: oklch(0.9 0.008 75);
-  --ring: oklch(0.62 0.155 62);
-  --radius: 0.5rem;
+  --popover-foreground: oklch(0.19 0.02 268);
+  --primary: oklch(0.52 0.175 278);
+  --primary-foreground: oklch(0.99 0.005 278);
+  --secondary: oklch(0.955 0.006 268);
+  --secondary-foreground: oklch(0.26 0.025 268);
+  --muted: oklch(0.955 0.006 268);
+  --muted-foreground: oklch(0.505 0.02 268);
+  --accent: oklch(0.94 0.03 278);
+  --accent-foreground: oklch(0.3 0.08 278);
+  --destructive: oklch(0.53 0.21 25);
+  --border: oklch(0.895 0.008 268);
+  --input: oklch(0.895 0.008 268);
+  --ring: oklch(0.52 0.175 278);
 
-  /* Domain semantics — see .dark for the rationale on each. */
-  --profit: oklch(0.52 0.15 150);
-  --loss: oklch(0.55 0.21 27);
-  --unknown: oklch(0.62 0.12 62);
-  --neutral: oklch(0.52 0.02 65);
+  --profit: oklch(0.5 0.15 155);
+  --loss: oklch(0.53 0.21 25);
+  --unknown: oklch(0.6 0.12 75);
+  --neutral: oklch(0.505 0.02 268);
 
-  /* Chart series. Ordered by how often an overlay is added, so the common
-     case never collides with the amber UI accent. */
-  --chart-1: oklch(0.62 0.155 62);
-  --chart-2: oklch(0.55 0.14 240);
-  --chart-3: oklch(0.55 0.15 300);
-  --chart-4: oklch(0.55 0.13 190);
-  --chart-5: oklch(0.5 0.02 65);
-  --chart-grid: oklch(0.9 0.008 75);
-  --chart-up: oklch(0.52 0.15 150);
-  --chart-down: oklch(0.55 0.21 27);
+  --chart-1: oklch(0.52 0.175 278);
+  --chart-2: oklch(0.53 0.14 225);
+  --chart-3: oklch(0.54 0.15 320);
+  --chart-4: oklch(0.54 0.12 185);
+  --chart-5: oklch(0.5 0.02 268);
+  --chart-grid: oklch(0.895 0.008 268);
+  --chart-up: oklch(0.5 0.15 155);
+  --chart-down: oklch(0.53 0.21 25);
 
-  --sidebar: oklch(0.98 0.004 80);
-  --sidebar-foreground: oklch(0.16 0.01 60);
-  --sidebar-primary: oklch(0.62 0.155 62);
-  --sidebar-primary-foreground: oklch(0.99 0.01 85);
-  --sidebar-accent: oklch(0.95 0.03 80);
-  --sidebar-accent-foreground: oklch(0.28 0.05 60);
-  --sidebar-border: oklch(0.9 0.008 75);
-  --sidebar-ring: oklch(0.62 0.155 62);
+  --sidebar: oklch(0.975 0.005 268);
+  --sidebar-foreground: oklch(0.19 0.02 268);
+  --sidebar-primary: oklch(0.52 0.175 278);
+  --sidebar-primary-foreground: oklch(0.99 0.005 278);
+  --sidebar-accent: oklch(0.94 0.03 278);
+  --sidebar-accent-foreground: oklch(0.3 0.08 278);
+  --sidebar-border: oklch(0.895 0.008 268);
+  --sidebar-ring: oklch(0.52 0.175 278);
 }
 
-/* Dark is the default (see app/layout.tsx). Surfaces are warm-neutral rather
-   than pure black so the amber accent and the red/green P&L colours all sit
-   on the same visual footing. */
+/* Dark is the default (see app/layout.tsx). Cold ink, not warm neutral and
+   not black: a true black ground makes every hairline rule fight for
+   attention, and a warm one puts the whole panel in the same family as the
+   caution colour, which is the one thing that must stand apart. */
 .dark {
-  /* Swiss instrument panel: a near-neutral greyscale carrying all the
-     structure, with exactly ONE signal colour (--primary, a cold precise
-     cyan) reserved for interaction and focus. Chrome never competes with
-     data: profit/loss keep their own hues below because those encode a
-     VALUE, not a state, and desaturating them would cost real information. */
-  --background: oklch(0.145 0.004 250);
-  --foreground: oklch(0.965 0.002 250);
-  --card: oklch(0.185 0.005 250);
-  --card-foreground: oklch(0.965 0.002 250);
-  --popover: oklch(0.185 0.005 250);
-  --popover-foreground: oklch(0.965 0.002 250);
-  --primary: oklch(0.80 0.14 210);
-  --primary-foreground: oklch(0.16 0.02 250);
-  --secondary: oklch(0.245 0.006 250);
-  --secondary-foreground: oklch(0.965 0.002 250);
-  --muted: oklch(0.225 0.005 250);
-  --muted-foreground: oklch(0.68 0.008 250);
-  --accent: oklch(0.3 0.035 65);
-  --accent-foreground: oklch(0.92 0.03 80);
-  --destructive: oklch(0.68 0.2 25);
-  --border: oklch(1 0 0 / 11%);
-  --input: oklch(1 0 0 / 15%);
-  --ring: oklch(0.78 0.16 68);
+  --background: oklch(0.152 0.014 268);
+  --foreground: oklch(0.955 0.004 268);
+  --card: oklch(0.197 0.016 268);
+  --card-foreground: oklch(0.955 0.004 268);
+  --popover: oklch(0.197 0.016 268);
+  --popover-foreground: oklch(0.955 0.004 268);
+  --primary: oklch(0.72 0.152 278);
+  --primary-foreground: oklch(0.16 0.03 278);
+  --secondary: oklch(0.245 0.018 268);
+  --secondary-foreground: oklch(0.955 0.004 268);
+  --muted: oklch(0.228 0.016 268);
+  --muted-foreground: oklch(0.665 0.014 268);
+  --accent: oklch(0.29 0.045 278);
+  --accent-foreground: oklch(0.92 0.04 278);
+  --destructive: oklch(0.665 0.205 25);
+  --border: oklch(1 0 0 / 10%);
+  --input: oklch(1 0 0 / 14%);
+  --ring: oklch(0.72 0.152 278);
 
-  /* --profit / --loss are for P&L only, never for UI chrome: on this screen a
-     green number means money made, and nothing else should compete with that.
+  /* Meaning colours, never chrome.
+
      --unknown is deliberately its OWN colour rather than a shade of --loss.
-     "IBKR didn't answer, so stop state is unknown" is not the same claim as
-     "this position has no stop", and the UI must never let the first read as
-     the second — that conflation is what would send Koko re-protecting
-     positions that are already protected. */
-  --profit: oklch(0.75 0.17 152);
-  --loss: oklch(0.68 0.2 25);
-  --unknown: oklch(0.78 0.13 68);
-  --neutral: oklch(0.7 0.015 70);
+     "The venue did not answer, so the stop state is unknown" is not the same
+     claim as "this position has no stop", and the UI must never let the first
+     read as the second — that conflation is what would send Koko re-protecting
+     positions that were already protected. It is also why the signal colour is
+     periwinkle rather than anything warm: caution has to own that end of the
+     spectrum alone. */
+  --profit: oklch(0.76 0.16 155);
+  --loss: oklch(0.665 0.205 25);
+  --unknown: oklch(0.82 0.135 82);
+  --neutral: oklch(0.69 0.016 268);
 
-  --chart-1: oklch(0.78 0.16 68);
-  --chart-2: oklch(0.68 0.15 240);
-  --chart-3: oklch(0.7 0.16 300);
-  --chart-4: oklch(0.72 0.13 190);
-  --chart-5: oklch(0.72 0.02 70);
-  --chart-grid: oklch(1 0 0 / 8%);
-  --chart-up: oklch(0.75 0.17 152);
-  --chart-down: oklch(0.68 0.2 25);
+  --chart-1: oklch(0.72 0.152 278);
+  --chart-2: oklch(0.7 0.14 225);
+  --chart-3: oklch(0.72 0.15 320);
+  --chart-4: oklch(0.74 0.12 185);
+  --chart-5: oklch(0.7 0.02 268);
+  --chart-grid: oklch(1 0 0 / 7%);
+  --chart-up: oklch(0.76 0.16 155);
+  --chart-down: oklch(0.665 0.205 25);
 
-  --sidebar: oklch(0.178 0.009 65);
-  --sidebar-foreground: oklch(0.96 0.004 85);
-  --sidebar-primary: oklch(0.78 0.16 68);
-  --sidebar-primary-foreground: oklch(0.18 0.03 60);
-  --sidebar-accent: oklch(0.3 0.035 65);
-  --sidebar-accent-foreground: oklch(0.92 0.03 80);
-  --sidebar-border: oklch(1 0 0 / 11%);
-  --sidebar-ring: oklch(0.78 0.16 68);
+  --sidebar: oklch(0.175 0.015 268);
+  --sidebar-foreground: oklch(0.955 0.004 268);
+  --sidebar-primary: oklch(0.72 0.152 278);
+  --sidebar-primary-foreground: oklch(0.16 0.03 278);
+  --sidebar-accent: oklch(0.29 0.045 278);
+  --sidebar-accent-foreground: oklch(0.92 0.04 278);
+  --sidebar-border: oklch(1 0 0 / 10%);
+  --sidebar-ring: oklch(0.72 0.152 278);
 }
 
 @layer base {
@@ -178,31 +183,35 @@
   }
 }
 
-/* ---------------------------------------------------------------- Swiss chrome
-   Three global decisions that define the instrument-panel look, kept here
-   rather than sprinkled per component so they cannot drift.
+/* ------------------------------------------------------------------ chrome
+   Four global decisions that define the look, kept here rather than sprinkled
+   per component so they cannot drift apart.
 
    1. TABULAR FIGURES EVERYWHERE. Numbers are the product. Proportional digits
       let a price column shift horizontally as the last digit ticks, which
       makes a live quote look like noise and two prices hard to compare.
-   2. NEAR-SQUARE CORNERS. --radius drops to 2px. Rounded cards read as
-      consumer software; hairline rectangles read as an instrument.
-   3. TIGHT HEADINGS. Inter Tight is already tight; headings go tighter still
-      and drop to a restrained weight, because scale and spacing carry the
-      hierarchy in this style, not boldness. */
+   2. MODULES, NOT CARDS. 4px radius plus a one-pixel lit top edge, so a panel
+      reads as a module bolted to an instrument face rather than as a sheet of
+      paper. Small difference, and it is the whole reason this does not look
+      like a documentation site.
+   3. SILKSCREEN LABELS. Archivo's width axis, pushed wide, uppercase and
+      widely tracked — the way equipment is labelled, where the label is
+      permanent and the reading is not.
+   4. HEADINGS DO NOT SHOUT. Scale and spacing carry hierarchy; weight is held
+      in reserve so that when something IS bold, it means something. */
 
 :root,
 .dark {
-  --radius: 0.125rem;
+  --radius: 0.25rem;
 }
 
 html {
   font-variant-numeric: tabular-nums;
-  font-feature-settings: "tnum" 1, "cv01" 1;
+  font-feature-settings: "tnum" 1;
 }
 
 h1, h2, h3, h4 {
-  letter-spacing: -0.022em;
+  letter-spacing: -0.014em;
   font-weight: 500;
 }
 
@@ -211,7 +220,34 @@ h1, h2, h3, h4 {
 .tabular {
   font-family: var(--font-mono);
   font-variant-numeric: tabular-nums;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.012em;
+}
+
+/* Equipment labelling. Used for every section heading and column header, and
+   for nothing else — the moment it decorates, it stops reading as a label. */
+.silkscreen {
+  font-family: var(--font-sans);
+  font-stretch: 118%;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.15em;
+  font-size: 0.625rem;
+  line-height: 1.1;
+  color: var(--muted-foreground);
+}
+
+/* A module: the panel surface everything sits on. The lit top edge is what
+   separates it from the ground — at this contrast a border alone disappears,
+   and a drop shadow would read as a floating card. */
+.module {
+  background: var(--card);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 5%);
+}
+
+:root .module {
+  box-shadow: inset 0 1px 0 oklch(1 0 0 / 80%), 0 1px 2px oklch(0.2 0.02 268 / 5%);
 }
 
 /* A hairline is 1px at any DPR; on a 2x display a 1px CSS border renders as
@@ -230,9 +266,17 @@ h1, h2, h3, h4 {
   .tick-flash {
     animation: tick-flash 420ms ease-out;
   }
+  .annunciator-lit {
+    animation: annunciator-in 180ms ease-out;
+  }
 }
 
 @keyframes tick-flash {
   from { background-color: color-mix(in oklch, var(--primary) 22%, transparent); }
   to   { background-color: transparent; }
+}
+
+@keyframes annunciator-in {
+  from { opacity: 0.35; }
+  to   { opacity: 1; }
 }

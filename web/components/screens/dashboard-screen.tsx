@@ -35,7 +35,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 
-export default function DashboardPage() {
+export function DashboardScreen() {
   const ftmo = useFtmoStream();
   const snap = ftmo.snap;
   const account = snap?.account ?? null;
@@ -117,7 +117,7 @@ export default function DashboardPage() {
               </span>{" "}
               <span className="text-muted-foreground">
                 ({unprotected.map((p) => p.symbol).join(", ")}) —{" "}
-                <Link href="/positions" className="underline hover:text-foreground">
+                <Link href="/watch" className="underline hover:text-foreground">
                   open positions
                 </Link>
               </span>
@@ -212,7 +212,7 @@ export default function DashboardPage() {
         IBKR is retired (rule 9) and is not shown here. Its three open positions
         are still managed by <code>reflect_on_trades.py</code> on its own
         schedule. The venue that trades is{" "}
-        <Link href="/ftmo" className="underline hover:text-foreground">
+        <Link href="/watch" className="underline hover:text-foreground">
           FTMO
         </Link>
         .
@@ -425,7 +425,7 @@ function Condition({
 
 export function DashboardLink() {
   return (
-    <Link href="/ftmo" className="inline-flex items-center gap-1 underline">
+    <Link href="/watch" className="inline-flex items-center gap-1 underline">
       FTMO <ArrowRight className="size-3" />
     </Link>
   );

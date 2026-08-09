@@ -7,7 +7,7 @@ Local control panel for the IBKR paper trading system. Next.js frontend in
 ./run_web.sh              # from the repo root — starts both
 ```
 
-Then open http://localhost:3000. Charts is the landing screen.
+Then open http://localhost:3000. Watch is the landing screen.
 
 ## This is local-only, on purpose
 
@@ -39,15 +39,38 @@ human-approved and autotrade paths.
 
 ## Screens
 
+Four routes since 2026-08-09, down from eight. The old nav carried three
+dimmed IBKR entries for a venue rule 9 retired, so a third of the app
+advertised a broker that places no orders. Every old URL still works —
+`next.config.ts` redirects them, and the six that became tabs carry `?tab=` so
+a bookmark lands where it used to.
+
 | Route | What it does |
 |---|---|
-| `/charts` | Candles for stocks, ETFs, forex, crypto and futures. 1m–1d, indicators.py overlays and sub-panes, journal trade markers, live GTC stop lines. Symbol box has typeahead (watchlist + IBKR `reqMatchingSymbols`, searchable by company name). |
-| `/dashboard` | Net liquidation (USD-converted), unrealised P&L, stop-health verdict, RiskGuard limits, signal policy, journal counts. |
-| `/positions` | Open positions with per-position stop verdict, live open orders, and the write actions: flatten, re-protect, cancel, new bracket. |
-| `/rebalance` | Runs the signal, shows the proposed diff and full ranking, waits for approve/decline. Replaces the terminal y/N prompt. |
-| `/journal` | trade_journal.csv with corrections and phantom rows marked. |
-| `/kronos` | Forecast ranking across N independent draws, spread per ticker, top-N boundary warning, per-ticker forecast chart, Monte Carlo fan. |
-| `/backtests` | Recorded results, in-sample and out-of-sample kept apart, quoted findings marked as quoted. |
+| `/watch` | The station, and the landing screen. Equity / balance / floating, the **night band**, the three limit meters, open positions, and IBKR as a collapsed "retired" drawer holding its positions and account screens. |
+| `/signal` | `?tab=forecast` Kronos ranking across N independent draws, spread per ticker, top-N boundary warning, forecast chart, Monte Carlo fan · `?tab=plan` the FTMO plan it produces · `?tab=rotation` the IBKR proposal and its approve/decline. |
+| `/market` | Candles for stocks, ETFs, forex, crypto and futures. 1m–1d, indicators.py overlays and sub-panes, journal trade markers, live stop lines. Symbol box has typeahead, searchable by company name. |
+| `/ledger` | `?tab=journal` trade_journal.csv with corrections and phantom rows marked · `?tab=backtests` recorded results, in-sample and out-of-sample kept apart, quoted findings marked as quoted. |
+
+### The night band
+
+The signature instrument on `/watch`. One session — 16:30 Sofia through 11:30
+the next morning — reconstructed from `ftmo_audit/*.jsonl` by
+`/api/ftmo/timeline`, in three lanes over one time axis: equity auto-scaled to
+its own range, the daily-loss reservoir at true scale with its thresholds
+marked, and one cell per hourly wakeup.
+
+**The wakeup lane is the reason it exists.** A slot the window was open for
+with no audit record is a firing that never ran, and it is drawn struck and
+amber rather than left blank. This project lost 22 consecutive firings to the
+Mac sleeping on battery and did not notice for 19 hours; the band is where that
+becomes visible in one glance. A record inside a *closed* slot is `forced` — a
+`--force` run, a `--reconcile`, or a plan previewed from this dashboard — and
+is never drawn as a scheduled firing.
+
+The endpoint reads the audit trail off disk with no venue session, so it still
+answers when the broker is unreachable. That is deliberate: "what did the
+runner do overnight" is exactly the question you ask when the venue is down.
 
 ## Write actions
 
@@ -117,9 +140,18 @@ dropped rather than guessed at, because the box cannot express an expiry.
 
 ```bash
 cd web
-npm run dev          # frontend only (expects the API on :8000)
-npx tsc --noEmit     # typecheck
+npm run dev                        # frontend only (expects the API on :8000)
+./node_modules/.bin/tsc --noEmit   # typecheck
+./node_modules/.bin/eslint .       # lint
 ```
+
+`npx tsc` does NOT work here — TypeScript is a transitive dependency with no
+`npx` shim, and npx answers with "This is not the tsc command you are looking
+for", which reads like a broken install. Call the local binary directly.
+
+After moving or adding a route, run `./node_modules/.bin/next typegen` (or
+delete `.next/`) before typechecking. The generated route types are stale
+otherwise and `tsc` reports missing modules for pages you deliberately removed.
 
 Backend self-tests, all offline — no IBKR connection needed:
 
@@ -128,6 +160,7 @@ Backend self-tests, all offline — no IBKR connection needed:
 .venv/bin/python api/indicators_api.py   # parity with indicators.py
 .venv/bin/python api/journal_api.py      # correction/phantom detection
 .venv/bin/python api/backtests_api.py    # in/out-of-sample parsing
+.venv/bin/python api/ftmo_api.py --selftest   # night-band session reconstruction
 ```
 
 Next.js 16 ships its own docs at `node_modules/next/dist/docs/` and warns

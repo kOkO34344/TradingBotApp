@@ -48,7 +48,7 @@ const EVENT_STYLES: Record<string, string> = {
   ERROR: "text-loss font-medium",
 };
 
-export default function JournalPage() {
+export function JournalScreen() {
   const live = useLive();
   const journal = useFetch(
     () => api.journal({ limit: 2000 }),

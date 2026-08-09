@@ -41,7 +41,7 @@ import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card } from "@/components/ui/card";
 
-export default function RebalancePage() {
+export function RebalanceScreen() {
   const { tradingAllowed, gateReason } = useShell();
   const [job, setJob] = useState<Job<unknown> | null>(null);
   const [proposal, setProposal] = useState<RebalanceProposal | null>(null);

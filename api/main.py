@@ -779,6 +779,17 @@ async def ftmo_timeframes():
             "default": ftmo_api.DEFAULT_TIMEFRAME}
 
 
+@app.get("/api/ftmo/timeline")
+async def ftmo_timeline():
+    """Last night's session, slot by slot, for the night band.
+
+    Reads the audit trail off disk — no venue, no session — so it answers
+    while the broker is unreachable. That is deliberate: "what did the runner
+    do overnight" is exactly the question you ask when the venue is down.
+    """
+    return await run_in_threadpool(ftmo_api.timeline)
+
+
 class FtmoAutotradeToggle(BaseModel):
     enabled: bool
 

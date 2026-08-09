@@ -705,8 +705,56 @@ export interface FtmoTimeframe {
   count: number;
 }
 
+/** One hourly wakeup slot on the night band. */
+export interface FtmoSlot {
+  at: string;
+  label: string;
+  /**
+   * `ran`    — the window was open and the runner logged an evaluation
+   * `forced` — a record exists but the window was CLOSED: a --force run, a
+   *            --reconcile, or a plan previewed from this dashboard. Not a
+   *            scheduled firing, and must never be drawn as one.
+   * `missed` — the window was open and NOTHING ran. This is the sleeping Mac.
+   * `closed` — outside the window, as designed.
+   */
+  state: "ran" | "forced" | "missed" | "closed";
+  reason: string;
+  entries: string[];
+  exits: string[];
+  firings: number;
+}
+
+export interface FtmoTimeline {
+  start: string;
+  end: string;
+  timezone: string;
+  now: string;
+  slots: FtmoSlot[];
+  trace: {
+    at: string;
+    equity: number | null;
+    dailyUsed: number | null;
+    drawdownUsed: number | null;
+    openPositions: number | null;
+    breached: boolean;
+    mustFlatten: boolean;
+  }[];
+  limits: {
+    dailySoft: number | null;
+    dailyFlatten: number | null;
+    dailyHard: number | null;
+    drawdownSoft: number | null;
+    drawdownFlatten: number | null;
+    drawdownHard: number | null;
+    floorEquity: number | null;
+  };
+  counts: { ran: number; forced: number; missed: number; closed: number };
+}
+
 export const ftmo = {
   autotrade: () => request<FtmoAutotradeState>("/api/ftmo/autotrade"),
+  /** Last night's session from the audit trail. Answers with the venue down. */
+  timeline: () => request<FtmoTimeline>("/api/ftmo/timeline"),
   universe: () => request<{ universe: FtmoUniverseSymbol[] }>("/api/ftmo/universe"),
   /** All chartable instruments, not just the traded universe. */
   symbols: () => request<{ symbols: FtmoSymbol[] }>("/api/ftmo/symbols"),

@@ -49,7 +49,7 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { FanChart, ForecastChart } from "@/components/chart/forecast-chart";
 
-export default function KronosPage() {
+export function KronosScreen() {
   const [job, setJob] = useState<Job<KronosResult> | null>(null);
   const [mcJob, setMcJob] = useState<Job<MonteCarloResult> | null>(null);
   const [draws, setDraws] = useState(3);

@@ -33,7 +33,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 
-export default function BacktestsPage() {
+export function BacktestsScreen() {
   const data = useFetch<BacktestsResponse>(() => api.backtests(), []);
 
   const results = data.data?.results;

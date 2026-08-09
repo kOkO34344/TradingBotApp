@@ -1,73 +1,59 @@
 "use client";
 
 /**
- * app-shell.tsx — nav, the account banner, and the kill switch.
+ * app-shell.tsx — the frame: tab strip, annunciator rail, kill switch.
  *
- * The banner is not decoration. Koko's rule 1 is "paper before real money",
- * and the guardrail chosen for this UI is that trading controls refuse to
- * render unless the backend has verified a real paper account id (starts
- * with 'D') — not merely a paper-looking port. That verdict lives here and
- * is passed down through `useAccountGate`, so no screen can decide for
- * itself that it's safe to show a trade button.
+ * FOUR SCREENS, NOT EIGHT (2026-08-09). The old nav carried three dimmed IBKR
+ * entries for a venue rule 9 retired, so a third of the app advertised a
+ * broker that places no orders. Watch / Signal / Market / Ledger name what you
+ * came to do; IBKR is a section at the foot of Watch, where "retired, three
+ * positions still open" is a sentence rather than a permanently greyed tab.
  *
- * THE HEADER REPORTS FTMO, NOT IBKR (changed 2026-08-07). FTMO is the venue
- * that trades; IBKR is retired in place and its web connection is off by
- * default. Reporting a retired venue's socket in the primary pill meant a
- * healthy dashboard permanently displayed
- * `ConnectionRefusedError [Errno 61] ... 4002`, on every screen, while the
- * venue that was actually working went unmentioned.
+ * THE ANNUNCIATOR RAIL replaces a row of badges, and follows the aviation
+ * convention it borrows from: a legend that is DARK has nothing to say. Only
+ * a lit legend means something, so a quiet rail is a quiet account and it
+ * reads at a glance from across the room. It distinguishes caution (amber)
+ * from warning (red) rather than collapsing both into "bad" — the same
+ * distinction rule 2 of web/CLAUDE.md makes between UNKNOWN and UNPROTECTED,
+ * for the same reason: they call for different actions.
  *
- * The FTMO pill distinguishes three states on purpose:
- *   live      — the venue socket is open and frames are arriving
- *   degraded  — connected once, but the last frame is too old to believe
- *   offline   — no session (the backend or the venue is unreachable)
- * Collapsing these into "disconnected" would hide which thing to go fix.
+ * THE HEADER REPORTS FTMO, NOT IBKR (2026-08-07). FTMO is the venue that
+ * trades; IBKR is retired in place and its web connection is off by default.
+ * Reporting a retired venue's socket in the primary pill meant a healthy
+ * dashboard permanently displayed `ConnectionRefusedError [Errno 61] ... 4002`
+ * on every screen while the venue that was working went unmentioned.
  *
- * IBKR keeps a SECOND, muted chip, and only where it is relevant. "Retired,
- * deliberately not connected" is a state, not a fault, and must never be
- * painted in the failure colour — that is the same error class as rendering
- * an unknown stop as an absent one.
+ * The session timeline is fetched HERE and passed down, not fetched by the
+ * night band. The rail's MISSED lamp and the band read the same audit trail,
+ * and two independent polls of it could disagree — the lamp reading all-clear
+ * over a band showing a hole is exactly the kind of contradiction this project
+ * has been bitten by before.
  */
 
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { createContext, useContext, useEffect, useState } from "react";
-import {
-  Activity,
-  BarChart3,
-  BookOpen,
-  Brain,
-  LayoutDashboard,
-  Moon,
-  Power,
-  Repeat,
-  Sun,
-  Wallet, Gauge,
-} from "lucide-react";
+import { Activity, BookOpen, Gauge, LineChart, Moon, Sun } from "lucide-react";
 
-import { api, ftmo as ftmoApi, type Status } from "@/lib/api";
+import {
+  api,
+  ftmo as ftmoApi,
+  type FtmoTimeline,
+  type Status,
+} from "@/lib/api";
 import { useLive } from "@/lib/use-live";
-import { useFtmoStream } from "@/lib/use-ftmo";
+import { useFtmoStream, type FtmoPosition, type FtmoVerdict } from "@/lib/use-ftmo";
 import { cn } from "@/lib/utils";
 import { DASH } from "@/lib/format";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { KillSwitch } from "@/components/kill-switch";
 
-// FTMO leads, then the venue-neutral screens, then the IBKR ones — which are
-// marked `ibkr: true` so they can be dimmed when that venue's web connection
-// is off. They are dimmed rather than hidden: the three IBKR positions are
-// still open and still real, and a screen you cannot find is a worse way to
-// say "retired" than a screen that tells you so when you open it.
 const NAV = [
-  { href: "/ftmo", label: "FTMO", icon: Gauge },
-  { href: "/charts", label: "Charts", icon: BarChart3 },
-  { href: "/journal", label: "Journal", icon: BookOpen },
-  { href: "/kronos", label: "Kronos", icon: Brain },
-  { href: "/backtests", label: "Backtests", icon: Activity },
-  { href: "/dashboard", label: "Dashboard", icon: LayoutDashboard, ibkr: true },
-  { href: "/positions", label: "Positions", icon: Wallet, ibkr: true },
-  { href: "/rebalance", label: "Rebalance", icon: Repeat, ibkr: true },
+  { href: "/watch", label: "Watch", icon: Gauge, hint: "the account and the night" },
+  { href: "/signal", label: "Signal", icon: Activity, hint: "Kronos and the rotation" },
+  { href: "/market", label: "Market", icon: LineChart, hint: "prices and indicators" },
+  { href: "/ledger", label: "Ledger", icon: BookOpen, hint: "journal and evidence" },
 ];
 
 interface ShellContext {
@@ -76,6 +62,9 @@ interface ShellContext {
   tradingAllowed: boolean;
   gateReason: string;
   refreshStatus: () => void;
+  /** Last night's session. `null` until the first read lands. */
+  timeline: FtmoTimeline | null;
+  timelineError: string | null;
 }
 
 const ShellCtx = createContext<ShellContext>({
@@ -83,6 +72,8 @@ const ShellCtx = createContext<ShellContext>({
   tradingAllowed: false,
   gateReason: "Still checking the account.",
   refreshStatus: () => {},
+  timeline: null,
+  timelineError: null,
 });
 
 export const useShell = () => useContext(ShellCtx);
@@ -95,6 +86,8 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   const [statusError, setStatusError] = useState<string | null>(null);
   const [nonce, setNonce] = useState(0);
   const [dark, setDark] = useState(true);
+  const [timeline, setTimeline] = useState<FtmoTimeline | null>(null);
+  const [timelineError, setTimelineError] = useState<string | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -113,23 +106,30 @@ export function AppShell({ children }: { children: React.ReactNode }) {
     };
   }, [nonce, live.revisions.orders, live.connection?.connected]);
 
+  // The audit trail only changes when the runner fires, so once a minute is
+  // ample — a tighter poll re-reads the same files ~20x for nothing.
+  useEffect(() => {
+    let cancelled = false;
+    const load = () =>
+      ftmoApi
+        .timeline()
+        .then((t) => {
+          if (cancelled) return;
+          setTimeline(t);
+          setTimelineError(null);
+        })
+        .catch((e: Error) => !cancelled && setTimelineError(e.message));
+    load();
+    const timer = setInterval(load, 60_000);
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
+  }, []);
+
   useEffect(() => {
     document.documentElement.classList.toggle("dark", dark);
   }, [dark]);
-
-  /**
-   * Screens whose data comes from FTMO, so a dead IB Gateway says nothing
-   * about whether they work.
-   *
-   * `/charts` joined this list on 2026-08-07 when it moved off `/api/bars`.
-   * Kept as an explicit list rather than a `startsWith("/ftmo")` check
-   * precisely because that check silently stopped being the right question
-   * the moment a non-`/ftmo` route started reading from the venue — the
-   * banner would have claimed nothing would load on a screen that was
-   * loading fine.
-   */
-  const isFtmoBacked = (path: string) =>
-    path.startsWith("/ftmo") || path.startsWith("/charts");
 
   const conn = live.connection ?? status?.connection ?? null;
   const backendUp = live.socketOpen || status !== null;
@@ -145,31 +145,18 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         ? `Account ${conn?.account ?? "unknown"} is not a verified paper account. Controls are disabled.`
         : "";
 
-  const connState: "live" | "degraded" | "offline" = !backendUp
-    ? "offline"
-    : gatewayUp
-      ? "live"
-      : "degraded";
-
   // IBKR's web connection is off by default (rule 9). When it is, the whole
-  // IBKR apparatus — banner, pill, account badge — is a statement about a
-  // venue nobody is asking anything of, so it is reported quietly and only
-  // where it is relevant, never as a fault.
+  // IBKR apparatus is a statement about a venue nobody is asking anything of,
+  // so it is reported quietly and never as a fault.
   const ibkrDisabled = conn?.disabled ?? false;
 
-  // FTMO is the primary venue and therefore the primary pill.
-  const ftmoState: "live" | "degraded" | "offline" = ftmo.snap?.connection.ready
-    ? ftmo.live
-      ? "live"
-      : "degraded"
-    : "offline";
+  const ftmoReady = Boolean(ftmo.snap?.connection.ready);
   const ftmoAccount = ftmo.snap?.account?.accountId ?? null;
   const ftmoEquity = ftmo.snap?.account?.equity ?? null;
 
-  // Whether the FTMO runner is armed, for the header kill switch. Kept as
-  // `null` until known so the switch never claims "off" about a runner that
-  // may be live — the same rule that stops an unknown stop rendering as an
-  // absent one.
+  // Whether the FTMO runner is armed. Kept as `null` until known so the rail
+  // never claims "disarmed" about a runner that may be live — the same rule
+  // that stops an unknown stop rendering as an absent one.
   const [ftmoArmed, setFtmoArmed] = useState<boolean | null>(null);
   useEffect(() => {
     let cancelled = false;
@@ -189,43 +176,34 @@ export function AppShell({ children }: { children: React.ReactNode }) {
         tradingAllowed,
         gateReason,
         refreshStatus: () => setNonce((n) => n + 1),
+        timeline,
+        timelineError,
       }}
     >
       <div className="flex min-h-full flex-col">
-        <header className="sticky top-0 z-40 border-b border-border bg-sidebar/95 backdrop-blur">
-          <div className="flex h-14 items-center gap-4 px-4">
-            <Link href="/ftmo" className="flex items-center gap-2 shrink-0">
-              <span className="grid size-7 place-items-center rounded bg-primary text-primary-foreground font-bold text-sm">
-                T
-              </span>
-              <span className="font-semibold tracking-tight hidden sm:inline">
-                TradingBot
-              </span>
+        <header className="sticky top-0 z-40 border-b hairline border-border bg-sidebar/95 backdrop-blur">
+          <div className="flex h-13 items-center gap-5 px-4 py-2">
+            <Link href="/watch" className="shrink-0">
+              <span className="silkscreen text-foreground">Watch station</span>
             </Link>
 
-            <nav className="flex items-center gap-0.5 overflow-x-auto">
-              {NAV.map(({ href, label, icon: Icon, ibkr }) => {
+            <nav className="flex items-center gap-1 overflow-x-auto">
+              {NAV.map(({ href, label, icon: Icon, hint }) => {
                 const active =
                   pathname === href || pathname.startsWith(`${href}/`);
-                const retired = Boolean(ibkr) && ibkrDisabled;
                 return (
                   <Link
                     key={href}
                     href={href}
-                    title={
-                      retired
-                        ? "IBKR is retired — this screen has no live data"
-                        : undefined
-                    }
+                    title={hint}
                     className={cn(
-                      "flex items-center gap-1.5 rounded-md px-2.5 py-1.5 text-sm transition-colors whitespace-nowrap",
+                      "flex items-center gap-1.5 whitespace-nowrap rounded-sm px-2.5 py-1.5 text-sm transition-colors",
                       active
-                        ? "bg-accent text-accent-foreground font-medium"
-                        : "text-muted-foreground hover:text-foreground hover:bg-accent/50",
-                      retired && !active && "opacity-45"
+                        ? "bg-accent text-accent-foreground"
+                        : "text-muted-foreground hover:bg-accent/40 hover:text-foreground"
                     )}
                   >
-                    <Icon className="size-4" />
+                    <Icon className="size-3.5" />
                     <span className="hidden md:inline">{label}</span>
                   </Link>
                 );
@@ -233,53 +211,21 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </nav>
 
             <div className="ml-auto flex items-center gap-2">
-              {/* FTMO first — the venue that actually trades. */}
               <FtmoBadge account={ftmoAccount} equity={ftmoEquity} />
-              <ConnectionPill
-                state={ftmoState}
-                label="FTMO"
-                detail={
-                  ftmoState === "live"
-                    ? `cTrader · account ${ftmoAccount ?? "?"}`
-                    : (ftmo.snap?.connection.error ??
-                       "No FTMO session. The venue or the backend is unreachable.")
-                }
-              />
-
-              {/* IBKR, only when it is something you could act on. Disabled is
-                  a settled decision, not news, so it gets one muted chip. */}
-              {ibkrDisabled ? (
+              {ibkrDisabled && (
                 <Badge
                   variant="outline"
-                  className="text-[10px] uppercase text-muted-foreground/70"
-                  title={conn?.error ?? undefined}
+                  className="silkscreen hidden border-border/70 px-1.5 py-0.5 lg:inline-flex"
+                  title={
+                    conn?.error ??
+                    "IBKR is retired for new orders (rule 9). Its open positions are still managed."
+                  }
                 >
                   IBKR retired
                 </Badge>
-              ) : (
-                <>
-                  <AccountBadge
-                    account={conn?.account ?? null}
-                    paper={paper}
-                    connState={connState}
-                  />
-                  <ConnectionPill
-                    state={connState}
-                    label="IBKR"
-                    detail={
-                      connState === "live"
-                        ? `${conn?.host}:${conn?.port} · clientId ${conn?.clientId}`
-                        : (conn?.error ?? statusError ?? "")
-                    }
-                  />
-                </>
               )}
-              {/* The kill switch follows the venue that can actually trade.
-                  With IBKR off, cutting IBKR's runner would be theatre while
-                  the FTMO runner fires unattended ~20 times a day.
-
-                  It is deliberately NOT gated on any connection: a switch you
-                  cannot reach when things are going wrong is not a switch. */}
+              {/* Deliberately NOT gated on any connection: a switch you cannot
+                  reach when things are going wrong is not a switch. */}
               <KillSwitch
                 venue={ibkrDisabled ? "ftmo" : "ibkr"}
                 autotradeEnabled={
@@ -302,60 +248,40 @@ export function AppShell({ children }: { children: React.ReactNode }) {
             </div>
           </div>
 
-          {/* Scope the IBKR banner to IBKR screens.
-              Rule 9 retired IBKR for new orders, so a dead Gateway is an
-              expected state, not an application fault. Showing it full-width
-              on a screen that does not touch Gateway made a working app look
-              broken and buried the one venue that can actually trade. It
-              still shows loudly on every screen that DOES depend on Gateway,
-              because there it is the reason nothing loads. */}
-          {connState !== "live" && !ibkrDisabled && !isFtmoBacked(pathname) && (
-          {connState !== "live" && !isFtmoBacked(pathname) && (
-            <div
-              className={cn(
-                "px-4 py-1.5 text-xs border-t",
-                connState === "offline"
-                  ? "bg-loss/10 border-loss/30 text-loss"
-                  : "bg-unknown/10 border-unknown/30 text-unknown"
-              )}
-            >
-              <span className="font-medium">
-                {connState === "offline"
-                  ? "Trading API offline"
-                  : "IB Gateway not connected"}
-                :
-              </span>{" "}
-              {gateReason || "No data will load until this is resolved."}
-            </div>
-          )}
+          <AnnunciatorRail
+            backendUp={backendUp}
+            ftmoLive={ftmo.live}
+            ftmoReady={ftmoReady}
+            ftmoError={ftmo.snap?.connection.error ?? statusError}
+            armed={ftmoArmed}
+            verdict={ftmo.snap?.verdict ?? null}
+            positions={ftmo.snap?.positions ?? []}
+            missed={timeline?.counts.missed ?? null}
+          />
 
-          {/* An IBKR screen while IBKR is switched off. Informational, not a
-              failure colour: this is the configured state, and the screen is
-              empty because nobody is asking Gateway anything — not because
-              something broke. It also says where the venue's data DID go, so
-              the answer isn't "the app is broken". */}
-          {ibkrDisabled && !isFtmoBacked(pathname) && (
-            <div className="px-4 py-1.5 text-xs border-t border-border bg-muted/40 text-muted-foreground">
-              <span className="font-medium text-foreground">
-                IBKR is retired (rule 9)
-              </span>{" "}
-              — the dashboard does not connect to IB Gateway, so this screen has
-              no data. Its three open positions are still managed by{" "}
-              <code>reflect_on_trades.py</code>. The live venue is{" "}
-              <Link href="/ftmo" className="underline hover:text-foreground">
-                FTMO
-              </Link>
-              . To re-enable these screens, set{" "}
-              <code>ibkr.web_enabled</code> true in{" "}
-              <code>trader_settings.json</code>.
-            </div>
+          {/* Two conditions the rail is not loud enough for.
+              A lamp with a tooltip is right for "this is worth a look"; it is
+              wrong for "nothing on this screen is real". Both of these mean
+              the latter, so they get a full-width strip and a sentence that
+              says what to do about it. */}
+          {!backendUp && (
+            <Banner tone="loss">
+              <strong className="font-medium">Trading API offline</strong> — no
+              screen on this app has live data. Start it with{" "}
+              <code className="tabular">./run_web.sh</code>.
+            </Banner>
           )}
-
-          {connState === "live" && !paper && (
-            <div className="px-4 py-1.5 text-xs border-t bg-loss/15 border-loss/40 text-loss font-medium">
-              Account {conn?.account} is NOT a verified paper account — every
-              trading control is disabled.
-            </div>
+          {backendUp && gatewayUp && !paper && (
+            // Rule 1, on screen. The account gate already disables every
+            // control, but a disabled button explains nothing — this says
+            // which account and why, in the one situation where the app is
+            // connected to something it must not trade.
+            <Banner tone="loss">
+              <strong className="font-medium">
+                Account {conn?.account} is NOT a verified paper account
+              </strong>{" "}
+              — every trading control is disabled.
+            </Banner>
           )}
         </header>
 
@@ -365,34 +291,192 @@ export function AppShell({ children }: { children: React.ReactNode }) {
   );
 }
 
-function AccountBadge({
-  account,
-  paper,
-  connState,
+/**
+ * The annunciator rail.
+ *
+ * Dark means nothing to say. Every lamp below is unlit in the ordinary case,
+ * so the rail is quiet when the account is quiet and anything glowing is worth
+ * walking over to read.
+ *
+ * `null` is a third state everywhere it can occur and is drawn amber, never
+ * dark: "we have not heard" must not be able to look like "all clear". A dark
+ * BREACHED lamp on a dashboard that never reached the venue would be the most
+ * dangerous pixel in this app.
+ */
+function AnnunciatorRail({
+  backendUp,
+  ftmoLive,
+  ftmoReady,
+  ftmoError,
+  armed,
+  verdict,
+  positions,
+  missed,
 }: {
-  account: string | null;
-  paper: boolean;
-  connState: "live" | "degraded" | "offline";
+  backendUp: boolean;
+  ftmoLive: boolean;
+  ftmoReady: boolean;
+  ftmoError: string | null | undefined;
+  armed: boolean | null;
+  verdict: FtmoVerdict | null;
+  positions: FtmoPosition[];
+  missed: number | null;
 }) {
-  if (connState === "offline" || !account) return null;
+  const unprotected = positions.filter((p) => !p.protected).length;
+  const unpriced = positions.filter((p) => p.mark === null).length;
+
+  const streamState: LampState = !backendUp
+    ? "warn"
+    : ftmoLive
+      ? "ok"
+      : ftmoReady
+        ? "caution"
+        : "warn";
+
   return (
-    <Badge
-      variant="outline"
+    <div className="flex flex-wrap items-center gap-x-1.5 gap-y-1 border-t hairline border-border bg-background/40 px-4 py-1.5">
+      <Lamp
+        state={streamState}
+        label="stream"
+        detail={
+          !backendUp
+            ? "The trading API isn't running. Start it with ./run_web.sh."
+            : ftmoLive
+              ? "cTrader frames are arriving."
+              : ftmoReady
+                ? "Connected, but the last frame is too old to believe."
+                : (ftmoError ??
+                   "No FTMO session — the venue or the backend is unreachable.")
+        }
+      />
+      <Lamp
+        state={armed === null ? "caution" : armed ? "ok" : "off"}
+        label={armed === false ? "disarmed" : "armed"}
+        detail={
+          armed === null
+            ? "Couldn't read the arm toggle, so whether the runner fires is unknown."
+            : armed
+              ? "ftmo.autotrade.enabled is true — the runner trades unattended."
+              : "ftmo.autotrade.enabled is false. The runner wakes and places nothing."
+        }
+      />
+      <Lamp
+        state={
+          verdict === null
+            ? "caution"
+            : verdict.breached
+              ? "warn"
+              : verdict.canOpen
+                ? "off"
+                : "caution"
+        }
+        label={verdict?.breached ? "breached" : "blocked"}
+        detail={
+          verdict === null
+            ? "The rule engine hasn't reported yet."
+            : verdict.breached
+              ? `Account breached: ${verdict.reasons.join("; ")}`
+              : verdict.canOpen
+                ? "The rule engine allows new positions."
+                : `New positions blocked: ${verdict.reasons.join("; ")}`
+        }
+      />
+      <Lamp
+        state={verdict?.mustFlatten ? "warn" : "off"}
+        label="flatten"
+        detail={
+          verdict?.mustFlatten
+            ? "A limit says close everything now."
+            : "No flatten condition."
+        }
+      />
+      <Lamp
+        state={unprotected > 0 ? "warn" : "off"}
+        label="unprot"
+        detail={
+          unprotected > 0
+            ? `${unprotected} open position(s) carry no stop.`
+            : "Every open position carries a stop."
+        }
+      />
+      <Lamp
+        state={unpriced > 0 ? "caution" : "off"}
+        label="unpriced"
+        detail={
+          unpriced > 0
+            ? `${unpriced} position(s) have no quote, so floating P&L excludes them. Equity shown is incomplete, not flat.`
+            : "Every position is priced."
+        }
+      />
+      <Lamp
+        state={missed === null || missed > 0 ? "caution" : "off"}
+        label="missed"
+        detail={
+          missed === null
+            ? "Couldn't read the audit trail, so missed firings are unknown."
+            : missed > 0
+              ? `${missed} scheduled firing(s) left no audit record this session — the runner was due and did not run.`
+              : "Every scheduled firing this session left an audit record."
+        }
+      />
+    </div>
+  );
+}
+
+function Banner({
+  tone,
+  children,
+}: {
+  tone: "loss" | "unknown";
+  children: React.ReactNode;
+}) {
+  return (
+    <div
       className={cn(
-        "font-mono text-[11px] gap-1.5",
-        paper
-          ? "border-profit/40 text-profit"
-          : "border-loss/50 text-loss font-bold"
+        "border-t hairline px-4 py-1.5 text-xs",
+        tone === "loss" && "border-loss/40 bg-loss/12 text-loss",
+        tone === "unknown" && "border-unknown/40 bg-unknown/10 text-unknown"
       )}
-      title={
-        paper
-          ? "Paper account, verified by account id (not by port number)."
-          : "NOT a verified paper account."
-      }
     >
-      {paper ? "PAPER" : "NOT PAPER"}
-      <span className="text-muted-foreground">{account}</span>
-    </Badge>
+      {children}
+    </div>
+  );
+}
+
+type LampState = "off" | "ok" | "caution" | "warn";
+
+function Lamp({
+  state,
+  label,
+  detail,
+}: {
+  state: LampState;
+  label: string;
+  detail: string;
+}) {
+  return (
+    <span
+      title={detail}
+      className={cn(
+        "silkscreen flex items-center gap-1.5 rounded-sm px-1.5 py-0.5",
+        state !== "off" && "annunciator-lit",
+        state === "ok" && "bg-profit/10 text-profit",
+        state === "caution" && "bg-unknown/10 text-unknown",
+        state === "warn" && "bg-loss/15 text-loss",
+        state === "off" && "text-muted-foreground/35"
+      )}
+    >
+      <span
+        className={cn(
+          "size-1.5 rounded-full",
+          state === "ok" && "bg-profit",
+          state === "caution" && "bg-unknown",
+          state === "warn" && "bg-loss",
+          state === "off" && "bg-current opacity-50"
+        )}
+      />
+      {label}
+    </span>
   );
 }
 
@@ -401,8 +485,8 @@ function AccountBadge({
  *
  * Equity, not balance, and that is the point: every FTMO limit is measured on
  * equity INCLUDING floating P&L, so the account can fail a limit with no order
- * placed. Showing balance in the header would show the number that cannot
- * breach anything.
+ * placed. Showing balance here would show the number that cannot breach
+ * anything.
  *
  * Renders nothing rather than zero when there is no frame yet (rule 1).
  */
@@ -415,13 +499,12 @@ function FtmoBadge({
 }) {
   if (!account) return null;
   return (
-    <Badge
-      variant="outline"
-      className="border-primary/40 font-mono text-[11px] gap-1.5"
+    <span
+      className="hidden items-baseline gap-2 rounded-sm border hairline border-primary/35 px-2 py-1 sm:flex"
       title="FTMO Challenge account. Simulated capital — every limit is measured on equity including floating P&L."
     >
-      FTMO
-      <span className="text-muted-foreground">
+      <span className="silkscreen text-primary">FTMO</span>
+      <span className="tabular text-xs">
         {equity === null
           ? DASH
           : equity.toLocaleString(undefined, {
@@ -429,45 +512,6 @@ function FtmoBadge({
               maximumFractionDigits: 2,
             })}
       </span>
-    </Badge>
-  );
-}
-
-function ConnectionPill({
-  state,
-  detail,
-  label: venue,
-}: {
-  state: "live" | "degraded" | "offline";
-  detail: string;
-  /** Which venue this pill is about. Two venues are shown at once now, so an
-   *  unlabelled "Degraded" would not say degraded at what. */
-  label?: string;
-}) {
-  const stateLabel = { live: "Live", degraded: "Degraded", offline: "Offline" }[
-    state
-  ];
-  const label = venue ? `${venue} ${stateLabel}` : stateLabel;
-  const dot = {
-    live: "bg-profit",
-    degraded: "bg-unknown",
-    offline: "bg-loss",
-  }[state];
-  return (
-    <span
-      className="hidden lg:flex items-center gap-1.5 rounded-md border border-border px-2 py-1 text-xs text-muted-foreground"
-      title={detail}
-    >
-      <span
-        className={cn(
-          "size-1.5 rounded-full",
-          dot,
-          state === "live" && "animate-pulse"
-        )}
-      />
-      {label}
     </span>
   );
 }
-
-export { Power };

@@ -37,7 +37,7 @@ import { cn } from "@/lib/utils";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 
-export default function PositionsPage() {
+export function PositionsScreen() {
   const ftmo = useFtmoStream();
   const snap = ftmo.snap;
   const positions = snap?.positions ?? [];
@@ -210,7 +210,7 @@ export default function PositionsPage() {
         <code>reflect_on_trades.py</code> monitors them on its own schedule. Set{" "}
         <code>ibkr.web_enabled</code> true in <code>trader_settings.json</code>{" "}
         to bring those screens back. The live venue is{" "}
-        <Link href="/ftmo" className="underline hover:text-foreground">
+        <Link href="/watch" className="underline hover:text-foreground">
           FTMO
         </Link>
         .
@@ -223,7 +223,7 @@ function PositionRow({ p }: { p: FtmoPosition }) {
   return (
     <tr className="border-b border-border/50 last:border-0 hover:bg-accent/30">
       <td className="px-3 py-2 font-mono font-medium">
-        <Link href="/charts" className="hover:underline" title="Open on the chart">
+        <Link href="/market" className="hover:underline" title="Open on the chart">
           {p.symbol}
         </Link>
       </td>

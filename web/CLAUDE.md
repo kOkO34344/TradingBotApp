@@ -61,19 +61,25 @@ changing anything structural.
 8. **On a failed fetch, don't keep showing the previous subject's data
    under the new subject's heading.** `useFetch` retains last-good data
    deliberately; screens must null it out on error (see `chartData` in
-   `app/charts/page.tsx`) or they attribute AAPL's price to whatever you
-   just failed to load.
-9. **The charts screen is an FTMO screen** (moved 2026-08-07). It reads
+   `components/screens/charts-screen.tsx`) or they attribute AAPL's price to
+   whatever you just failed to load.
+9. **The market screen is an FTMO screen** (moved 2026-08-07). It reads
    `/api/ftmo/bars`, not `/api/bars` — the IBKR path returned
    `ConnectionRefusedError ... 4002` on every request once Gateway went down,
    and rule 9 retired that venue, so it was never coming back. `/api/bars`
    still exists and still works when Gateway is up; nothing was deleted.
-10. **A screen that has moved venue must be removed from the IB Gateway
-    banner's scope.** `app-shell.tsx` keeps an explicit `isFtmoBacked()` list
-    rather than a `startsWith("/ftmo")` test, because the moment a
-    non-`/ftmo` route started reading from FTMO that test silently became the
-    wrong question — the banner claimed "no data will load" over a screen
-    that was loading fine.
+10. **A lamp on the annunciator rail is not loud enough for "nothing here is
+    real".** The rail says "worth a look"; two conditions mean the whole app
+    is showing nothing true — the backend being down, and being connected to
+    an account that is not verified paper — and both get a full-width banner
+    with a sentence saying what to do. Rule 1 is a safety property, and a
+    disabled button explains nothing on its own.
+    This replaced a per-screen `isFtmoBacked()` banner scope on 2026-08-09.
+    That list existed because a `startsWith("/ftmo")` test silently became the
+    wrong question the moment a non-`/ftmo` route started reading from FTMO —
+    the banner claimed "no data will load" over a screen loading fine. The
+    four-route shell removed the need for it, but keep the lesson: **do not
+    re-derive which venue a screen uses from its URL.**
 11. **Which venue a journal row belongs to is load-bearing, not decoration.**
     The journal holds both brokers and they share ticker spellings: an IBKR
     AAPL share is not an FTMO AAPL CFD. `markers_for()` takes a `venue`
@@ -88,3 +94,18 @@ changing anything structural.
     `journal_api`'s `FILL_EVENTS`/`FILLED_STATUSES` knew only IBKR's until
     2026-08-07, so every FTMO fill scored zero chart markers — correctly
     journalled, and undrawable.
+13. **A firing that did not happen must be drawn, not omitted.** The night
+    band's `missed` cells are hours the trading window was open and the runner
+    left no audit record — the Mac asleep on battery. 22 consecutive silent
+    failures went unnoticed for 19 hours on this project, so a band that
+    quietly skipped them would draw a tidy line through a night when nothing
+    was watching. `forced` is a separate state for the same reason: a record
+    inside a CLOSED slot came from `--force`, `--reconcile` or a dashboard
+    preview, and drawing it as a scheduled firing would make the band evidence
+    for something that never happened.
+14. **Tab selection lives in the URL** (`components/url-tabs.tsx`). Six of the
+    old eight routes are tabs now, and `/backtests` has to keep landing on the
+    backtests table. It also means every panel is reachable over HTTP, which
+    is the only way to exercise a Base UI panel without a browser — see the
+    warning above about what `tsc` does and does not prove here. An
+    unrecognised `?tab=` falls back to the first tab, never to a blank panel.
