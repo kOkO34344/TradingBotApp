@@ -718,21 +718,47 @@ The provenance string is logged and audited every firing, so "which symbols
 was this run even looking at" is answerable afterwards from the log rather
 than from whichever settings file happens to be on disk later.
 
-**Read this before reacting to a rank table: ranking 101 symbols by predicted
-percentage return systematically selects the most volatile instruments in the
-account, and on this universe that means micro-cap alt-coins.** The first live
-dry-run's top four were GALUSD +47.67%, VECUSD +25.51%, IMXUSD +18.11%,
-MANUSD +16.65% — every one a crypto priced in fractions of a cent, ahead of
-every index, every FX pair and all 46 stock CFDs. A five-day forecast of +47%
-is not a forecast, it is the noisiest series in the set winning a contest
-scored on amplitude. The 14-symbol basket had the same bias and bounded it by
-construction; 30 cryptos do not. This is a **known and unmitigated
-consequence** of the change, recorded here rather than discovered later —
-the per-trade cap and the rule engine still hold, so it changes WHICH
-instruments get chosen, never how much is risked on one. If it should be
-mitigated, the honest routes are ranking within class, or normalising
-predicted return by the symbol's own volatility. Neither was done here and
-neither should be added without saying so.
+**Ranking 101 symbols by predicted percentage return systematically selects
+the most volatile instruments in the account, and on this universe that means
+micro-cap alt-coins.** The first live dry-run's top four were GALUSD +47.67%,
+VECUSD +25.51%, IMXUSD +18.11%, MANUSD +16.65% — every one a crypto priced in
+fractions of a cent, ahead of every index, every FX pair and all 46 stock
+CFDs. A five-day forecast of +47% is not a forecast, it is the noisiest series
+in the set winning a contest scored on amplitude. The 14-symbol basket had the
+same bias and bounded it by construction; 30 cryptos do not.
+
+**Fixed the same day by ranking WITHIN asset class** (owner instruction,
+2026-08-11). `ftmo_signal.cap_per_class()` allows each class at most
+`ftmo.autotrade.max_per_class` candidates — **default 1** — so the pool
+becomes the class leaders and a top_n of 4 necessarily spans four different
+classes. `0` disables the cap and restores pure global ranking.
+
+It is a FILTER on the candidate pool, not a re-scoring, and that choice is
+load-bearing. `apply_rotation_margin` compares raw predicted-return
+differences against `margin_pct`, which is calibrated to an observed ~1-point
+sampling spread and **not** to theory. Normalising returns into z-scores or
+percentiles would have silently changed the units that margin is measured in,
+and this project has already shipped one inverted-hysteresis bug that traded
+live for a day. A filter leaves every downstream comparison in the units it
+was calibrated in; only the pool those comparisons run over gets smaller.
+
+Three consequences worth knowing before reading a plan:
+
+- **The pool, the boundary gap and the target all use the SAME capped list.**
+  Measuring the rank N/N+1 gap on the full ranking while selecting from a
+  capped one would print a number describing a decision nobody made — on the
+  fixture above the uncapped gap is 13.55 and the real one is 0.60.
+- **A held position that is no longer its class's leader gets rotated out.**
+  That is the cap working, not a bug: holding two cryptos is the
+  concentration it exists to prevent. Exits are computed from `held` and the
+  target and never consult it — rule 3 keeps every exit path ungated.
+- `format_plan` marks the table `*` selected, `+` eligible class leader, blank
+  = a higher-ranked name in the same class took the slot, and prints the pool.
+
+**This suppresses concentration; it does not create edge.** Every IC screen
+this project has run is still ~0, and picking the best of a bad class is still
+picking from a bad class. What it buys is that a single asset class can no
+longer take the whole book on the strength of having the widest ruler.
 
 Three costs that came with it, all measured on the 2026-08-11 dry-run:
 
@@ -740,6 +766,20 @@ Three costs that came with it, all measured on the 2026-08-11 dry-run:
   ~100s, the forecast 261s in four batches. Still comfortably inside an hourly
   schedule, but it is more wall clock exposed to the sleep race that cost a
   full day on 2026-08-08.
+- **DO NOT run `--dry-run` while a scheduled firing is in progress. It can
+  WEDGE the unattended run, and this was demonstrated, not theorised.** On
+  2026-08-11 a manual dry-run overlapped the 19:30 firing; each process loads
+  its own ~2 GB Kronos model, the machine went into swap (89,817 pageouts,
+  27% memory free), and the unattended firing was left with **28 seconds of
+  CPU across 13 minutes of wall clock and an RSS of 19 MB** — its model paged
+  out, thrashing rather than computing. It had to be killed; it placed
+  nothing, because the account was breached, but on an unbreached account
+  that is a firing silently lost. The 14-symbol universe was light enough to
+  hide this. Check `ps` for a running `ftmo_runner.py` first, or preview from
+  `/signal` in the web UI, which reuses the one long-lived session.
+  Note the symptom is **not** the sleep signature: `caffeinate` was held the
+  whole time and the machine never slept. Low CPU with a tiny RSS is memory
+  pressure; the sleep failures wear a `SessionError` instead.
 - **`ftmo_session.TRENDBAR_MIN_INTERVAL_S` (0.22s) paces historical requests**
   to ~4.5/sec, under cTrader's documented 5/sec. It is enforced in
   `trendbars()` — the one place every historical request passes — because a

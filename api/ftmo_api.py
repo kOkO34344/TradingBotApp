@@ -107,7 +107,7 @@ def shutdown() -> None:
 
 def _universe_symbols(specs: dict) -> list[str]:
     try:
-        return [s for s, _ in sig.build_universe(specs, sig.load_universe())]
+        return [s for s, _ in sig.build_universe(specs, sig.resolve_universe(specs)[0])]
     except Exception:                                         # noqa: BLE001
         return []
 
@@ -284,7 +284,7 @@ def asset_class_of(symbol: str) -> str:
     """
     try:
         specs = svc.load_symbol_specs()
-        for sym, cls in sig.build_universe(specs, sig.load_universe()):
+        for sym, cls in sig.build_universe(specs, sig.resolve_universe(specs)[0]):
             if sym == symbol:
                 return cls
     except (FileNotFoundError, ValueError):
@@ -452,7 +452,7 @@ def plan(ctx, sample_count: int | None = None) -> dict:
 
     ctx.log("Building the FTMO universe from the captured symbol specs…")
     specs = svc.load_symbol_specs()
-    pairs = sig.build_universe(specs, sig.load_universe())
+    pairs = sig.build_universe(specs, sig.resolve_universe(specs)[0])
     symbols = [s for s, _ in pairs]
     classes = dict(pairs)
     ctx.log(f"{len(symbols)} symbols across {len(set(classes.values()))} classes")
@@ -511,7 +511,8 @@ def plan(ctx, sample_count: int | None = None) -> dict:
 
     ctx.progress(0.45, f"Kronos forecast, sample_count={samples}…")
     t0 = time.time()
-    _, _, pred_dfs = ka.forecast_frames(frames, sample_count=samples)
+    _, _, pred_dfs = ka.forecast_frames(frames, sample_count=samples,
+                                       batch_size=cfg["forecast_batch"])
     ctx.log(f"forecast for {len(pred_dfs)} symbols in {time.time() - t0:.0f}s")
 
     ctx.progress(0.92, "Ranking and sizing…")
@@ -520,7 +521,8 @@ def plan(ctx, sample_count: int | None = None) -> dict:
     proposal = sig.plan_orders(session, config, account_state, ranked, held,
                                risk_pct=cfg["risk_pct"],
                                margin_pct=cfg["margin_pct"],
-                               top_n=cfg["top_n"])
+                               top_n=cfg["top_n"],
+                               max_per_class=cfg["max_per_class"])
 
     ctx.progress(1.0, "Done.")
     return {
@@ -543,9 +545,17 @@ def plan(ctx, sample_count: int | None = None) -> dict:
         "gapIsNarrow": (proposal.get("rank_gap") is not None
                         and proposal["rank_gap"] < 1.0),
         "rejectedSymbols": rejected,
+        # `pool` is the candidates that could actually be selected once the
+        # per-class cap is applied, and `maxPerClass` is the cap itself.
+        # Without these the browser shows a 95-row ranking with four apparently
+        # arbitrary picks scattered down it and no way to see that ranks 2, 3
+        # and 4 were excluded for being the same asset class as rank 1.
+        "maxPerClass": cfg["max_per_class"],
+        "pool": proposal.get("pool", []),
         "ranked": [{"symbol": c.symbol, "assetClass": c.asset_class,
                     "predictedReturnPct": c.predicted_return_pct,
-                    "lastClose": c.last_close, "atr": c.atr}
+                    "lastClose": c.last_close, "atr": c.atr,
+                    "inPool": c.symbol in set(proposal.get("pool") or [])}
                    for c in ranked],
     }
 
@@ -557,7 +567,7 @@ def universe() -> list[dict]:
     except FileNotFoundError:
         return []
     try:
-        pairs = sig.build_universe(specs, sig.load_universe())
+        pairs = sig.build_universe(specs, sig.resolve_universe(specs)[0])
     except ValueError as e:
         return [{"error": str(e)}]
     return [{"symbol": s, "assetClass": c,
@@ -585,7 +595,7 @@ def all_symbols() -> list[dict]:
         return []
     classes: dict[str, str] = {}
     try:
-        classes = dict(sig.build_universe(specs, sig.load_universe()))
+        classes = dict(sig.build_universe(specs, sig.resolve_universe(specs)[0]))
     except ValueError:
         pass
     return sorted(

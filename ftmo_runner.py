@@ -196,6 +196,12 @@ def autotrade_config(settings: dict) -> dict:
         # if the machine has headroom, or set it to 0 for one call with
         # everything (the pre-2026-08-11 behaviour).
         "forecast_batch": int(block.get("forecast_batch", 24)) or None,
+        # Candidates one asset class may contribute to the selection pool.
+        # 1 = the classes compete through their leaders only. 0 disables the
+        # cap and restores pure global ranking, which on the 101-symbol
+        # universe means a top-4 of micro-cap crypto. See ftmo_signal.
+        "max_per_class": int(block.get("max_per_class",
+                                       sig.DEFAULT_MAX_PER_CLASS)) or None,
         "product": str(block.get("product", "2step")),
         "buffer_pct": float(block.get("buffer_pct", 0.20)),
         "initial_capital": float(block.get("initial_capital", 25_000.0)),
@@ -804,7 +810,8 @@ def run(force: bool = False, dry_run: bool = False,
                                risk_pct=cfg["risk_pct"],
                                margin_pct=cfg["margin_pct"],
                                top_n=cfg["top_n"],
-                               horizon_bars=ka.PRED_LEN)
+                               horizon_bars=ka.PRED_LEN,
+                               max_per_class=cfg["max_per_class"])
         print(sig.format_plan(plan))
 
         gap = plan.get("rank_gap")

@@ -387,6 +387,66 @@ def apply_kronos_veto(momentum_ranked: list[tuple[str, float]],
     return selected, vetoed
 
 
+# How many candidates one asset class may contribute to the selection pool.
+#
+# 1 means the classes compete through their own leaders only: the pool becomes
+# {best crypto, best stock, best index, best FX pair, best commodity} and a
+# top_n of 4 necessarily spans four different classes.
+#
+# WHY (owner instruction, 2026-08-11, immediately after the universe went from
+# 14 symbols to 101): ranking 101 symbols on predicted PERCENTAGE return is a
+# contest scored on amplitude, and amplitude is what the noisiest instrument
+# has most of. The first live dry-run on the full universe returned GALUSD
+# +47.67%, VECUSD +25.51%, IMXUSD +18.11%, MANUSD +16.65% as its top four —
+# every one a crypto priced in fractions of a cent, ahead of every index,
+# every FX pair and all 46 stock CFDs. A five-day +47% forecast on a
+# micro-cap alt-coin is not a stronger signal than +2% on an index; it is the
+# same nothing measured on a wider ruler.
+#
+# 0 (or None) disables the cap and restores pure global ranking.
+DEFAULT_MAX_PER_CLASS = 1
+
+
+def cap_per_class(ranked: list[Candidate],
+                  max_per_class: int | None = DEFAULT_MAX_PER_CLASS
+                  ) -> list[Candidate]:
+    """Rank WITHIN each asset class, then let the class leaders compete.
+
+    Returns `ranked` filtered so no asset class contributes more than
+    `max_per_class` candidates, preserving the original global order. Since
+    `rank_candidates` already sorts by predicted return descending, taking the
+    first `max_per_class` occurrences of each class IS that class's own
+    internal ranking — no second sort, and no separate notion of "score" that
+    could drift from the one everything else uses.
+
+    That last point is the reason this is a FILTER and not a re-scoring.
+    `apply_rotation_margin` compares raw predicted-return differences against
+    `margin_pct`, which is calibrated to an observed ~1-point sampling spread
+    and not to theory. Normalising returns into z-scores or percentiles would
+    have silently changed the units that margin is measured in, and this
+    project has already shipped one inverted-hysteresis bug that traded live
+    for a day. A filter leaves every downstream comparison in the units it was
+    calibrated in; only the POOL those comparisons run over gets smaller.
+
+    A held position that is no longer its class's leader drops out of the pool
+    and will therefore be rotated out. That is the cap doing its job rather
+    than a bug: holding two cryptos is exactly the concentration it exists to
+    prevent. Exits do not consult this — `plan_orders` computes them from
+    `held` and the target, and rule 3 keeps every exit path ungated.
+    """
+    if not max_per_class or max_per_class < 1:
+        return list(ranked)
+    seen: dict[str, int] = {}
+    out = []
+    for cand in ranked:
+        n = seen.get(cand.asset_class, 0)
+        if n >= max_per_class:
+            continue
+        seen[cand.asset_class] = n + 1
+        out.append(cand)
+    return out
+
+
 def rank_boundary_gap(ranked: list[Candidate], n: int = TOP_N) -> float | None:
     """Predicted-return gap between rank N and rank N+1.
 
@@ -453,7 +513,8 @@ def plan_orders(session, config: fr.FTMOConfig, state: fr.AccountState,
                 ranked: list[Candidate], held: list[str],
                 risk_pct: float = 1.0, margin_pct: float = 1.0,
                 top_n: int = TOP_N,
-                horizon_bars: int = FORECAST_HORIZON_BARS) -> dict:
+                horizon_bars: int = FORECAST_HORIZON_BARS,
+                max_per_class: int | None = DEFAULT_MAX_PER_CLASS) -> dict:
     """Turn a ranking into concrete sized orders, or into a stated refusal.
 
     Asks the rule engine BEFORE sizing anything, so a blocked account produces
@@ -462,12 +523,19 @@ def plan_orders(session, config: fr.FTMOConfig, state: fr.AccountState,
     gating an order before it reaches the broker.
     """
     verdict = fr.evaluate(config, state)
-    gap = rank_boundary_gap(ranked, top_n)
+    # Rank within class FIRST, then let the leaders compete. The gap, the
+    # rotation margin and the target must all see the SAME pool — computing
+    # the boundary gap on the full ranking while selecting from a capped one
+    # would print a number describing a decision nobody made.
+    pool = cap_per_class(ranked, max_per_class)
+    gap = rank_boundary_gap(pool, top_n)
     out = {"can_open": verdict.can_open, "must_flatten": verdict.must_flatten,
            "reasons": list(verdict.reasons), "rank_gap": gap,
-           "ranked": ranked, "entries": [], "exits": [], "skipped": []}
+           "ranked": ranked, "pool": [c.symbol for c in pool],
+           "max_per_class": max_per_class,
+           "entries": [], "exits": [], "skipped": []}
 
-    target = apply_rotation_margin(held, ranked, margin_pct, top_n)
+    target = apply_rotation_margin(held, pool, margin_pct, top_n)
     out["target"] = target
     out["exits"] = [s for s in held if s not in target]
 
@@ -557,14 +625,30 @@ def format_plan(plan: dict) -> str:
         lines.append(f"  reasons: {'; '.join(plan['reasons'])}")
     lines.append("")
     lines.append(f"{'rank':<5}{'symbol':<13}{'class':<13}{'pred %':>9}{'ATR':>12}")
+    pool = set(plan.get("pool") or [c.symbol for c in plan["ranked"]])
     for i, c in enumerate(plan["ranked"], 1):
-        mark = " *" if c.symbol in plan.get("target", []) else ""
+        if c.symbol in plan.get("target", []):
+            mark = " *"          # selected
+        elif c.symbol in pool:
+            mark = " +"          # class leader, eligible, not selected
+        else:
+            mark = ""            # capped out by a higher-ranked name in its class
         lines.append(f"{i:<5}{c.symbol:<13}{c.asset_class:<13}"
                      f"{c.predicted_return_pct:>9.2f}{c.atr:>12.5f}{mark}")
     lines.append("")
+    cap = plan.get("max_per_class")
+    if cap:
+        lines.append(
+            f"ranked WITHIN asset class: max {cap} per class, so the pool is "
+            f"{len(pool)} class leader(s) out of {len(plan['ranked'])} "
+            f"forecast.  * = selected, + = eligible, blank = a higher-ranked "
+            f"name in the same class took the slot")
+        lines.append(f"pool: {', '.join(plan.get('pool') or [])}")
+        lines.append("")
     if gap is not None:
         warn = "  <-- NARROW, selection is near a coin flip" if gap < 1.0 else ""
-        lines.append(f"rank {TOP_N}/{TOP_N + 1} gap: {gap:.2f} pt{warn}")
+        lines.append(f"rank {TOP_N}/{TOP_N + 1} gap: {gap:.2f} pt{warn}"
+                     + ("  (measured across the capped pool)" if cap else ""))
     lines.append(f"target: {', '.join(plan.get('target', [])) or '(none)'}")
     if plan["exits"]:
         lines.append(f"exits:  {', '.join(plan['exits'])}")
@@ -899,6 +983,89 @@ def selftest() -> int:
                        "category_id": 999}}) == {})
     check("the result is the same shape ftmo.universe takes in settings",
           all(isinstance(v, list) for v in derived.values()))
+
+    print("ranking WITHIN asset class caps concentration (2026-08-11):")
+    # The exact shape from the first live dry-run on the 101-symbol universe:
+    # four micro-cap cryptos sweeping the board ahead of every other class.
+    swept = [
+        Candidate("GALUSD", "crypto", 47.67, 0.00021, 0.00008),
+        Candidate("VECUSD", "crypto", 25.51, 0.00042, 0.00017),
+        Candidate("IMXUSD", "crypto", 18.11, 0.0121, 0.00481),
+        Candidate("MANUSD", "crypto", 16.65, 0.0054, 0.00214),
+        Candidate("GME", "stocks", 3.10, 24.0, 1.20),
+        Candidate("SUGAR.c", "commodities", 1.90, 18.0, 0.40),
+        Candidate("US100.cash", "indices", 0.80, 22000.0, 667.0),
+        Candidate("EURUSD", "fx", 0.20, 1.15, 0.0056),
+    ]
+    uncapped = cap_per_class(swept, 0)
+    check("a cap of 0 disables the mechanism entirely",
+          [c.symbol for c in uncapped] == [c.symbol for c in swept])
+    check("...and None does the same",
+          [c.symbol for c in cap_per_class(swept, None)]
+          == [c.symbol for c in swept])
+
+    capped = cap_per_class(swept, 1)
+    check("a cap of 1 leaves exactly one candidate per class",
+          len({c.asset_class for c in capped}) == len(capped))
+    check("...and it is each class's BEST, not an arbitrary member",
+          [c.symbol for c in capped]
+          == ["GALUSD", "GME", "SUGAR.c", "US100.cash", "EURUSD"])
+    check("...preserving the global order among the leaders",
+          [c.predicted_return_pct for c in capped]
+          == sorted((c.predicted_return_pct for c in capped), reverse=True))
+    check("the four-crypto sweep is reduced to one crypto",
+          sum(1 for c in capped if c.asset_class == "crypto") == 1)
+
+    check("a cap of 2 allows two per class and no more",
+          all(sum(1 for c in cap_per_class(swept, 2)
+                  if c.asset_class == cls) <= 2
+              for cls in {c.asset_class for c in swept}))
+    check("...and takes the top two of the class, in order",
+          [c.symbol for c in cap_per_class(swept, 2)][:2]
+          == ["GALUSD", "VECUSD"])
+    check("a cap larger than any class changes nothing",
+          [c.symbol for c in cap_per_class(swept, 99)]
+          == [c.symbol for c in swept])
+    check("an empty ranking survives the cap",
+          cap_per_class([], 1) == [])
+
+    # The whole point, asserted end to end rather than on the helper alone:
+    # the same candidates that produced an all-crypto top-4 must now produce a
+    # target spanning four different classes.
+    #
+    # Run against a BREACHED state deliberately. `plan_orders` computes the
+    # pool, the gap and the target BEFORE it consults can_open, so a breached
+    # account exercises the whole selection path and stops short of sizing —
+    # which is what is under test here and avoids needing venue specs for
+    # eight invented symbols.
+    p_swept = plan_orders(_S(), cfg, breached, swept, [], top_n=4,
+                          max_per_class=0)
+    check("WITHOUT the cap the target is all crypto (the 2026-08-11 result)",
+          {c.asset_class for c in swept
+           if c.symbol in p_swept["target"]} == {"crypto"})
+    p_capped = plan_orders(_S(), cfg, breached, swept, [], top_n=4,
+                           max_per_class=1)
+    check("WITH the cap the target spans four distinct classes",
+          len({c.asset_class for c in swept
+               if c.symbol in p_capped["target"]}) == 4)
+    check("...and still leads with the strongest name overall",
+          p_capped["target"][0] == "GALUSD")
+    check("the plan reports the pool it actually selected from",
+          p_capped["pool"] == ["GALUSD", "GME", "SUGAR.c", "US100.cash",
+                               "EURUSD"])
+    check("the full ranking is still reported for display",
+          len(p_capped["ranked"]) == len(swept))
+    # A gap measured on the uncapped list would describe a decision nobody
+    # made: rank 4/5 there is MANUSD vs GME, and neither is a boundary case
+    # once the cap is on.
+    # Pool is [GALUSD 47.67, GME 3.10, SUGAR.c 1.90, US100.cash 0.80,
+    # EURUSD 0.20], so rank 4/5 is US100.cash - EURUSD = 0.60. On the UNCAPPED
+    # list rank 4/5 is MANUSD 16.65 - GME 3.10 = 13.55 — a number describing a
+    # decision nobody made.
+    check("the boundary gap is measured across the CAPPED pool",
+          abs(p_capped["rank_gap"] - 0.60) < 1e-9)
+    check("...and the uncapped gap really is the different number",
+          abs(p_swept["rank_gap"] - 13.55) < 1e-9)
 
     print("resolve_universe picks a source and says which (2026-08-11):")
     import tempfile

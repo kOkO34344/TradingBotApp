@@ -19,9 +19,17 @@ for the per-module breakdown and the one-liner that re-counts them.
 ENABLED, classifiable symbols across five classes — including 46 stock CFDs —
 and the runner ranks all of them. `ftmo.universe` in `trader_settings.json`
 still overrides it; `ftmo.universe_source: "default"` restores the old
-14-symbol basket. Ranking that many symbols by predicted percentage return
-concentrates the top-N in micro-cap crypto; that is documented in CLAUDE.md
-and is not a bug in the sizer.
+14-symbol basket.
+
+**Selection is ranked WITHIN asset class.** Ranking 101 symbols by predicted
+percentage return is a contest scored on amplitude, and it handed the entire
+top-4 to micro-cap crypto on the first live run. `ftmo_signal.cap_per_class()`
+now allows each class at most `ftmo.autotrade.max_per_class` candidates
+(default **1**), so the pool is the class leaders and a top_n of 4 spans four
+classes. `0` restores pure global ranking. It is a filter on the pool, never a
+re-scoring — `margin_pct` is calibrated in raw predicted-return points, and
+normalising would have changed those units underneath it. The pool, the
+boundary gap and the target all read the same capped list.
 
 **Rule 9 in `CLAUDE.md` governs this venue and is not restated here — read it
 first.** Every module's own docstring carries its full rationale; this file is
