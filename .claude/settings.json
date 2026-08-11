@@ -1,0 +1,46 @@
+{
+  "$comment": [
+    "Project hooks for TradingBotApp. Tracked in git — .claude/settings.local.json",
+    "is the untracked, machine-specific permissions file and is left alone.",
+    "Each hook is a real script under .claude/hooks/ with its rationale in its own",
+    "docstring; see .claude/hooks/_run.sh for why they are files and not inline shell.",
+    "All three fail OPEN on any plumbing problem: a guard that blocks everything",
+    "because it broke is worse than the failure it was written to prevent."
+  ],
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/_run.sh journal_guard",
+            "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/_run.sh checkout_guard",
+            "timeout": 20
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "\"$CLAUDE_PROJECT_DIR\"/.claude/hooks/_run.sh selftest_guard",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}
