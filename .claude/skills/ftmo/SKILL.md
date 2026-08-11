@@ -8,8 +8,20 @@ description: How the FTMO venue works in TradingBotApp — the rule engine, equi
 Five modules. `ftmo_rules.py` decides, `ftmo_monitor.py` watches,
 `ftmo_sizing.py` sizes, `ftmo_audit.py` records why, `ftmo_service.py` talks to
 the broker. Each has an offline `--selftest` needing no credentials and no
-network; 465 checks total as of 2026-08-07, across these five plus
-`ftmo_session`, `ftmo_signal`, `ftmo_runner` and `trade_journal`.
+network; **670 checks total, re-measured 2026-08-11** across twelve modules —
+these five plus `ftmo_session`, `ftmo_signal`, `ftmo_runner`, `ftmo_closes`,
+`trade_journal`, `indicators` and `secrets_store`. Earlier figures here (465,
+and CLAUDE.md's 579) did not reproduce; see CLAUDE.md's architecture section
+for the per-module breakdown and the one-liner that re-counts them.
+
+**The traded universe is the venue's own symbol list, not a basket
+(2026-08-11).** `ftmo_signal.resolve_universe()` returns ~101 USD-quoted,
+ENABLED, classifiable symbols across five classes — including 46 stock CFDs —
+and the runner ranks all of them. `ftmo.universe` in `trader_settings.json`
+still overrides it; `ftmo.universe_source: "default"` restores the old
+14-symbol basket. Ranking that many symbols by predicted percentage return
+concentrates the top-N in micro-cap crypto; that is documented in CLAUDE.md
+and is not a bug in the sizer.
 
 **Rule 9 in `CLAUDE.md` governs this venue and is not restated here — read it
 first.** Every module's own docstring carries its full rationale; this file is

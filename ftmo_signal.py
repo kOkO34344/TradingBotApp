@@ -124,6 +124,78 @@ def load_universe(settings_path: Path | None = None) -> dict:
     return cfg or DEFAULT_UNIVERSE
 
 
+# What `ftmo.universe_source` may say, and what each means.
+#
+#   "capture"  every USD-quoted, ENABLED, classifiable symbol the venue itself
+#              reported — ~101 of the 202 in ftmo_symbol_specs.json
+#   "default"  the hand-written 14-symbol basket in DEFAULT_UNIVERSE
+#
+# An explicit `ftmo.universe` in trader_settings.json OVERRIDES both, because a
+# hand-written list is the most specific statement of intent available and the
+# config is meant to be the reviewable record of what may be traded.
+UNIVERSE_SOURCES = ("capture", "default")
+DEFAULT_UNIVERSE_SOURCE = "capture"
+
+
+def resolve_universe(specs: dict, settings_path: Path | None = None
+                     ) -> tuple[dict, str]:
+    """The universe to trade, and a one-line account of where it came from.
+
+    Returns (universe, provenance). The provenance string is logged and
+    audited, never dropped: this decides what the bot may buy, and "which set
+    of symbols was this firing even looking at" must be answerable from the log
+    afterwards rather than reconstructed from whichever settings file happened
+    to be on disk at the time.
+
+    Precedence, most specific first:
+
+      1. `ftmo.universe` — an explicit hand-written mapping. Wins outright.
+         An explicitly EMPTY mapping is honoured and flows through to
+         `build_universe`, which raises. That is deliberate and predates this
+         function: emptying the config is how someone turns the bot off, and
+         having that resurrect a full basket would be the worst possible
+         reading of it.
+      2. `ftmo.universe_source` — "capture" (the default) or "default".
+      3. Nothing configured — "capture".
+
+    Owner instruction, 2026-08-11: forecast everything the FTMO account can
+    actually trade, not the 14-symbol basket. `universe_from_capture` already
+    existed for exactly this and had never been wired into the runner, so the
+    change here is a routing decision rather than new derivation logic.
+
+    An unrecognised `universe_source` RAISES rather than falling back. A
+    typo'd source silently reverting to 14 symbols is precisely the class of
+    quiet mismatch this project keeps paying for.
+    """
+    path = settings_path or SETTINGS
+    try:
+        ftmo_cfg = json.loads(path.read_text()).get("ftmo", {})
+    except (OSError, json.JSONDecodeError):
+        ftmo_cfg = {}
+
+    explicit = ftmo_cfg.get("universe")
+    if explicit is not None:
+        n = sum(len(v) for v in explicit.values()) if explicit else 0
+        return explicit, f"explicit ftmo.universe in settings ({n} symbols)"
+
+    source = ftmo_cfg.get("universe_source", DEFAULT_UNIVERSE_SOURCE)
+    if source not in UNIVERSE_SOURCES:
+        raise ValueError(
+            f"ftmo.universe_source={source!r} is not one of "
+            f"{', '.join(UNIVERSE_SOURCES)}. Refusing to guess: a typo here "
+            f"would silently shrink the traded universe.")
+
+    if source == "default":
+        n = sum(len(v) for v in DEFAULT_UNIVERSE.values())
+        return DEFAULT_UNIVERSE, f"DEFAULT_UNIVERSE basket ({n} symbols)"
+
+    derived = universe_from_capture(specs)
+    n = sum(len(v) for v in derived.values())
+    breakdown = ", ".join(f"{k} {len(v)}" for k, v in sorted(derived.items()))
+    return derived, (f"venue symbol capture ({n} of {len(specs)} symbols "
+                     f"tradeable and USD-quoted: {breakdown})")
+
+
 def universe_from_capture(specs: dict) -> dict:
     """Derive the tradeable universe from the venue's own symbol capture.
 
@@ -827,6 +899,66 @@ def selftest() -> int:
                        "category_id": 999}}) == {})
     check("the result is the same shape ftmo.universe takes in settings",
           all(isinstance(v, list) for v in derived.values()))
+
+    print("resolve_universe picks a source and says which (2026-08-11):")
+    import tempfile
+
+    def _settings(blob: dict) -> Path:
+        fh = tempfile.NamedTemporaryFile("w", suffix=".json", delete=False)
+        json.dump(blob, fh)
+        fh.close()
+        return Path(fh.name)
+
+    u_default, why_default = resolve_universe(
+        real, _settings({"ftmo": {"universe_source": "default"}}))
+    check("universe_source=default returns the 14-symbol basket",
+          u_default == DEFAULT_UNIVERSE)
+    check("...and says so in the provenance", "DEFAULT_UNIVERSE" in why_default)
+
+    u_cap, why_cap = resolve_universe(
+        real, _settings({"ftmo": {"universe_source": "capture"}}))
+    check("universe_source=capture returns the venue-derived universe",
+          u_cap == derived)
+    check("...and the provenance names the capture",
+          "symbol capture" in why_cap)
+
+    u_none, why_none = resolve_universe(real, _settings({"ftmo": {}}))
+    check("NO universe_source defaults to the capture, not the basket",
+          u_none == derived and sum(len(v) for v in u_none.values()) > 14)
+    check("a missing settings file also defaults to the capture",
+          resolve_universe(real, Path("/nonexistent/settings.json"))[0] == derived)
+
+    # An explicit hand-written list is the most specific statement of intent
+    # available and must beat the derived one, or the config stops being the
+    # reviewable record of what may be traded.
+    u_exp, why_exp = resolve_universe(
+        real, _settings({"ftmo": {"universe": {"fx": ["EURUSD"]},
+                                  "universe_source": "capture"}}))
+    check("an explicit ftmo.universe OVERRIDES universe_source",
+          u_exp == {"fx": ["EURUSD"]})
+    check("...and the provenance says it came from settings",
+          "explicit" in why_exp)
+
+    # Emptying the config is how someone turns the bot off. It must reach
+    # build_universe and raise, never resurrect a basket.
+    u_empty, _ = resolve_universe(
+        real, _settings({"ftmo": {"universe": {}}}))
+    check("an explicitly EMPTY universe is preserved, not replaced",
+          u_empty == {})
+    check("...and still raises at build_universe",
+          raises(lambda: build_universe(real, u_empty), "empty"))
+
+    check("an unrecognised universe_source RAISES rather than falling back",
+          raises(lambda: resolve_universe(
+              real, _settings({"ftmo": {"universe_source": "captrue"}})),
+              "not one of"))
+
+    # Guards the whole point of the 2026-08-11 change. If a future edit routes
+    # the runner back to the 14-symbol basket by accident, this fails loudly
+    # rather than the bot quietly forecasting a seventh of the account.
+    check("the capture universe is many times the size of the old basket",
+          sum(len(v) for v in derived.values())
+          >= 4 * sum(len(v) for v in DEFAULT_UNIVERSE.values()))
 
     print("a nonsensical stop is refused, not sized (2026-08-05 regression):")
     # ATR wildly larger than price is what a mis-scaled bar series looks like.

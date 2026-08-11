@@ -128,7 +128,7 @@ def forecast_tickers(tickers: list, pred_len: int = PRED_LEN,
 
 def forecast_frames(frames: dict, pred_len: int = PRED_LEN,
                     sample_count: int = DEFAULT_SAMPLE_COUNT,
-                    verbose: bool = True):
+                    verbose: bool = True, batch_size: int | None = None):
     """Forecast from ALREADY-FETCHED OHLCV frames, skipping yfinance entirely.
 
     `forecast_tickers()` above is hardwired to `_fetch_fresh()`, i.e. yfinance
@@ -141,6 +141,21 @@ def forecast_frames(frames: dict, pred_len: int = PRED_LEN,
     `frames` maps symbol -> DataFrame with a DatetimeIndex and OHLCV columns
     (any capitalisation). Returns the same shape `forecast_tickers` does, so
     downstream ranking code is identical for both venues.
+
+    `batch_size` splits the predict call into chunks of at most that many
+    symbols. None (the default) keeps the previous behaviour exactly — one
+    call for everything — so the yfinance path and every existing caller are
+    untouched.
+
+    It exists because the FTMO universe stopped being a 14-symbol basket on
+    2026-08-11 and became the ~101 symbols the venue actually lists.
+    `predict_batch` stacks every symbol into one tensor, and 101 symbols at
+    sample_count=10 is 1,010 sequences of 400 bars in a single allocation on
+    a CPU predictor. Chunking bounds peak memory and makes the run reportable
+    in progress rather than as one opaque wait. Results are identical either
+    way: each symbol's forecast depends only on its own history, so the
+    batching is a scheduling detail and not a modelling one — the sampling
+    draw per symbol is what it is, and this changes nothing about it.
     """
     predictor = get_predictor()
     hist_data, df_list, x_ts_list, y_ts_list, ok = {}, [], [], [], []
@@ -161,8 +176,21 @@ def forecast_frames(frames: dict, pred_len: int = PRED_LEN,
     if not df_list:
         raise RuntimeError("No symbols had enough history to forecast.")
 
-    pred_dfs = _predict(ok, df_list, x_ts_list, y_ts_list, pred_len,
-                        sample_count, verbose)
+    if batch_size is None or batch_size >= len(ok):
+        pred_dfs = _predict(ok, df_list, x_ts_list, y_ts_list, pred_len,
+                            sample_count, verbose)
+    else:
+        pred_dfs = {}
+        for start in range(0, len(ok), batch_size):
+            stop = start + batch_size
+            if verbose:
+                print(f"  batch {start // batch_size + 1} of "
+                      f"{-(-len(ok) // batch_size)}: symbols {start + 1}-"
+                      f"{min(stop, len(ok))} of {len(ok)}", file=sys.stderr)
+            pred_dfs.update(_predict(ok[start:stop], df_list[start:stop],
+                                     x_ts_list[start:stop],
+                                     y_ts_list[start:stop], pred_len,
+                                     sample_count, verbose))
     return ok, hist_data, pred_dfs
 
 

@@ -191,6 +191,11 @@ def autotrade_config(settings: dict) -> dict:
         "margin_pct": float(block.get("rotation_margin_pct", 1.0)),
         "top_n": int(block.get("top_n", sig.TOP_N)),
         "sample_count": int(block.get("sample_count", 10)),
+        # Symbols per Kronos predict call. 24 keeps peak memory close to what
+        # the 14-symbol basket used while the universe is now ~101; raise it
+        # if the machine has headroom, or set it to 0 for one call with
+        # everything (the pre-2026-08-11 behaviour).
+        "forecast_batch": int(block.get("forecast_batch", 24)) or None,
         "product": str(block.get("product", "2step")),
         "buffer_pct": float(block.get("buffer_pct", 0.20)),
         "initial_capital": float(block.get("initial_capital", 25_000.0)),
@@ -651,18 +656,28 @@ def run(force: bool = False, dry_run: bool = False,
     import pandas as pd
 
     specs = svc.load_symbol_specs()
-    pairs = sig.build_universe(specs, sig.load_universe())
+    universe, provenance = sig.resolve_universe(specs)
+    pairs = sig.build_universe(specs, universe)
     symbols = [s for s, _ in pairs]
     classes = dict(pairs)
     log(f"universe: {len(symbols)} symbols across "
-        f"{len(set(classes.values()))} classes")
+        f"{len(set(classes.values()))} classes — {provenance}")
 
     session = fs.FTMOSession(specs=specs)
     session.start()
     try:
         log(f"connected, account {session.account_id}")
         session.subscribe(symbols)
-        time.sleep(2.0)                       # let the first spot ticks arrive
+        # Let the first spot ticks arrive. Scaled to the universe, because the
+        # settle time is what decides how many symbols the scaling cross-check
+        # can actually check: assert_bars_match_quote asserts NOTHING for a
+        # symbol that has not ticked yet, so a fixed 2s on a ~101-symbol
+        # universe would silently reduce the guard to a handful of names. The
+        # count of symbols actually cross-checked is logged below for the same
+        # reason — a guard that quietly stops guarding is the failure mode this
+        # project keeps rediscovering.
+        settle = min(2.0 + 0.04 * len(symbols), 8.0)
+        time.sleep(settle)
 
         positions = session.refresh_positions()
         acct = session.account()
@@ -718,18 +733,33 @@ def run(force: bool = False, dry_run: bool = False,
 
         # ---- bars, with the scaling cross-check that a 1000x bug taught us
         bars_by_symbol, frames = {}, {}
+        checked, unchecked, short = 0, [], []
         for sym in symbols:
+            # Fetch ONCE, then cross-check the series we are about to use.
+            # Previously the assert pulled its own 3-bar sample first, so every
+            # symbol cost two historical requests; at ~101 symbols that is ~202
+            # against a 5/sec limit. Checking the same bars the forecast will
+            # consume is also strictly more honest than checking a re-fetch.
             try:
-                session.assert_bars_match_quote(sym)
+                bars = session.trendbars(sym, "D1", sig.BARS_NEEDED)
+            except fs.SessionError as e:
+                log(f"  {sym}: bar fetch failed: {e}")
+                journal_ftmo("BLOCKED", symbol=sym, status="bad data",
+                             detail=f"bar fetch failed: {e}")
+                continue
+            try:
+                session.assert_bars_match_quote(sym, bars=bars)
+                if session.quote(sym) is not None:
+                    checked += 1
+                else:
+                    unchecked.append(sym)
             except fs.SessionError as e:
                 log(f"  {sym}: {e}")
                 journal_ftmo("BLOCKED", symbol=sym, status="bad data",
                              detail=str(e))
                 continue
-            bars = session.trendbars(sym, "D1", sig.BARS_NEEDED)
             if len(bars) < ka.LOOKBACK:
-                log(f"  {sym}: only {len(bars)} daily bars, need "
-                    f"{ka.LOOKBACK} — skipped")
+                short.append(f"{sym}({len(bars)})")
                 continue
             bars_by_symbol[sym] = bars
             idx = pd.to_datetime([b["ts"] for b in bars], unit="s")
@@ -739,7 +769,18 @@ def run(force: bool = False, dry_run: bool = False,
                  "low": [b["low"] for b in bars],
                  "close": [b["close"] for b in bars],
                  "volume": [b["volume"] for b in bars]}, index=idx)
+        if short:
+            log(f"  {len(short)} symbol(s) had under {ka.LOOKBACK} daily bars "
+                f"and were skipped: {', '.join(short[:12])}"
+                f"{' ...' if len(short) > 12 else ''}")
         log(f"bars usable for {len(frames)}/{len(symbols)} symbols")
+        # State plainly how much of the universe the scaling guard covered.
+        # A symbol with no tick yet is NOT cross-checked — the 1000x trendbar
+        # bug is exactly what this catches, so the number of names it could
+        # not check belongs in the log rather than in nobody's head.
+        log(f"price-scaling cross-check: {checked}/{len(symbols)} verified "
+            f"against a live quote"
+            + (f", {len(unchecked)} had no tick yet" if unchecked else ""))
         if not frames:
             log("no symbol had usable history — nothing to forecast")
             journal_ftmo("BLOCKED", status="no data",
@@ -748,7 +789,8 @@ def run(force: bool = False, dry_run: bool = False,
 
         t0 = time.time()
         _, _, pred_dfs = ka.forecast_frames(frames,
-                                            sample_count=cfg["sample_count"])
+                                            sample_count=cfg["sample_count"],
+                                            batch_size=cfg["forecast_batch"])
         log(f"Kronos forecast for {len(pred_dfs)} symbols in "
             f"{time.time() - t0:.0f}s")
 

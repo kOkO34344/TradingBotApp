@@ -121,7 +121,7 @@ File purposes are documented in each script's own module docstring
   selftest. To change the project's focus signal, change `DEFAULT_SIGNAL` /
   `DISABLED_SIGNALS` there — not in five `.get()` fallbacks.
 
-- **FTMO venue — five modules, all with offline `--selftest` (294 checks).**
+- **FTMO venue — the original five modules, all with offline `--selftest`.**
   `ftmo_rules.py` decides (limits, three thresholds, both products),
   `ftmo_monitor.py` watches equity continuously, `ftmo_sizing.py` sizes,
   `ftmo_audit.py` records why, `ftmo_service.py` talks to cTrader.
@@ -133,10 +133,23 @@ File purposes are documented in each script's own module docstring
   IBKR removal, the ONLY thing in this project that places an order.
   `ftmo_closes.py` (2026-08-08) detects positions that closed WITHOUT the
   runner — see the close-detection section below.
-  **579 offline checks, measured 2026-08-08** across the ten modules that
-  carry a `--selftest`: `ftmo_runner` 100, `ftmo_sizing` 81, `ftmo_rules` 70,
-  `ftmo_session` 70, `ftmo_monitor` 63, `ftmo_audit` 48, `ftmo_service` 43,
-  `ftmo_closes` 43, `ftmo_signal` 35, `trade_journal` 26.
+  **670 offline checks, re-measured 2026-08-11** across the TWELVE modules
+  that carry a `--selftest`: `ftmo_runner` 100, `ftmo_sizing` 90,
+  `ftmo_signal` 85, `ftmo_rules` 70, `ftmo_session` 70, `ftmo_monitor` 63,
+  `ftmo_audit` 48, `ftmo_closes` 43, `ftmo_service` 43, `trade_journal` 26,
+  `indicators` 20, `secrets_store` 12.
+  **The previous figure here — "579 across the ten modules" — did not
+  reproduce, and had already drifted before the 2026-08-11 edit that
+  prompted the recount** (`ftmo_signal` was recorded as 35 and was really 73;
+  `ftmo_sizing` as 81 and was really 90; `indicators` and `secrets_store` were
+  simply omitted). Recorded as a correction rather than silently overwritten,
+  because a count nobody re-measures is the same class of thing as the CI
+  workflow this file claimed for weeks and never had.
+  Re-measure with, and note the two output formats:
+  `for m in $(grep -l -- --selftest *.py); do .venv/bin/python3 $m --selftest
+  | grep -cE '^\s+(ok|FAIL|PASS)'; done` — `indicators.py` prints `PASS`,
+  everything else prints `ok`, so a sweep matching only `ok` silently scores
+  it zero.
   (`ftmo_smoke_order.py` has no
   `--selftest` — it is a live one-trade proof, and its dry-run is the check.)
   Note `ftmo_audit`'s selftest deliberately prints `AUDIT WRITE FAILED` to
@@ -404,7 +417,7 @@ after testing it properly.
 - Phase 1 (research agent): built. 38 graded calls at 5d as of 2026-08-03 and
   no detectable skill — see the Work Queue for the honest reading of that
   sample.
-- Phase 2 (infrastructure): hardened and self-tested. **579 offline checks**
+- Phase 2 (infrastructure): hardened and self-tested. **670 offline checks**
   across the ten FTMO modules, plus the `api/` selftests. No credentials or
   venue connection needed for any of them.
 - Phase 3 (unattended trading on simulated capital): LIVE on FTMO since
@@ -598,7 +611,7 @@ the row says so.
    - Still true, and still worth weighing: more research/trading cycles is the
      evidence this project is gated on; a dashboard is not.
 6. **FTMO venue — LIVE AND ARMED. The only venue since 2026-08-09.**
-   Governed by rules 8 and 9. Five modules, selftested offline (**294 checks**, no credentials
+   Governed by rules 8 and 9. Five modules, selftested offline (no credentials
    needed): `ftmo_rules.py`, `ftmo_monitor.py`, `ftmo_sizing.py`,
    `ftmo_audit.py`, `ftmo_service.py`. **Read the `ftmo` skill** for the agreed
    configuration, derived limits and invariants.
@@ -683,6 +696,77 @@ reach when things are going wrong is not a switch.
 The cycle, once per invocation: connect → positions and balance → rule engine →
 FTMO's own daily bars → Kronos → rank → plan → **exits, then entries** → verify
 every stop by reading the venue back → journal + audit + text.
+
+### The universe is the whole account now, not a basket (2026-08-11)
+
+Owner instruction: forecast everything the FTMO account can actually trade.
+The runner ranks **101 symbols across five classes** — commodities 16,
+crypto 30, fx 5, indices 4, **stocks 46** — derived from the venue's own
+capture by `ftmo_signal.universe_from_capture`, which had existed since
+2026-08-08 and had never been wired in. Until this change the runner used
+`DEFAULT_UNIVERSE`, a hand-written basket of **14**.
+
+`ftmo_signal.resolve_universe()` decides, and its precedence is
+most-specific-first: an explicit `ftmo.universe` in `trader_settings.json`
+wins outright; otherwise `ftmo.universe_source` (`"capture"`, the default, or
+`"default"` for the old basket); otherwise capture. An explicitly EMPTY
+`ftmo.universe` still reaches `build_universe` and still raises — emptying the
+config is how someone turns the bot off, and a fallback there would be the
+worst possible reading of it. An unrecognised `universe_source` **raises**
+rather than quietly reverting to 14 symbols.
+The provenance string is logged and audited every firing, so "which symbols
+was this run even looking at" is answerable afterwards from the log rather
+than from whichever settings file happens to be on disk later.
+
+**Read this before reacting to a rank table: ranking 101 symbols by predicted
+percentage return systematically selects the most volatile instruments in the
+account, and on this universe that means micro-cap alt-coins.** The first live
+dry-run's top four were GALUSD +47.67%, VECUSD +25.51%, IMXUSD +18.11%,
+MANUSD +16.65% — every one a crypto priced in fractions of a cent, ahead of
+every index, every FX pair and all 46 stock CFDs. A five-day forecast of +47%
+is not a forecast, it is the noisiest series in the set winning a contest
+scored on amplitude. The 14-symbol basket had the same bias and bounded it by
+construction; 30 cryptos do not. This is a **known and unmitigated
+consequence** of the change, recorded here rather than discovered later —
+the per-trade cap and the rule engine still hold, so it changes WHICH
+instruments get chosen, never how much is risked on one. If it should be
+mitigated, the honest routes are ranking within class, or normalising
+predicted return by the symbol's own volatility. Neither was done here and
+neither should be added without saying so.
+
+Three costs that came with it, all measured on the 2026-08-11 dry-run:
+
+- **A cycle now takes ~6.3 minutes, up from ~3.** Bars for 101 symbols take
+  ~100s, the forecast 261s in four batches. Still comfortably inside an hourly
+  schedule, but it is more wall clock exposed to the sleep race that cost a
+  full day on 2026-08-08.
+- **`ftmo_session.TRENDBAR_MIN_INTERVAL_S` (0.22s) paces historical requests**
+  to ~4.5/sec, under cTrader's documented 5/sec. It is enforced in
+  `trendbars()` — the one place every historical request passes — because a
+  limiter a caller can forget to use is not a limiter.
+- **`assert_bars_match_quote` now accepts the bars the caller already
+  fetched.** It used to pull its own 3-bar sample, so each symbol cost two
+  historical round trips: ~202 per firing at this size. Checking the same
+  series the forecast consumes is also strictly more honest than re-fetching.
+
+Two things that had to scale with it, and one number to watch:
+
+- The post-subscribe settle is `min(2 + 0.04n, 8)` seconds, not a flat 2.
+  `assert_bars_match_quote` asserts **nothing** for a symbol that has not
+  ticked yet, so a fixed 2s would have silently reduced the 1000x-scaling
+  guard to a handful of names. The runner now logs
+  `price-scaling cross-check: N/M verified against a live quote` every firing.
+  **It read 101/101 on the first real run; if that number starts dropping, the
+  guard is eroding and the log is the only place it shows.**
+- Kronos is called in batches of `ftmo.autotrade.forecast_batch` (default 24)
+  via `kronos_agent.forecast_frames(batch_size=...)`. `predict_batch` stacks
+  every symbol into one tensor and 101 × sample_count 10 is 1,010 sequences in
+  a single allocation. Batching is a scheduling detail, not a modelling one —
+  each symbol's forecast depends only on its own history. `0` restores one
+  call for everything.
+- **Six symbols are skipped every run for short history** and are named in the
+  log: ARM(130), LMT(130), META(386), RTX(381), SPCX(39), DXY.cash(221) —
+  Kronos needs LOOKBACK=400 daily bars. 95 of 101 are forecast.
 
 Four properties not to regress:
 
@@ -1120,8 +1204,18 @@ sections close to verbatim, so keep those reasonably current.
   Homebrew on this machine, so upgrades mean re-downloading the release zip
   and `install -m 755` over it. Auth token is in the macOS keyring, config in
   `~/.config/gh/`, and `gh auth setup-git` is configured so `git push` works.
-  Remote is the private repo `kOkO34344/TradingBotApp`. A Pylint GitHub
-  Actions workflow runs on PRs (`.github/workflows/pylint.yml`).
+  Remote is the private repo `kOkO34344/TradingBotApp`.
+  **There is NO CI on this repo.** This entry used to claim a Pylint GitHub
+  Actions workflow ran on PRs at `.github/workflows/pylint.yml`; there is no
+  `.github` directory at all and there never was one in the history. Corrected
+  2026-08-11. Worth keeping as a correction rather than a silent deletion,
+  because a documented check that does not exist is worse than a known gap —
+  it is the same shape as the four fabricated grades in `graded_calls.csv`
+  and the `{'sent': True}` on a refused order: a record asserting an outcome
+  nobody verified.
+  What actually guards the code is local and now automatic: the
+  `PostToolUse` hook in `.claude/settings.json` runs all twelve `--selftest`
+  modules after any edit to a top-level `.py`. See the hooks section below.
 
 ## Practical
 

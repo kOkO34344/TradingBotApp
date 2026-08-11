@@ -54,6 +54,24 @@ BASE_DIR = Path(__file__).resolve().parent
 # cTrader trendbar periods we actually use, by the project's own naming.
 PERIODS = {"M1": 1, "M5": 5, "M15": 7, "M30": 8, "H1": 9, "H4": 10, "D1": 12}
 
+# Minimum wall-clock gap between two ProtoOAGetTrendbarsReq calls, in seconds.
+#
+# cTrader rate-limits historical-data requests (documented at 5/sec on this
+# API); 0.22s paces us to ~4.5/sec, just under it. This did not matter while
+# the universe was a hand-written basket of 14 symbols. It matters now that
+# the universe is derived from the venue's own capture and is ~101 symbols,
+# because the runner walks it sequentially once an hour.
+#
+# It is a FLOOR on the gap, not a sleep per call: a request that itself took
+# 300ms has already paid the interval and waits for nothing. On a 14-symbol
+# universe this is invisible; that is the intent.
+#
+# Deliberately enforced here, at the one place every historical request passes
+# through, rather than in each caller. The runner is not the only one — the
+# web API and the smoke test both pull bars, and a limiter a caller can forget
+# to use is not a limiter.
+TRENDBAR_MIN_INTERVAL_S = 0.22
+
 # Spot events and trendbars BOTH arrive as integers in a fixed 1/100000 unit.
 # The symbol's `digits` describes how the venue DISPLAYS a price; it is not the
 # wire scale, and treating it as one is a 1000x error on every symbol whose
@@ -302,6 +320,8 @@ class FTMOSession:
         self._by_id = {v["symbol_id"]: k for k, v in self.specs.items()}
         self._lock = threading.Lock()
         self._exec_listeners: list = []
+        self._bars_lock = threading.Lock()
+        self._last_bars_request = 0.0
 
     # ------------------------------------------------------------- lifecycle
 
@@ -570,6 +590,23 @@ class FTMOSession:
         return [p for p in self.refresh_positions()
                 if not (p.take_profit is not None and p.take_profit > 0)]
 
+    def _pace_trendbars(self) -> None:
+        """Hold the floor between historical-data requests. See
+        TRENDBAR_MIN_INTERVAL_S for why this exists and why it lives here.
+
+        Uses the MONOTONIC clock, not time.time(). This project has already
+        been bitten by the difference: Twisted's timeouts run on the wall clock
+        and fired instantly on wake from sleep, while a monotonic deadline does
+        not tick during suspend. For a rate limiter the monotonic behaviour is
+        the one we want — waking from sleep should not owe the venue a debt of
+        thirty minutes' worth of skipped intervals.
+        """
+        with self._bars_lock:
+            gap = time.monotonic() - self._last_bars_request
+            if 0 <= gap < TRENDBAR_MIN_INTERVAL_S:
+                time.sleep(TRENDBAR_MIN_INTERVAL_S - gap)
+            self._last_bars_request = time.monotonic()
+
     def trendbars(self, symbol: str, period: str = "D1",
                   count: int = 500) -> list[dict]:
         """OHLCV history for one symbol, oldest first.
@@ -585,6 +622,7 @@ class FTMOSession:
         spec = self.specs.get(symbol)
         if spec is None:
             raise SessionError(f"{symbol!r} is not in the symbol capture")
+        self._pace_trendbars()
         now_ms = int(time.time() * 1000)
         span = {"M1": 60, "M5": 300, "M15": 900, "M30": 1800,
                 "H1": 3600, "H4": 14400, "D1": 86400}[period]
@@ -608,7 +646,8 @@ class FTMOSession:
         bars.sort(key=lambda r: r["ts"])
         return bars
 
-    def assert_bars_match_quote(self, symbol: str, tolerance: float = 0.25) -> None:
+    def assert_bars_match_quote(self, symbol: str, tolerance: float = 0.25,
+                                bars: list[dict] | None = None) -> None:
         """Cross-check the bar series against the live quote, and RAISE on a
         mismatch rather than trading on a mis-scaled price.
 
@@ -624,11 +663,21 @@ class FTMOSession:
         tolerance is deliberately loose. It is not checking accuracy; it is
         checking for an order-of-magnitude scaling error, which is the failure
         that actually happens.
+
+        `bars` lets a caller that has ALREADY pulled the series hand it in
+        instead of paying a second round trip. That was free at 14 symbols and
+        is not at ~101: fetching separately made every symbol cost two
+        historical requests, so the venue-derived universe would have issued
+        ~202 of them per firing against a 5/sec limit. The check is identical
+        either way — it reads the last close — and passing the SAME series the
+        forecast will consume is strictly more honest than re-fetching a
+        3-bar sample that could differ.
         """
         q = self.quote(symbol)
         if q is None or not (q.bid or q.ask):
             return  # no tick yet; nothing to compare against, so assert nothing
-        bars = self.trendbars(symbol, "D1", 3)
+        if bars is None:
+            bars = self.trendbars(symbol, "D1", 3)
         if not bars:
             return
         close = bars[-1]["close"]
