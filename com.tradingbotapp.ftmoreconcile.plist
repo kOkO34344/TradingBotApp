@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tradingbotapp.ftmoreconcile</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>/Users/kaloyanivanov/TradingBotApp/ftmo_reconcile.sh</string>
+    </array>
+
+    <!-- Close detection and the FTMO day roll, every 30 minutes, ALL DAY,
+         EVERY DAY. No orders, no model, ~15 seconds.
+
+         Install with:
+             cp com.tradingbotapp.ftmoreconcile.plist ~/Library/LaunchAgents/
+             launchctl load ~/Library/LaunchAgents/com.tradingbotapp.ftmoreconcile.plist
+         Verify UNSANDBOXED:
+             launchctl print gui/$(id -u)/com.tradingbotapp.ftmoreconcile
+
+         The Minute-only entries are wildcards on the hour, so these two dicts
+         mean "every hour at :00 and :30" — 48 runs a day.
+
+         NOT scheduled around the trading window ON PURPOSE. `--reconcile`
+         ignores both the arm toggle and the window because recording what the
+         account did is not trading, and because since 2026-08-11 the runner
+         only covers 16:30-23:00 Mon-Fri. Two things depend on this job:
+
+           rule 6 — a stop firing at 02:00 Saturday would otherwise not be
+           journalled until Monday afternoon, 62 hours later;
+
+           the DAILY LIMIT's baseline — the FTMO day rolls at 00:00 Prague
+           (01:00 Sofia), outside the window. advance_state() samples
+           day_start_balance at roll time, so without a job near the boundary
+           the roll happens at 16:30 and every overnight move is excluded from
+           the daily loss. A limit that under-reports looks like a limit and is
+           not one. -->
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Minute</key><integer>30</integer></dict>
+    </array>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>StandardOutPath</key>
+    <string>/Users/kaloyanivanov/TradingBotApp/ftmo_reconcile_launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/kaloyanivanov/TradingBotApp/ftmo_reconcile_launchd.log</string>
+</dict>
+</plist>

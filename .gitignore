@@ -99,3 +99,15 @@ ftmo_runner.log
 # one was missed, so the FTMO runner's launchd output kept showing up as an
 # untracked file asking to be committed.
 ftmo_launchd.log
+
+# The runner's single-firing lock. Belongs to a PROCESS on THIS machine,
+# not to the account, so it is never shared between checkouts.
+ftmo_runner.lock
+
+# The watcher's single-instance lock (see ftmo_watch.py).
+ftmo_watch.lock
+
+# Watcher logs, same as every other runtime log here.
+ftmo_watch.log
+ftmo_watch_launchd.log
+ftmo_reconcile_launchd.log

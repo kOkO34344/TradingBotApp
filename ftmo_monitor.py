@@ -50,6 +50,7 @@ Offline selftest:  python3 ftmo_monitor.py --selftest
 from __future__ import annotations
 
 import argparse
+import inspect
 import sys
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
@@ -67,6 +68,23 @@ BREACHED = "BREACHED"         # an FTMO limit is already gone
 # and how long before blindness itself justifies closing out.
 STALE_BLOCK_S = 10.0
 STALE_FLATTEN_S = 60.0
+
+# EARLY WARNINGS. Fractions of the daily SOFT budget at which to speak up
+# while everything is still fine.
+#
+# Added 2026-08-11 with buffer_pct at 0.01, which leaves only $6.25 between
+# the flatten threshold and FTMO's hard $1,250 cliff. At that spacing the
+# first posture change the owner ever hears about is effectively the last
+# one: BLOCKED, FLATTEN and BREACHED all land within $12.50 of each other.
+# These are informational and edge-triggered ONCE PER DAY per level, so they
+# add two messages on a bad day and none on a good one.
+#
+# WARNING is deliberately NOT a posture. Postures drive the executor — a
+# FLATTEN closes the book — and an advisory message must never be able to
+# move that state machine. It rides the same event stream so the alerting
+# layer needs no new wiring, and it carries the posture unchanged.
+EARLY_WARNING_FRACTIONS = (0.50, 0.75)
+WARNING = "WARNING"
 
 
 @dataclass(frozen=True)
@@ -173,6 +191,9 @@ class EquityMonitor:
         self._opened_at: dict[int, datetime] = {}
         self.posture = OK
         self._breach_emitted = False
+        # Which early-warning levels have already been announced today.
+        # Reset on the day roll, so each level speaks at most once per day.
+        self._warned: set[float] = set()
 
     # ---------------------------------------------------------------- state
 
@@ -280,6 +301,8 @@ class EquityMonitor:
             posture = OK
             detail = verdict.summary()
 
+        events.extend(self._early_warnings(verdict, eq))
+
         if posture != self.posture:
             # A breach is terminal and must be announced exactly once even if
             # posture later churns.
@@ -294,6 +317,45 @@ class EquityMonitor:
                 self._breach_emitted = True
             self.posture = posture
         return events
+
+    def _early_warnings(self, verdict: fr.RuleVerdict,
+                        eq: float | None) -> list[MonitorEvent]:
+        """Speak up at 50% and 75% of the daily budget, once each per day.
+
+        Edge-triggered on the LEVEL, not on the posture, because the whole
+        point is to say something while the posture is still OK. Returns
+        events the caller texts; it changes no state the executor reads.
+        """
+        soft = verdict.daily_soft
+        if soft <= 0:
+            return []
+        used = verdict.daily_loss_used
+        out = []
+
+        # An early warning is only early if it arrives while everything is
+        # still fine. Once the engine has already blocked or breached, the
+        # posture event says so with more authority and this would contradict
+        # it — the first live run of ftmo_watch started mid-breach and emitted
+        # "has passed 50% ... nothing is blocked yet" alongside BREACHED, with
+        # "-44.78 left". The levels are still marked spent so they cannot fire
+        # later in the same day on the way back down.
+        if verdict.breached or not verdict.can_open:
+            self._warned.update(EARLY_WARNING_FRACTIONS)
+            return []
+
+        for frac in sorted(EARLY_WARNING_FRACTIONS):
+            if frac in self._warned or used < soft * frac:
+                continue
+            self._warned.add(frac)
+            out.append(MonitorEvent(
+                kind=WARNING,
+                detail=(f"daily loss {used:,.2f} has passed {frac:.0%} of the "
+                        f"{soft:,.2f} budget (hard limit {verdict.daily_hard:,.2f}, "
+                        f"{verdict.daily_hard - used:,.2f} left) — nothing is "
+                        f"blocked yet"),
+                equity=self.balance if eq is None else eq,
+                posture=self.posture, verdict=verdict))
+        return out
 
     def _roll_if_new_day(self, now: datetime) -> list[MonitorEvent]:
         """Cross the 00:00 CE(S)T boundary if it has passed."""
@@ -316,6 +378,9 @@ class EquityMonitor:
         self.daily_profits = rolled.daily_profits
         self.opened_today = False
         self.day = today
+        # A new daily budget means the old warnings no longer describe
+        # anything. Without this reset they would fire once and never again.
+        self._warned.clear()
         # A new day resets the daily limit, so a posture set by it is stale.
         self.posture = OK if self.posture in (BLOCKED, FLATTEN) else self.posture
         return [MonitorEvent(
@@ -388,6 +453,13 @@ def selftest() -> int:
     def kinds(events):
         return [e.kind for e in events]
 
+    def postures(events):
+        """Posture transitions only. WARNING rides the same stream but is
+        advisory and must never be mistaken for a state change — filtering it
+        here keeps every posture assertion below saying exactly what it
+        means."""
+        return [e.kind for e in events if e.kind != WARNING]
+
     cfg = fr.FTMOConfig(product="2step", phase="challenge", initial_capital=25_000.0)
     T0 = datetime(2026, 8, 3, 12, 0, tzinfo=ZoneInfo("Europe/Prague"))
 
@@ -434,8 +506,18 @@ def selftest() -> int:
     m.on_quote(1, 100.0, 100.02, T0)
     # Drop 1.05 -> floating -1050, past the 1000 soft limit.
     ev = m.on_quote(1, 98.95, 98.97, T0 + timedelta(seconds=1))
-    check("crossing the soft limit emits exactly one event", len(ev) == 1)
-    check("...and it is BLOCKED", kinds(ev) == [BLOCKED])
+    check("crossing the soft limit emits exactly one POSTURE event",
+          len(postures(ev)) == 1)
+    check("...and it is BLOCKED", postures(ev) == [BLOCKED])
+    # This tick fell straight past 50% and 75% on its way, but it landed
+    # BLOCKED. A warning saying "nothing is blocked yet" next to a BLOCKED
+    # event is a contradiction, so the warnings are suppressed once the engine
+    # has already acted. Found by running ftmo_watch against a breached
+    # account, not by these tests.
+    check("...and NO early warning contradicts it",
+          kinds(ev).count(WARNING) == 0)
+    check("...but the levels are marked spent, so they cannot fire on the "
+          "way back down", m._warned == {0.50, 0.75})
     quiet = m.on_quote(1, 98.94, 98.96, T0 + timedelta(seconds=2))
     check("staying blocked emits nothing further", quiet == [])
     quiet2 = m.on_quote(1, 98.93, 98.95, T0 + timedelta(seconds=3))
@@ -443,12 +525,62 @@ def selftest() -> int:
     back = m.on_quote(1, 100.0, 100.02, T0 + timedelta(seconds=4))
     check("recovering emits one OK event", kinds(back) == [OK])
 
+    print("early warnings speak while everything is still fine (2026-08-11):")
+    m = fresh()
+    m.on_position_opened(pos(), T0)
+    m.on_quote(1, 100.0, 100.02, T0)
+    # Budget is the 1000 soft limit here, so 50% is -500 and 75% is -750.
+    ev = m.on_quote(1, 99.60, 99.62, T0 + timedelta(seconds=1))      # -400
+    check("under 50% of the budget says nothing", ev == [])
+    ev = m.on_quote(1, 99.45, 99.47, T0 + timedelta(seconds=2))      # -550
+    check("crossing 50% emits a WARNING", kinds(ev) == [WARNING])
+    check("...and the posture is untouched — nothing is blocked",
+          m.posture == OK and ev[0].posture == OK)
+    check("...and the message says nothing is blocked yet",
+          "nothing is blocked yet" in ev[0].detail)
+    check("...and it reports how much room is left to the HARD limit",
+          "left" in ev[0].detail)
+    quiet = m.on_quote(1, 99.40, 99.42, T0 + timedelta(seconds=3))   # -600
+    check("the same level does not warn twice", quiet == [])
+    ev = m.on_quote(1, 99.15, 99.17, T0 + timedelta(seconds=4))      # -850
+    check("crossing 75% emits the second WARNING", kinds(ev) == [WARNING])
+    ev = m.on_quote(1, 99.10, 99.12, T0 + timedelta(seconds=5))      # -900
+    check("...and that level does not repeat either", ev == [])
+    # Recover fully, then fall through both levels again. Within one FTMO day
+    # that must stay silent: the levels are armed once per day, not once per
+    # crossing, or a position oscillating around 50% would text on every swing.
+    m.on_quote(1, 100.0, 100.02, T0 + timedelta(seconds=6))
+    again = m.on_quote(1, 99.15, 99.17, T0 + timedelta(seconds=7))
+    check("recovering and re-crossing does NOT warn again the same day",
+          [e for e in again if e.kind == WARNING] == [])
+    check("...because both levels are still armed-and-spent",
+          m._warned == {0.50, 0.75})
+
+    print("a new FTMO day re-arms the warnings:")
+    m2 = fresh()
+    m2.on_position_opened(pos(), T0)
+    m2.on_quote(1, 100.0, 100.02, T0)
+    m2.on_quote(1, 99.20, 99.22, T0 + timedelta(seconds=1))          # -800, both
+    check("both levels fired on day one", m2._warned == {0.50, 0.75})
+    tomorrow = T0 + timedelta(days=1)
+    m2.on_quote(1, 100.0, 100.02, tomorrow)
+    check("the day roll clears them", m2._warned == set())
+
+    print("WARNING is advisory and never drives the executor:")
+    check("WARNING is not one of the postures",
+          WARNING not in (OK, BLOCKED, UNKNOWN, FLATTEN, BREACHED))
+    src = inspect.getsource(EquityMonitor._early_warnings)
+    check("_early_warnings assigns no posture",
+          "self.posture =" not in src)
+    check("...and emits nothing when the budget is zero or negative",
+          "if soft <= 0" in src)
+
     print("the two tiers, in order:")
     m = fresh()
     m.on_position_opened(pos(), T0)
     m.on_quote(1, 100.0, 100.02, T0)
     ev = m.on_quote(1, 98.95, 98.97, T0 + timedelta(seconds=1))     # -1050
-    check("past soft (1000) blocks entries", kinds(ev) == [BLOCKED])
+    check("past soft (1000) blocks entries", postures(ev) == [BLOCKED])
     ev = m.on_quote(1, 98.80, 98.82, T0 + timedelta(seconds=2))     # -1200
     check("past flatten (1125) escalates to FLATTEN", kinds(ev) == [FLATTEN])
     check("...and it is not yet a breach", m.posture == FLATTEN)

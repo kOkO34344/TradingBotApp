@@ -8,7 +8,7 @@ description: How the FTMO venue works in TradingBotApp — the rule engine, equi
 Five modules. `ftmo_rules.py` decides, `ftmo_monitor.py` watches,
 `ftmo_sizing.py` sizes, `ftmo_audit.py` records why, `ftmo_service.py` talks to
 the broker. Each has an offline `--selftest` needing no credentials and no
-network; **670 checks total, re-measured 2026-08-11** across twelve modules —
+network; **762 checks total, measured 2026-08-11** across thirteen modules —
 these five plus `ftmo_session`, `ftmo_signal`, `ftmo_runner`, `ftmo_closes`,
 `trade_journal`, `indicators` and `secrets_store`. Earlier figures here (465,
 and CLAUDE.md's 579) did not reproduce; see CLAUDE.md's architecture section
@@ -25,8 +25,7 @@ still overrides it; `ftmo.universe_source: "default"` restores the old
 percentage return is a contest scored on amplitude, and it handed the entire
 top-4 to micro-cap crypto on the first live run. `ftmo_signal.cap_per_class()`
 now allows each class at most `ftmo.autotrade.max_per_class` candidates
-(default **1**), so the pool is the class leaders and a top_n of 4 spans four
-classes. `0` restores pure global ranking. It is a filter on the pool, never a
+(**3** since 2026-08-11), so no single class can take the whole book. `0` restores pure global ranking. It is a filter on the pool, never a
 re-scoring — `margin_pct` is calibrated in raw predicted-return points, and
 normalising would have changed those units underneath it. The pool, the
 boundary gap and the target all read the same capped list.
@@ -44,17 +43,20 @@ the map and the cross-cutting invariants.
 | Rules | 1-Step and 2-Step both encoded, switchable by config |
 | Instruments | stock CFDs, indices, FX, commodities/crypto — all four |
 | Signal | Kronos everywhere, each class gated on its own IC screen |
-| Cadence | daily rebalance, multi-day holds |
-| Buffer | 5% — stop opening at 4.75% daily / 9.5% drawdown |
+| Cadence | **every 15 min, 16:30-23:00 Sofia, Mon-Fri** (2026-08-11) |
+| Buffer | **1%** (2026-08-11) — $12.50 under FTMO's daily cliff |
 | Limit action | block entries at soft, flatten at hard |
-| Monitor | event-driven off the cTrader stream |
-| Sizing | ATR model, 3% per trade, top_n 4, book capped at the soft limit |
+| Monitor | `ftmo_watch.py`, session-scoped, **auto-flattens** |
+| Sizing | ATR model, **1.65%** per trade, **top_n 5**, **max 3/class**, book capped at the soft limit |
 | Stops | server-side, attached at entry, verified after fill |
 | Records | `trade_journal.csv` + venue column, plus the separate audit log |
 | Autonomy | fully unattended (see rule 9) |
 
 Derived limits on $25,000 — check with `python3 ftmo_rules.py --show`.
-**These move with `buffer_pct`; the numbers below are the live 0.05 setting,
+**These move with `buffer_pct`; the numbers below are STALE — the live
+setting is 0.01, giving daily soft $1,237.50 / flatten $1,243.75. Re-run
+`ftmo_rules.py --show` rather than trusting this block.** The text below
+describes the 0.05 setting,
 not a constant.** At the previous 0.20 buffer the 2-Step soft/flatten pair was
 $1,000/$1,125 daily and $2,000/$2,250 total — old notes quoting those are
 describing a buffer that is no longer configured, not a changed rule.
@@ -69,9 +71,20 @@ describing a buffer that is no longer configured, not a changed rule.
          target $2,500        Best Day Rule active
 ```
 
-**RISK RAISED 2026-08-09 — owner decision, and the evidence position was
-stated first.** `risk_pct` 1.0 -> **3.0** ($750/trade on $25k) and `buffer_pct`
-0.20 -> **0.05**, to reach the profit target faster. Kronos has no demonstrated
+**REVISED AGAIN 2026-08-11 — owner decision, evidence position stated first.**
+`risk_pct` 3.0 -> **1.65**, `buffer_pct` 0.05 -> **0.01**, `top_n` 4 -> **5**,
+`max_per_class` **3**. The goal was "bigger risks"; the arithmetic said
+otherwise and was put to the owner before anything changed. At 5% per trade the
+FIRST position consumes the entire daily budget and every later entry is
+refused — one position per day, with `max_per_class` and `top_n` decorative.
+The chosen shape instead raises the daily CEILING (buffer 0.01 -> $1,237.50)
+and sizes for **exactly 3 funded positions** at $412.50 each. Per-trade risk
+went DOWN; total daily exposure went UP; the book is wider.
+**The reserve is now $6.25 between flatten and failure**, which is why
+`ftmo_monitor` grew early warnings at 50% and 75% of the budget the same day.
+
+The 2026-08-09 change this replaced: `risk_pct` 1.0 -> 3.0 and `buffer_pct`
+0.20 -> 0.05, to reach the profit target faster. Kronos has no demonstrated
 edge on any asset class this project has measured (IC ~0, hit rate ~50% on all
 four classes at both horizons), so this scales variance without scaling
 expected return — it does not make the account more likely to pass, it makes it
@@ -381,3 +394,27 @@ OPEN OK, four entries sized to $994.71 total risk — inside the then-$1,000
 daily soft limit. Nothing was placed. **That run predates the 2026-08-09 risk
 change**, so its four-entries-at-$250 shape is history, not the current
 expected output; see the sizing section for what a firing looks like now.
+
+
+## `ftmo_watch.py` — the watcher that finally exists (2026-08-11)
+
+`ftmo_monitor.EquityMonitor` had never been instantiated outside its own
+selftest. This file, CLAUDE.md and `ftmo_runner.py`'s docstring all called it
+"the continuous watcher" and no process ran it. `ftmo_watch.py` is the driver.
+
+**It can place orders — closes only, never opens — and it flattens without
+waiting for anyone.** That is the FOURTH unattended path in this project and
+the first not bound to a schedule; flag it as an exception, not a precedent.
+
+- **Session-scoped**, 16:30-23:00 Sofia Mon-Fri. It exits itself at the close.
+  launchd starts it hourly at :30 as a superset; a lock keeps it to one.
+- **`ftmo_watch.sh` holds `caffeinate -i` for the session.** That is this
+  project's sleep fix, chosen over a `pmset` change deliberately: the machine
+  idle-sleeps after ONE MINUTE on both battery and AC, and a system-wide
+  setting would apply at 04:00 on a Sunday when nothing can trade. Costs
+  ~20-50Wh a session. Closing the lid still sleeps the Mac regardless.
+- Quotes are fed with **their own timestamps**, never `now`, or staleness
+  detection silently stops working.
+- Volume is converted with `ftmo_sizing.VOLUME_SCALE`. The first draft had a
+  `hasattr` fallback that never matched and valued every book **100x** too
+  large.

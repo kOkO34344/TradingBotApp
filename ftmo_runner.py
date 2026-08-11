@@ -61,12 +61,15 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
+import os
 import sys
 import time
 from dataclasses import dataclass, field
 from datetime import datetime, time as dtime
 from pathlib import Path
+from typing import TextIO
 from zoneinfo import ZoneInfo
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -90,37 +93,58 @@ except Exception:                                             # noqa: BLE001
 SETTINGS = BASE_DIR / "trader_settings.json"
 STATE_FILE = BASE_DIR / "ftmo_runner_state.json"
 LOG_PATH = BASE_DIR / "ftmo_runner.log"
+# Gitignored, machine-local, and holds a PID rather than state:
+# it belongs to the RUNNING PROCESS, not to the account.
+LOCK_FILE = BASE_DIR / "ftmo_runner.lock"
 JOURNAL = tj.JOURNAL_FILE
 VENUE = "ftmo"
 
 PRAGUE = ZoneInfo("Europe/Prague")
 
 # ---------------------------------------------------------- trading window
-# Owner decision, 2026-08-06: run hourly between 16:30 and 11:30 the next
-# morning, every day EXCEPT Sunday, in Sofia time.
+# Owner decision, 2026-08-11: fire EVERY 15 MINUTES across the US cash
+# session, 16:30-23:00 Europe/Sofia, MONDAY TO FRIDAY.
+# That is 09:30-16:00 New York — the literal open and close of the market the
+# 46 stock CFDs trade in, which is the largest class in the universe.
+#
+# **THIS REPLACES THE 2026-08-06 WINDOW (16:30-11:30, every day but Sunday)
+# AND IT IS A NARROWING, NOT A RESHAPE.** Read the consequence before changing
+# anything here: coverage falls from 19 hours across 6 days to 6.5 hours
+# across 5. A position opened at 22:45 on Friday is not looked at again by the
+# runner until 16:30 on Monday — 65 hours. Its stop and take-profit live at
+# the VENUE and are unaffected, so the position stays protected; what is given
+# up is management and, without the reconcile job, the RECORD. That is why
+# `ftmo_runner.py --reconcile` got its own launchd job on the same day: it
+# ignores both the arm toggle and this window deliberately, because recording
+# what the account did is not trading.
 #
 # THIS CHECK IS AUTHORITATIVE; the launchd schedule is only a superset.
-# Exactly the arrangement the retired IBKR runner used for NYSE hours, and for
-# the same reason: a plist encodes wall-clock local time and cannot express
-# "except Sunday" across a window that wraps midnight without 120 entries,
-# while `zoneinfo` handles the DST switch (EEST +03 -> EET +02) and the
-# weekday rule in a few lines that can be unit-tested offline with no clock,
-# no network and no credentials.
+# A plist encodes whatever the host's local timezone happens to be, whereas
+# `zoneinfo` resolves Europe/Sofia explicitly and stays right across the
+# EEST +03 -> EET +02 switch. Same split the retired IBKR runner used for
+# NYSE hours, and it can be unit-tested offline with no clock, no network and
+# no credentials.
 #
-# The window WRAPS MIDNIGHT, so it is a union and not a range: a moment
-# qualifies when it is at or after 16:30, OR at or before 11:30. Writing this
-# as `OPEN <= t <= CLOSE` would be empty for every t, which is the obvious way
-# to get it silently wrong.
+# **THE WINDOW NO LONGER WRAPS MIDNIGHT, so it is now a RANGE and not a
+# union.** This inverts the warning that stood here from 2026-08-06 to
+# 2026-08-11, when `OPEN <= t <= CLOSE` would have been empty for every t and
+# the union was the only correct form. Both directions are selftested, so a
+# future edit that reintroduces a wrapping window will fail rather than
+# silently match nothing — or, worse, match everything.
 #
-# "Except Sunday" is applied to the CALENDAR day in Sofia, so Saturday's
-# evening leg (16:30-23:30) runs and Sunday's morning leg does not. That is
-# the literal reading of the instruction and it is the one that can be checked
-# by looking at a clock, rather than asking which session a firing "belongs
-# to" across a midnight boundary.
+# The weekday rule is applied to the CALENDAR day in Sofia. Since the window
+# no longer crosses midnight, a firing's calendar day and its session are the
+# same thing and the old "which leg does Saturday belong to" ambiguity is
+# gone. Saturday is now closed outright, where it previously ran its evening
+# leg.
 TRADING_TZ = ZoneInfo("Europe/Sofia")
-WINDOW_OPEN = dtime(16, 30)     # inclusive
-WINDOW_CLOSE = dtime(11, 30)    # inclusive, the NEXT morning
-CLOSED_WEEKDAY = 6              # Monday=0 ... Sunday=6
+WINDOW_OPEN = dtime(16, 30)     # inclusive — 09:30 New York
+WINDOW_CLOSE = dtime(23, 0)     # inclusive — 16:00 New York, SAME calendar day
+CLOSED_WEEKDAYS = frozenset({5, 6})   # Monday=0 ... Saturday=5, Sunday=6
+FIRE_EVERY_MINUTES = 15         # launchd fires :00 :15 :30 :45
+# 16:30->23:00 is 390 minutes = 26 intervals = 27 firing POINTS, both
+# endpoints inclusive. Asserted in the selftest; easy to get wrong by one.
+FIRINGS_PER_WEEKDAY = 27
 
 
 def within_trading_window(now: datetime) -> tuple[bool, str]:
@@ -142,14 +166,19 @@ def within_trading_window(now: datetime) -> tuple[bool, str]:
     local = now.astimezone(TRADING_TZ)
     stamp = local.strftime("%a %H:%M %Z")
 
-    if local.weekday() == CLOSED_WEEKDAY:
-        return False, f"Sunday — the runner does not trade on Sundays ({stamp})"
+    if local.weekday() in CLOSED_WEEKDAYS:
+        day = "Saturday" if local.weekday() == 5 else "Sunday"
+        return False, (f"{day} — the US cash session is shut, so the runner "
+                       f"does not trade ({stamp})")
 
+    # A RANGE, not a union: this window sits inside one calendar day. It
+    # wrapped midnight until 2026-08-11 and the union form was correct then;
+    # both forms are selftested so neither can be reintroduced by accident.
     t = local.time()
-    if t >= WINDOW_OPEN or t <= WINDOW_CLOSE:
-        return True, f"inside the 16:30-11:30 Sofia window ({stamp})"
-    return False, (f"outside the 16:30-11:30 Sofia window ({stamp}) — "
-                   f"the gap between 11:30 and 16:30 is deliberate")
+    if WINDOW_OPEN <= t <= WINDOW_CLOSE:
+        return True, f"inside the 16:30-23:00 Sofia window ({stamp})"
+    return False, (f"outside the 16:30-23:00 Sofia window ({stamp}) — "
+                   f"the US cash session is 09:30-16:00 New York")
 
 
 class RunnerError(RuntimeError):
@@ -262,6 +291,49 @@ def load_state(path: Path = STATE_FILE) -> RunnerState | None:
 
 def save_state(state: RunnerState, path: Path = STATE_FILE) -> None:
     path.write_text(json.dumps(state.to_json(), indent=2) + "\n")
+
+
+def acquire_run_lock(path: Path = LOCK_FILE) -> "TextIO | None":
+    """Take the single-firing lock, or return None if one is already running.
+
+    WHY THIS EXISTS, and it is not hypothetical.
+    A full cycle takes ~6.3 minutes on the 101-symbol universe, against a
+    15-minute schedule since 2026-08-11. That leaves ~8.7 minutes of slack,
+    and a slow run — a venue stall, a busy machine, a laptop waking — closes
+    it. On 2026-08-11 two runners overlapped by accident and each loaded its
+    own ~2 GB Kronos model: the Mac went into swap (89,817 pageouts, 27%
+    memory free) and the unattended firing was left with 28 SECONDS OF CPU
+    ACROSS 13 MINUTES OF WALL CLOCK at an RSS of 19 MB, its model paged out.
+    It had to be killed. Two concurrent runners do not run twice as slowly;
+    they thrash, and both effectively stop.
+
+    `flock` and NOT a bare "does the PID file exist" check: a killed or
+    crashed runner leaves its file behind, and a staleness heuristic on top
+    of that is a second thing to get wrong. The kernel releases an flock when
+    the process dies, however it dies, so the lock cannot go stale. That is
+    the same reasoning as reading exit codes rather than parsing output —
+    prefer the signal that cannot lie.
+
+    The handle is RETURNED and must stay referenced for the lifetime of the
+    run. Letting it be garbage-collected closes the file and drops the lock,
+    which would make this look like it works while protecting nothing.
+    """
+    # "a+" and NOT "w": "w" truncates on OPEN, which happens before the flock
+    # is tested. A rejected second firing would therefore blank the file and
+    # destroy the record of which PID actually holds the lock — the one thing
+    # you want when you are looking at a stuck schedule. Caught by the
+    # selftest below, not by reasoning.
+    fh = open(path, "a+", encoding="utf-8")                  # noqa: SIM115
+    try:
+        fcntl.flock(fh.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        fh.close()
+        return None
+    fh.seek(0)
+    fh.truncate()
+    fh.write(f"{os.getpid()}\n{datetime.now().isoformat(timespec='seconds')}\n")
+    fh.flush()
+    return fh
 
 
 def advance_state(stored: RunnerState | None, balance: float, now: datetime,
@@ -514,6 +586,21 @@ def _evt(kind: str, detail: str, posture=None, equity=None) -> _Evt:
     return _Evt(kind, detail, posture, equity)
 
 
+def _tell(message: str) -> None:
+    """Send a phone alert that must never be able to break the caller.
+
+    Every call site here has ALREADY written its journal row. Rule 6 says the
+    journal is the record; a Telegram failure is a missed notification, and
+    letting it propagate would turn that into a missed audit row or an aborted
+    cycle. The same swallow-and-continue that detect_closes uses, factored out
+    because there are now a dozen call sites rather than one.
+    """
+    try:
+        send_telegram(message)
+    except Exception:                                         # noqa: BLE001
+        pass
+
+
 def execute_plan(session, plan: dict, positions, audit, now,
                  dry_run: bool) -> dict:
     """Exits first, then entries, then verify every stop against the venue.
@@ -539,6 +626,12 @@ def execute_plan(session, plan: dict, positions, audit, now,
                          detail=f"rotated out; position {p.position_id}")
             done["closed"].append(sym)
             log(f"  exited {sym}")
+            # Journal first, alert second: an alert that raises must never
+            # cost the audit row. Same ordering detect_closes uses.
+            _tell(f"\U0001f534 EXIT {sym}\n"
+                  f"volume {p.volume}  position {p.position_id}\n"
+                  f"rotated out by the runner\n"
+                  f"realised P&L follows when the deal settles")
         except Exception as e:                                # noqa: BLE001
             journal_ftmo("ERROR", symbol=sym, action="CLOSE",
                          quantity=p.volume, status="failed",
@@ -577,6 +670,16 @@ def execute_plan(session, plan: dict, positions, audit, now,
             done["opened"].append(sym)
             log(f"  BOUGHT {sym} volume {e['volume']} "
                 f"stop {e['stop_price']:.5f} tp {target}")
+            rr = ((e["take_profit_price"] - e["entry_price"])
+                  / (e["entry_price"] - e["stop_price"])
+                  if e["entry_price"] > e["stop_price"] else float("nan"))
+            _tell(f"\U0001f7e2 BUY {sym}  ({e['asset_class']})\n"
+                  f"volume {e['volume']}  @ {e['entry_price']:.5f}\n"
+                  f"stop {e['stop_price']:.5f}   target {target}\n"
+                  f"risk ${e['risk_at_stop']:,.2f}   "
+                  f"reward ${e['reward_at_target']:,.2f}   {rr:.2f}R\n"
+                  f"kronos predicted {e['predicted_return_pct']:+.2f}%\n"
+                  f"stop not yet verified — read-back follows")
         except Exception as ex:                               # noqa: BLE001
             journal_ftmo("REJECTED", symbol=sym, action="BUY",
                          quantity=e["volume"], price=f"{e['entry_price']:.5f}",
@@ -651,6 +754,14 @@ def run(force: bool = False, dry_run: bool = False,
         log(f"outside the trading window — no-op: {why}")
         return 0
     log(f"trading window: {why}")
+
+    # Taken AFTER the window check so an out-of-window wakeup still costs
+    # nothing, and BEFORE the audit log and torch so a skipped firing is
+    # cheap. See acquire_run_lock() for why this exists.
+    lock = acquire_run_lock()
+    if lock is None:
+        log("a firing is already in progress — skipping this one")
+        return 0
 
     audit = fa.AuditLog()
 
@@ -838,6 +949,27 @@ def run(force: bool = False, dry_run: bool = False,
         if not dry_run:
             if done["opened"]:
                 state_obj.opened_today = True
+            # Re-read the book BEFORE remembering it. detect_closes snapshots
+            # the positions as they were at the START of this cycle, so
+            # without this every position the runner itself exited reappears
+            # next cycle as "closed without the runner (manual-or-unknown)".
+            # That mislabel is in the live journal — LTCUSD on 2026-08-10 was
+            # EXITed at 20:31 and reported as a self-close at 21:30.
+            #
+            # Read from the VENUE rather than subtracting done["closed"] from
+            # memory: a close order that was SENT is not a close that
+            # HAPPENED, and this project has been burned by that exact
+            # distinction. If the read fails we keep the older memory, which
+            # can only cause a duplicate detection later — the direction rule
+            # 6 says to fail in.
+            if done["opened"] or done["closed"]:
+                try:
+                    live = session.refresh_positions()
+                    state_obj.open_positions = fc.snapshot(
+                        live, int(now.timestamp() * 1000))
+                except Exception as e:                        # noqa: BLE001
+                    log(f"  could not refresh remembered positions: {e} — "
+                        f"keeping the older snapshot")
             save_state(state_obj, state_path)
             lines = [f"\U0001f4c8 FTMO autotrade"]
             if done["opened"]:
@@ -895,47 +1027,53 @@ def selftest() -> int:
     check("IBKR's autotrade toggle does NOT arm FTMO",
           autotrade_config({"autotrade": {"enabled": True}})["enabled"] is False)
 
-    print("trading window (16:30-11:30 Sofia, every day except Sunday):")
+    print("trading window (16:30-23:00 Sofia, Monday to Friday):")
 
     def sofia(y, mo, d, h, mi):
         return datetime(y, mo, d, h, mi, tzinfo=TRADING_TZ)
 
-    # 2026-08-06 is a Thursday; 08-09 is a Sunday.
+    # 2026-08-06 is a Thursday; 08-08 Saturday; 08-09 Sunday; 08-10 Monday.
     def allowed(dt):
         return within_trading_window(dt)[0]
 
     check("16:30 exactly is INSIDE (inclusive open)",
           allowed(sofia(2026, 8, 6, 16, 30)))
     check("16:29 is outside", not allowed(sofia(2026, 8, 6, 16, 29)))
-    check("11:30 exactly is INSIDE (inclusive close)",
-          allowed(sofia(2026, 8, 6, 11, 30)))
-    check("11:31 is outside", not allowed(sofia(2026, 8, 6, 11, 31)))
-    check("the 11:30-16:30 gap is closed (13:00)",
-          not allowed(sofia(2026, 8, 6, 13, 0)))
-    check("the window WRAPS midnight — 23:30 is inside",
-          allowed(sofia(2026, 8, 6, 23, 30)))
-    check("...and 00:30 is inside",
-          allowed(sofia(2026, 8, 7, 0, 30)))
-    check("...and 04:30 is inside",
-          allowed(sofia(2026, 8, 7, 4, 30)))
+    check("23:00 exactly is INSIDE (inclusive close)",
+          allowed(sofia(2026, 8, 6, 23, 0)))
+    check("23:01 is outside", not allowed(sofia(2026, 8, 6, 23, 1)))
+    check("midday is outside", not allowed(sofia(2026, 8, 6, 13, 0)))
 
-    print("Sunday is excluded on the CALENDAR day, both legs:")
-    check("Sunday 04:30 is refused", not allowed(sofia(2026, 8, 9, 4, 30)))
+    # The window stopped wrapping midnight on 2026-08-11. These assert the
+    # NEW shape explicitly, so an edit that restores the union form fails
+    # here rather than silently trading all night.
+    print("the window is a RANGE now, not a union — it must NOT wrap midnight:")
+    check("00:30 is OUTSIDE (it was inside until 2026-08-11)",
+          not allowed(sofia(2026, 8, 7, 0, 30)))
+    check("04:30 is OUTSIDE", not allowed(sofia(2026, 8, 7, 4, 30)))
+    check("11:30 is OUTSIDE (the old inclusive close)",
+          not allowed(sofia(2026, 8, 6, 11, 30)))
+    check("23:30 is OUTSIDE (the old window ran to 23:30)",
+          not allowed(sofia(2026, 8, 6, 23, 30)))
+
+    print("the weekend is excluded on the CALENDAR day:")
+    check("Saturday 16:30 is refused — it ran before 2026-08-11",
+          not allowed(sofia(2026, 8, 8, 16, 30)))
+    check("Saturday 20:30 is refused", not allowed(sofia(2026, 8, 8, 20, 30)))
     check("Sunday 20:30 is refused", not allowed(sofia(2026, 8, 9, 20, 30)))
-    check("Saturday evening still runs (16:30)",
-          allowed(sofia(2026, 8, 8, 16, 30)))
-    check("Saturday 23:30 still runs", allowed(sofia(2026, 8, 8, 23, 30)))
-    check("Monday morning still runs (00:30)",
-          allowed(sofia(2026, 8, 10, 0, 30)))
-    check("the Sunday refusal says why",
-          "Sunday" in within_trading_window(sofia(2026, 8, 9, 4, 30))[1])
+    check("Monday 16:30 runs", allowed(sofia(2026, 8, 10, 16, 30)))
+    check("Friday 22:45 runs — the last firing of the week",
+          allowed(sofia(2026, 8, 7, 22, 45)))
+    check("the Saturday refusal names Saturday, not Sunday",
+          "Saturday" in within_trading_window(sofia(2026, 8, 8, 20, 30))[1])
+    check("the Sunday refusal names Sunday",
+          "Sunday" in within_trading_window(sofia(2026, 8, 9, 20, 30))[1])
 
     print("the window is evaluated in SOFIA time, not host time:")
-    # 03:30 UTC on a Thursday is 06:30 Sofia (inside). Same instant, other tz.
-    utc_moment = datetime(2026, 8, 6, 3, 30, tzinfo=ZoneInfo("UTC"))
+    # 14:00 UTC on a Thursday is 17:00 Sofia (inside). Same instant, other tz.
     check("a UTC-expressed instant is converted before testing",
-          allowed(utc_moment))
-    # 09:00 UTC = 12:00 Sofia, which is in the closed gap.
+          allowed(datetime(2026, 8, 6, 14, 0, tzinfo=ZoneInfo("UTC"))))
+    # 09:00 UTC = 12:00 Sofia, outside.
     check("...and the conversion can move a moment OUT of the window",
           not allowed(datetime(2026, 8, 6, 9, 0, tzinfo=ZoneInfo("UTC"))))
     check("a naive datetime is refused rather than assumed local",
@@ -943,20 +1081,31 @@ def selftest() -> int:
                  "timezone-aware"))
 
     print("DST: the rule is wall-clock Sofia time on both sides of the switch")
-    # Sofia is EEST (+03) in August and EET (+02) in December.
+    # Sofia is EEST (+03) in August and EET (+02) in December. Wall-clock
+    # 17:00 is inside in both, which is the point: the US session moves
+    # against UTC, and this window is pinned to Sofia's clock by decision.
     check("17:00 in August (EEST) is inside",
           allowed(sofia(2026, 8, 6, 17, 0)))
     check("17:00 in December (EET) is also inside",
           allowed(datetime(2026, 12, 3, 17, 0, tzinfo=TRADING_TZ)))
-    check("13:00 in December is still in the closed gap",
+    check("13:00 in December is still outside",
           not allowed(datetime(2026, 12, 3, 13, 0, tzinfo=TRADING_TZ)))
 
-    print("the firing count matches the agreed 20 per day:")
-    fires = [h for h in range(24)
-             if allowed(sofia(2026, 8, 6, h, 30))]
-    check("20 hourly firings per non-Sunday day", len(fires) == 20)
-    check("...covering 16:00-23:00 and 00:00-11:00",
-          fires == list(range(0, 12)) + list(range(16, 24)))
+    print("the firing count matches the agreed 15-minute cadence:")
+    fires = [(h, m) for h in range(24) for m in (0, 15, 30, 45)
+             if allowed(sofia(2026, 8, 6, h, m))]
+    # 390 minutes / 15 = 26 INTERVALS, which is 27 firing POINTS because
+    # both endpoints are inclusive. The off-by-one here is the reason this
+    # is asserted rather than assumed.
+    check("27 firings per weekday at :00 :15 :30 :45", len(fires) == 27)
+    check("...the first is 16:30 and the last is 23:00",
+          fires[0] == (16, 30) and fires[-1] == (23, 0))
+    check("FIRE_EVERY_MINUTES divides the hour evenly",
+          60 % FIRE_EVERY_MINUTES == 0)
+    check("no firing lands on a weekend",
+          not any(allowed(sofia(2026, 8, 8, h, m))
+                  or allowed(sofia(2026, 8, 9, h, m))
+                  for h in range(24) for m in (0, 15, 30, 45)))
 
     print("day-boundary state:")
     now = datetime(2026, 8, 6, 12, 0, tzinfo=PRAGUE)
@@ -1137,6 +1286,58 @@ def selftest() -> int:
     check("--reconcile loads no model", "import kronos_agent" not in csrc)
     check("--reconcile places no orders",
           "place_market" not in csrc and "execute_plan" not in csrc)
+
+    # LOAD-BEARING SINCE 2026-08-11, and not merely a rule-6 convenience.
+    # The FTMO day boundary is 00:00 Europe/Prague = 01:00 Sofia, which the
+    # new 16:30-23:00 window does NOT cover. The first in-window firing of a
+    # new FTMO day is 16:30 — 15.5 hours after the boundary — and
+    # advance_state() samples day_start_balance AT ROLL TIME. Rolling that
+    # late would silently exclude every overnight move (a stop or target
+    # firing on a 24/7 crypto CFD, a weekend gap) from the daily-loss
+    # calculation: a limit that UNDER-REPORTS, which is the exact failure
+    # rule 3 exists to prevent.
+    # The 30-minute reconcile job closes that gap because it ignores the
+    # window, so the roll happens within 30 minutes of the true boundary.
+    check("--reconcile rolls the FTMO day (the window no longer covers 01:00)",
+          "advance_state(" in csrc)
+    check("...and persists the roll rather than recomputing it every run",
+          "detect_closes(" in csrc
+          and "save_state(state, state_path)" in inspect.getsource(detect_closes))
+    check("the FTMO day boundary is OUTSIDE the trading window, "
+          "which is why the above matters",
+          not within_trading_window(
+              datetime(2026, 8, 12, 1, 30, tzinfo=TRADING_TZ))[0])
+
+    print("the overlap lock stops two firings piling up (2026-08-11):")
+    import tempfile as _tf
+    lock_path = Path(_tf.mkdtemp()) / "runner.lock"
+    first = acquire_run_lock(lock_path)
+    check("the first caller gets the lock", first is not None)
+    check("a SECOND concurrent caller is refused",
+          acquire_run_lock(lock_path) is None)
+    check("the lock file records the holding PID",
+          str(os.getpid()) in lock_path.read_text())
+    first.close()
+    second = acquire_run_lock(lock_path)
+    check("closing the handle releases it for the next firing",
+          second is not None)
+    second.close()
+    # The kernel drops an flock when the holder dies, so a crashed or killed
+    # runner cannot leave the schedule permanently wedged. A bare
+    # "does the file exist" check would, and a staleness heuristic on top of
+    # that is a second thing to get wrong.
+    check("a leftover lock FILE alone does not block anything",
+          lock_path.exists() and acquire_run_lock(lock_path) is not None)
+    rsrc3 = inspect.getsource(run)
+    check("the lock is taken AFTER the window check, so out-of-window "
+          "wakeups stay free",
+          rsrc3.index("within_trading_window(now)")
+          < rsrc3.index("acquire_run_lock()"))
+    check("...and BEFORE torch is imported, so a skipped firing is cheap",
+          rsrc3.index("acquire_run_lock()")
+          < rsrc3.index("import kronos_agent"))
+    check("the lock handle is held in a local, not discarded",
+          "lock = acquire_run_lock()" in rsrc3)
 
     print("end to end: a venue deal becomes a journal row:")
 

@@ -1,0 +1,105 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tradingbotapp.ftmowatch</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/bin/bash</string>
+        <string>-lc</string>
+        <string>/Users/kaloyanivanov/TradingBotApp/ftmo_watch.sh</string>
+    </array>
+
+    <!-- The equity watcher, scoped to the trading session.
+
+         Starts at 16:30 Europe/Sofia Monday to Friday and EXITS ITSELF at
+         23:00 when ftmo_runner.within_trading_window() goes false. It is not
+         a 24/7 daemon, and that is a deliberate reversal of how it was first
+         installed on 2026-08-11.
+
+         WHY IT IS NOT 24/7 (owner decision, same day). ftmo_watch.sh holds a
+         `caffeinate -i` assertion for the lifetime of this process, so "how
+         long does it run" is a battery question: an assertion held around the
+         clock costs a laptop that is usually unplugged roughly 20-50Wh a
+         session, for hours in which no order can be placed anyway. Session
+         scope keeps the Mac awake exactly while the market is open and lets
+         it sleep the other 17.5 hours and all weekend.
+
+         Install with:
+             cp com.tradingbotapp.ftmowatch.plist ~/Library/LaunchAgents/
+             launchctl load ~/Library/LaunchAgents/com.tradingbotapp.ftmowatch.plist
+         Verify UNSANDBOXED:
+             launchctl print gui/$(id -u)/com.tradingbotapp.ftmowatch
+         A bare `launchctl list` from an agent shell reports a different domain
+         and will show a loaded job as missing.
+
+         THIS JOB CAN PLACE ORDERS — closes only, never opens. On a FLATTEN
+         posture it liquidates the book without waiting for anyone. That is the
+         owner's decision of 2026-08-11, taken with the alert-only alternative
+         stated first, and it is the FOURTH unattended path in this project.
+         To make it advisory instead, add <string>--dry-run</string> to
+         ProgramArguments: it will then alert exactly as it does now and close
+         nothing.
+
+         Why it exists at all: every FTMO limit is measured on equity INCLUDING
+         floating P&L, so the account can fail with no order placed. The runner
+         fires 27 times inside a 6.5-hour window; this covers the other 17.5
+         hours and the weekend.
+
+         KeepAlive is SuccessfulExit=false, not true: a clean exit at the
+         session close must NOT be restarted, while a crash mid-session must
+         be. Plain `KeepAlive` would respawn it at 23:00:01 every night, which
+         is the 24/7 daemon this design just rejected — and it would hold the
+         caffeinate assertion with it.
+
+         ThrottleInterval keeps a crash-loop from hammering the venue's
+         connection limits; launchd's default of 10s is too eager for a
+         process that opens a broker session on startup. A start outside the
+         window costs one settings read: run_forever() refuses to connect
+         before it does anything else.
+
+         The Hour is a WILDCARD on purpose: these five entries mean "every
+         hour at :30, Monday to Friday" in HOST LOCAL TIME, which is a
+         deliberate superset of the Europe/Sofia session. The plist cannot
+         express Sofia — it gets whatever timezone the machine happens to be
+         in — so it over-fires and lets ftmo_runner.within_trading_window()
+         decide, exactly as com.tradingbotapp.ftmo does. Two things fall out
+         of that: a watcher that dies at 17:00 is replaced by 17:30 instead of
+         being lost for the night, and taking the laptop to another timezone
+         cannot silently miss the open. An out-of-window start costs one
+         settings read, and a start while a watcher is already running exits
+         on the lock in about a fifth of a second.
+
+         If the Mac is asleep at 16:30, launchd runs the missed job on wake,
+         so a late start is a shorter session rather than no session. If the
+         LID is closed mid-session the Mac sleeps regardless of any assertion
+         and the watcher stops; there is no software fix for that. -->
+    <key>KeepAlive</key>
+    <dict>
+        <key>SuccessfulExit</key>
+        <false/>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>ThrottleInterval</key>
+    <integer>60</integer>
+
+    <key>StartCalendarInterval</key>
+    <array>
+        <dict><key>Weekday</key><integer>1</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>2</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>3</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>4</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Weekday</key><integer>5</integer><key>Minute</key><integer>30</integer></dict>
+    </array>
+
+    <key>StandardOutPath</key>
+    <string>/Users/kaloyanivanov/TradingBotApp/ftmo_watch_launchd.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/kaloyanivanov/TradingBotApp/ftmo_watch_launchd.log</string>
+</dict>
+</plist>

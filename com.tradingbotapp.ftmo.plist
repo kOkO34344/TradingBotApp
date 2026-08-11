@@ -14,37 +14,54 @@
 
     <!-- Install with:
              cp com.tradingbotapp.ftmo.plist ~/Library/LaunchAgents/
-             launchctl load ~/Library/LaunchAgents/com.tradingbotapp.ftmo.plist
-         and remove it with `launchctl unload` on the same path.
+             launchctl unload ~/Library/LaunchAgents/com.tradingbotapp.ftmo.plist
+             launchctl load   ~/Library/LaunchAgents/com.tradingbotapp.ftmo.plist
+         Verify UNSANDBOXED with `launchctl print gui/$(id -u)/com.tradingbotapp.ftmo`
+         — a bare `launchctl list` from an agent shell reports a different
+         domain and will show a loaded job as missing.
 
-         WAKES HOURLY AT :30, EVERY HOUR, EVERY DAY. This schedule is a
-         deliberate SUPERSET and is NOT the trading window. The window —
-         16:30 to 11:30 the next morning, every day except Sunday, Sofia time
-         (owner decision 2026-08-06) — is enforced by
-         `ftmo_runner.within_trading_window()`, and THAT is authoritative.
+         WAKES EVERY 15 MINUTES, EVERY HOUR, EVERY DAY (:00 :15 :30 :45).
+         Changed 2026-08-11 from hourly at :30.
 
-         Why the rule is not encoded here. The window wraps midnight and
-         excludes one weekday, which in StartCalendarInterval means six
-         Weekday values x twenty Hour values = 120 dict entries that no one
-         will ever re-read correctly. It would also be expressed in whatever
-         the host's local timezone happens to be, whereas the runner resolves
-         `Europe/Sofia` explicitly through zoneinfo and therefore stays right
-         across the EEST/EET switch and across any change to the machine's
-         own timezone. `autotrade_runner.py` splits NYSE hours the same way
-         and for the same reason: the plist only has to be a superset, the
-         code decides.
+         This schedule is a deliberate SUPERSET and is NOT the trading window.
+         The window — 16:30 to 23:00 Europe/Sofia, MONDAY TO FRIDAY, i.e. the
+         09:30-16:00 New York cash session (owner decision 2026-08-11) — is
+         enforced by `ftmo_runner.within_trading_window()`, and THAT is
+         authoritative. 27 of the 96 daily wakeups are in-window on a weekday
+         and none are at the weekend.
+
+         Note the entries omit <key>Hour</key> deliberately. An unspecified
+         StartCalendarInterval field is a WILDCARD, so four dicts express
+         "every hour at these four minutes" — where naming the hours would
+         take 96. The previous version listed 24 explicit hours; this is the
+         same idea with the wildcard doing the work.
+
+         Why the window itself is still not encoded here. A plist is expressed
+         in whatever the host's local timezone happens to be, whereas the
+         runner resolves `Europe/Sofia` through zoneinfo and therefore stays
+         right across the EEST/EET switch and across any change to the
+         machine's own timezone. The retired IBKR runner split NYSE hours the
+         same way and for the same reason: the plist only has to be a
+         superset, the code decides.
 
          Out-of-window wakeups are free by construction — the runner checks
          the window before opening the audit log and long before importing
-         torch, so a wakeup outside 16:30-11:30 costs one settings read.
-         Roughly 20 of the 24 daily wakeups are in-window on Mon-Sat and none
-         are on Sunday.
+         torch, so a wakeup outside the session costs one settings read.
+
+         OVERLAPPING RUNS. A full cycle takes ~6.3 minutes on the 101-symbol
+         universe against a 15-minute interval, so a slow run could still be
+         going when the next one starts. `ftmo_runner.py` takes a PID lock and
+         a second concurrent firing exits immediately. This is not theoretical:
+         on 2026-08-11 two concurrent runners each loaded their own ~2 GB
+         Kronos model, the machine went into swap, and the unattended firing
+         was left with 28 seconds of CPU across 13 minutes of wall clock.
 
          The FTMO day boundary (00:00 Europe/Prague) falls at 01:00 Sofia,
-         inside the window, so the 01:30 firing is the first of each new FTMO
-         day and `advance_state()` rolls the day-start balance and trailing
-         high-water mark there, off the previous day's settled closing
-         balance.
+         which is now OUTSIDE the trading window. `advance_state()` therefore
+         rolls the day-start balance on the FIRST IN-WINDOW FIRING of the new
+         FTMO day — 16:30 Sofia — rather than at 01:30 as it did under the
+         old overnight window. It rolls off the previous day's settled closing
+         balance either way; only the moment of discovery moved.
 
          FTMO's 23:55-00:05 Moscow maintenance window is deliberately NOT
          scheduled around. The venue stays the authority: a MARKET_CLOSED
@@ -52,30 +69,10 @@
          which is the correct outcome rather than something to predict. -->
     <key>StartCalendarInterval</key>
     <array>
-        <dict><key>Hour</key><integer>0</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>1</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>2</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>4</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>5</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>6</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>7</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>8</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>10</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>11</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>12</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>13</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>14</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>16</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>17</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>18</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>19</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>20</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>22</integer><key>Minute</key><integer>30</integer></dict>
-        <dict><key>Hour</key><integer>23</integer><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Minute</key><integer>0</integer></dict>
+        <dict><key>Minute</key><integer>15</integer></dict>
+        <dict><key>Minute</key><integer>30</integer></dict>
+        <dict><key>Minute</key><integer>45</integer></dict>
     </array>
 
     <key>RunAtLoad</key>

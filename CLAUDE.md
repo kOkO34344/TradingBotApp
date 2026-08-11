@@ -95,7 +95,7 @@ was paid for with a real failure. Nothing about their history is fictional.
    2026-08-03 and **all four failed**; re-screened at a 5-day horizon on
    2026-08-08, **all four failed again**. On 2026-08-05 the owner instructed the
    path to run anyway, with that evidence stated first, and it was **armed on
-   2026-08-06** — `ftmo.autotrade.enabled` true, launchd firing hourly at :30.
+   2026-08-06** — `ftmo.autotrade.enabled` true, launchd firing every 15 min.
    **That is a THIRD deliberate exception to rule 5.** Flag it exactly like
    rule 8; it is not precedent.
    Two things to keep straight when reading this later. The gate was NOT
@@ -133,11 +133,13 @@ File purposes are documented in each script's own module docstring
   IBKR removal, the ONLY thing in this project that places an order.
   `ftmo_closes.py` (2026-08-08) detects positions that closed WITHOUT the
   runner — see the close-detection section below.
-  **670 offline checks, re-measured 2026-08-11** across the TWELVE modules
-  that carry a `--selftest`: `ftmo_runner` 100, `ftmo_sizing` 90,
-  `ftmo_signal` 85, `ftmo_rules` 70, `ftmo_session` 70, `ftmo_monitor` 63,
-  `ftmo_audit` 48, `ftmo_closes` 43, `ftmo_service` 43, `trade_journal` 26,
-  `indicators` 20, `secrets_store` 12.
+  **`ftmo_watch.py` (2026-08-11) is the DRIVER `ftmo_monitor.py` never had**,
+  and it is the second thing here that can place an order. See its own section.
+  **762 offline checks, measured 2026-08-11** across the THIRTEEN modules
+  that carry a `--selftest`: `ftmo_runner` 115, `ftmo_signal` 102,
+  `ftmo_sizing` 90, `ftmo_monitor` 80, `ftmo_session` 70, `ftmo_rules` 70,
+  `ftmo_audit` 48, `ftmo_watch` 43, `ftmo_service` 43, `ftmo_closes` 43,
+  `trade_journal` 26, `indicators` 20, `secrets_store` 12.
   **The previous figure here — "579 across the ten modules" — did not
   reproduce, and had already drifted before the 2026-08-11 edit that
   prompted the recount** (`ftmo_signal` was recorded as 35 and was really 73;
@@ -417,11 +419,13 @@ after testing it properly.
 - Phase 1 (research agent): built. 38 graded calls at 5d as of 2026-08-03 and
   no detectable skill — see the Work Queue for the honest reading of that
   sample.
-- Phase 2 (infrastructure): hardened and self-tested. **670 offline checks**
+- Phase 2 (infrastructure): hardened and self-tested. **762 offline checks**
   across the ten FTMO modules, plus the `api/` selftests. No credentials or
   venue connection needed for any of them.
 - Phase 3 (unattended trading on simulated capital): LIVE on FTMO since
-  2026-08-06, armed, firing hourly at :30 inside a 16:30-11:30 Sofia window.
+  2026-08-06, armed, firing **every 15 minutes inside a 16:30-23:00 Sofia
+  window, Mon-Fri** (revised 2026-08-11), with `ftmo_watch.py` watching equity
+  and auto-flattening for the length of each session.
   This phase ran on IBKR paper from 2026-07-21 to 2026-08-02 with a human
   approval loop; that venue was retired and then removed. **An LLM is never in
   the intraday firing loop** — rules fire at machine speed, the agent reasons
@@ -697,6 +701,49 @@ The cycle, once per invocation: connect → positions and balance → rule engin
 FTMO's own daily bars → Kronos → rank → plan → **exits, then entries** → verify
 every stop by reading the venue back → journal + audit + text.
 
+### Risk, slots and the daily ceiling (2026-08-11)
+
+Owner decision. The ask was "bigger risks"; the arithmetic was put first and
+changed the shape of the answer.
+
+| | before | after |
+|---|---|---|
+| `risk_pct` | 3.0 | **1.65** |
+| `buffer_pct` | 0.05 | **0.01** |
+| `top_n` | 4 | **5** |
+| `max_per_class` | 1 | **3** |
+| daily soft / flatten | 1,187.50 / 1,218.75 | **1,237.50 / 1,243.75** |
+| funded positions | ~1.6 | **exactly 3** |
+
+**Raising `risk_pct` alone does not raise risk here, and at 5% it would have
+CUT the book to one position.** `size_position` takes
+`allowed_risk = min(per_trade_risk, budget_remaining)`, and
+`max_position_risk_usd` caps the whole book at the daily soft limit. At 5% of
+$25k the first entry consumes $1,187.50 — the entire budget — and every later
+one is refused with "no portfolio risk budget left today". `max_per_class` and
+`top_n` would have become decorative. This was already visible in the live
+journal: on 2026-08-10 the runner sized SOLUSD $745, LTCUSD $349, then NATGAS
+**$0.92**.
+
+So the lever that actually moved was the daily CEILING. `buffer_pct` 0.05 ->
+0.01 raises the budget to $1,237.50, and `risk_pct` 1.65 divides it into three
+real slots of $412.50. Per-trade risk went DOWN, total daily exposure went UP,
+and the book is wider rather than more concentrated.
+
+**The reserve is now $6.25 between our flatten tier and FTMO's $1,250 cliff.**
+That is well under one tick of index-CFD slippage, and a stop that gaps through
+— which this project has already seen once, GOOGL filling 1.5% beyond its level
+— clears it without noticing. This is the single most fragile number in the
+configuration, and it is why `ftmo_monitor` grew early warnings at 50% and 75%
+of the daily budget on the same day: with soft, flatten and breach inside
+$12.50 of each other, the first posture change you hear about is otherwise
+effectively the last one.
+
+Note also that `top_n` 5 with `max_per_class` 3 means at least two asset
+classes are always represented, and ranks 4-5 act as reserves when an earlier
+candidate is refused for a venue reason (MARKET_CLOSED, precision grid, below
+minimum volume).
+
 ### The universe is the whole account now, not a basket (2026-08-11)
 
 Owner instruction: forecast everything the FTMO account can actually trade.
@@ -823,6 +870,22 @@ Four properties not to regress:
 4. **torch is imported only after the enabled check**, so a disarmed firing is
    a cheap settings read rather than a 2 GB model load.
 
+**Every fill is texted, not just the run summary (2026-08-11).** Each entry
+sends size, stop, target, R multiple and the Kronos prediction; each exit sends
+its own message. The journal row is always written FIRST — an alert that raises
+must never cost an audit row, which is the ordering `detect_closes` already
+used.
+
+**A runner-placed exit used to be re-reported an hour later as "closed without
+the runner", and that is fixed.** `state_obj.open_positions` was snapshotted
+before exits ran and never refreshed, so every rotation produced a spurious
+`CLOSE_DETECTED (manual-or-unknown)` row on the next cycle — LTCUSD on
+2026-08-10 was EXITed at 20:31 and reported as a self-close at 21:30. The book
+is now re-read from the VENUE after execution, because a close order that was
+SENT is not a close that HAPPENED. If that read fails the older snapshot is
+kept, which can only cause a duplicate detection later — the direction rule 6
+says to fail in.
+
 **Every entry carries a TAKE-PROFIT as well as a stop, and the target is
 Kronos's own predicted return** (owner decision, 2026-08-08). TP = entry x
 (1 + predicted_return_pct/100), computed by
@@ -852,6 +915,59 @@ One consequence to keep in view:
   is ATR-derived and stable; the target is not, so two runs can size a position
   identically and target it differently. That is a property of the chosen rule,
   not a defect. The TP is fixed at fill, so it does not drift mid-position.
+
+## The watcher — `ftmo_watch.py` (2026-08-11)
+
+**`ftmo_monitor.EquityMonitor` had never run.** Until this file existed it was
+instantiated in exactly one place: its own selftest. CLAUDE.md, the runner's
+docstring and `ftmo_smoke_order.py` all called it "the continuous watcher", and
+no process ran it. The protection rule 3 is written around was documented,
+tested, and absent. If you take one thing from this section, take that: a
+component can be fully selftested and still not exist as a running thing.
+
+**THIS IS THE FOURTH UNATTENDED PATH, AND THE FIRST NOT BOUND TO A SCHEDULE.**
+The others are the retired `autotrade_runner.py` (rule 7), the FTMO runner
+(rule 8) and the IC-screen override (rule 9). Owner decision 2026-08-11, taken
+with the alert-only alternative stated first and priced. Flag it as an
+exception; it is not precedent. What it removes is the human in the loop on a
+FLATTEN — never a limit.
+
+It **closes only, and can never open.** No signal, no sizer, no forecast, and
+it cannot import torch. Selftested by naming the sizing FUNCTIONS rather than
+banning the import, because it needs `ftmo_sizing.VOLUME_SCALE`.
+
+Six properties not to regress:
+
+1. **FLATTEN is ungated.** No rule engine, no sizer, no budget in front of it
+   (rule 3). Positions are RE-READ from the venue first — acting on the
+   monitor's cached view would be acting on a belief, and a flatten is the one
+   action where being wrong costs most. Each close is attempted independently.
+2. **A failed read is not an empty account.** `resync()` propagates the
+   exception rather than returning "no positions"; `flatten()` refuses to
+   proceed if it cannot read the book. That mistake journalled a phantom
+   liquidation on 2026-07-25.
+3. **Quotes are fed with THEIR OWN timestamps, never `now`.** Re-feeding a
+   stale quote under a fresh timestamp would tell the monitor the book is
+   currently valued when it is not, and the entire UNKNOWN posture would
+   silently stop working.
+4. **The day baseline comes from `ftmo_runner_state.json`, not the live
+   balance.** Seeding from the balance would restart the daily loss at zero on
+   every reconnect — a limit that can never trip.
+5. **Session-scoped, and that is a battery decision as much as a trading one.**
+   It exits at 23:00 Sofia. `ftmo_watch.sh` holds `caffeinate -i` for its
+   lifetime, so a 24/7 watcher would be a 24/7 power assertion on a laptop that
+   is usually unplugged. launchd starts it hourly at :30 Mon-Fri as a superset;
+   a `flock` keeps it to one instance. `KeepAlive` is `SuccessfulExit=false`,
+   never plain `true`, or a clean exit at the close would be respawned one
+   second later and rebuild the 24/7 daemon this design rejected.
+6. **Volume is converted with `ftmo_sizing.VOLUME_SCALE`.** cTrader reports
+   CENTI-units. The first draft used a `hasattr` fallback that never matched
+   and valued every position **100x** too large — silently, on the numbers the
+   flatten decision is made from. It does not raise; it just makes the wrong
+   decision confidently.
+
+To make it advisory instead of active, add `--dry-run` to the plist's
+`ProgramArguments`: it alerts exactly as it does now and closes nothing.
 
 ## FTMO close detection — `ftmo_closes.py`
 
@@ -930,43 +1046,90 @@ already traded and could block trading on the spot.
 **ARMED AND SCHEDULED since 2026-08-06.** `ftmo.autotrade.enabled` is `true`
 and `com.tradingbotapp.ftmo` is loaded (`ftmo_launchd.log`).
 
+**Five launchd jobs as of 2026-08-11.** Verify UNSANDBOXED with
+`launchctl print gui/$(id -u)/<label>`; a bare `launchctl list` from an agent
+shell reports a different domain and shows loaded jobs as missing.
+
+| label | when | what | can it place an order? |
+|---|---|---|---|
+| `com.tradingbotapp.ftmo` | every 15 min, 24/7 (superset) | the runner | **yes — opens and closes** |
+| `com.tradingbotapp.ftmowatch` | hourly :30 Mon-Fri (superset); exits at 23:00 Sofia | equity watcher, holds `caffeinate` | **yes — closes only** |
+| `com.tradingbotapp.ftmoreconcile` | every 30 min, 24/7 | close detection + FTMO day roll | no |
+| `com.tradingbotapp.dailydigest` / `...evening` | 07:30 / 20:00 | phone digests | no |
+| `com.tradingbotapp.vaultsync` | 22:00 | Obsidian vault sync | no |
+
+Only the first two can reach the venue with an order, and only the first can
+OPEN one.
+
 **The schedule and the trading window are two different things — do not
-conflate them.** launchd wakes the runner **hourly at :30, all 24 hours, every
-day**. That is a deliberate SUPERSET. The actual window is **16:30 to 11:30 the
-next morning, every day except Sunday, Europe/Sofia** (owner decision
-2026-08-06, revised from a single 01:15 firing), and it is enforced by
-`ftmo_runner.within_trading_window()`, which is authoritative.
+conflate them.** launchd wakes the runner **every 15 minutes at :00 :15 :30
+:45, all 24 hours, every day** (four `StartCalendarInterval` dicts with the
+Hour omitted — an unspecified field is a wildcard). That is a deliberate
+SUPERSET. The actual window is **16:30 to 23:00 Europe/Sofia, MONDAY TO
+FRIDAY** — the 09:30-16:00 New York cash session — enforced by
+`ftmo_runner.within_trading_window()`, which is authoritative. **27 firings per
+weekday**, both endpoints inclusive (390 minutes / 15 = 26 intervals = 27
+points; the off-by-one is asserted in the selftest).
 
-The rule is not encoded in the plist because it wraps midnight and excludes one
-weekday — 6 weekdays x 20 hours = 120 `StartCalendarInterval` entries nobody
-will re-read correctly — and because a plist expresses whatever the host's
-local timezone happens to be, while the runner resolves `Europe/Sofia` through
-`zoneinfo` and stays right across the EEST/EET switch. The retired IBKR runner
-split NYSE hours the same way and for the same reason.
+**REVISED 2026-08-11 from 16:30-11:30 every day but Sunday, hourly. It is a
+NARROWING, and the consequence needs stating: coverage fell from 19 hours
+across 6 days to 6.5 hours across 5.** A position opened at 22:45 on Friday is
+not looked at by the runner again until 16:30 Monday — 65 hours. Its stop and
+take-profit live at the VENUE and are unaffected, so it stays protected; what
+was given up is management and, without the reconcile job, the RECORD.
 
-Two properties that make this safe at ~20 firings a day:
+The rule is not encoded in the plist because a plist expresses whatever the
+host's local timezone happens to be, while the runner resolves `Europe/Sofia`
+through `zoneinfo` and stays right across the EEST/EET switch. The retired IBKR
+runner split NYSE hours the same way and for the same reason.
+
+Three properties that make this safe at 96 wakeups a day:
 
 - **The window is checked before the audit log opens and long before torch is
   imported**, so an out-of-window wakeup costs one settings read. Selftested.
-- **The window WRAPS midnight, so it is a union, not a range.** `OPEN <= t <=
-  CLOSE` would be empty for every `t` — the obvious way to get this silently
-  wrong. "Except Sunday" applies to the CALENDAR day in Sofia, so Saturday's
-  evening leg runs and Sunday's morning leg does not.
+- **The window NO LONGER WRAPS MIDNIGHT, so it is a RANGE and not a union.**
+  This inverts the warning that stood here from 2026-08-06 to 2026-08-11, when
+  `OPEN <= t <= CLOSE` would have been empty for every `t`. Both forms are
+  selftested so neither can be reintroduced by accident. Saturday is now closed
+  outright, where it previously ran an evening leg.
+- **A PID lock stops firings piling up.** A cycle takes ~6.3 minutes on the
+  101-symbol universe against a 15-minute interval, so a slow run can still be
+  going when the next starts. `acquire_run_lock()` uses `flock`, not a
+  file-exists check, because the kernel releases an flock when the holder dies
+  however it dies — a crashed runner cannot wedge the schedule. **This is not
+  hypothetical: on 2026-08-11 two concurrent runners each loaded their own
+  ~2 GB Kronos model, the Mac went into swap (89,817 pageouts, 27% free) and
+  the unattended firing was left with 28 SECONDS OF CPU ACROSS 13 MINUTES at
+  an RSS of 19 MB.** Do not run `--dry-run` while a firing is in progress;
+  check `ps` first, or preview from `/signal`.
 
-Firing hourly on a 20-day forecast is against the cadence this project
-documented, and it was chosen anyway with that stated: the rotation margin
-suppresses churn between runs, but ~20 re-decisions a day is ~30 min of GPU
-and more chances to pay spread on sampling noise. The daily-rebalance rationale
-has not been disproved — it was overridden.
+Firing every 15 minutes on a 5-day forecast is further against the cadence this
+project documented, and it was chosen anyway with that stated. The rotation
+margin suppresses churn between runs, but 27 re-decisions a day is ~3 hours of
+GPU and more chances to pay spread on sampling noise. The daily-rebalance
+rationale has not been disproved — it was overridden, twice.
 
-01:00 Sofia is the Europe/Prague day boundary, so the **01:30 firing is the
-first of each new FTMO day** and `advance_state()` rolls there, off settled
-numbers.
+**THE FTMO DAY BOUNDARY IS NOW OUTSIDE THE WINDOW, and that is why the
+reconcile job is load-bearing rather than a convenience.** 00:00 Europe/Prague
+is 01:00 Sofia; the first in-window firing of a new FTMO day is 16:30, 15.5
+hours later. `advance_state()` samples `day_start_balance` AT ROLL TIME, so
+rolling that late would silently exclude every overnight move — a stop firing
+on a 24/7 crypto CFD, a weekend gap — from the daily-loss calculation. **A
+limit that under-reports is worse than no limit, because it looks like one.**
+`com.tradingbotapp.ftmoreconcile` runs `--reconcile` every 30 minutes, all day,
+every day, ignoring both the arm toggle and the window, and rolls the day
+within 30 minutes of the true boundary. It also keeps rule 6 intact: without
+it, a stop firing at 02:00 on a Saturday would not be journalled until Monday
+afternoon.
 
 To disarm: the header switch on the web UI, `trader_app.py` menu 8, or set
 `ftmo.autotrade.enabled` false. To
 stop the schedule:
 `launchctl unload ~/Library/LaunchAgents/com.tradingbotapp.ftmo.plist`.
+The watcher and the reconcile job are separate and are NOT disarmed by the
+autotrade toggle — deliberately, because recording and watching are not
+trading:
+`com.tradingbotapp.ftmowatch`, `com.tradingbotapp.ftmoreconcile`.
 
 **`trader_settings.json` carries the armed flag and is tracked in git.** If it
 is left modified-but-uncommitted, a stray `git checkout .` silently DISARMS the
@@ -1191,8 +1354,11 @@ sections close to verbatim, so keep those reasonably current.
   a failure to install.
 - **The Mac sleeping mid-run is the single biggest cause of FTMO runner
   failures, and it wears TWO different error messages.** Diagnosed 2026-08-08
-  after 22 consecutive failures. `pmset -b sleep` is **1** — idle system sleep
-  after one minute, on battery — so launchd fires the runner inside a
+  after 22 consecutive failures. **`sleep` is 1 on BOTH battery AND AC** —
+  idle system sleep after one minute regardless of power source, verified with
+  `pmset -g custom` on 2026-08-11. (This entry previously said "on battery",
+  which was wrong and made the `-s` note below wrong with it.) So launchd
+  fires the runner inside a
   ~2-second DarkWake, the process opens a socket, and the machine suspends
   underneath it. Proven by lining `pmset -g log` up against
   `ftmo_launchd.log`: at 16:37:36 DarkWake, 16:37:37 "trading window",
@@ -1217,16 +1383,35 @@ sections close to verbatim, so keep those reasonably current.
   after each wake. Longer timeouts make failures slower, not rarer. This is a
   power-management problem: a laptop on battery with a one-minute idle-sleep
   timer cannot host an unattended process.
-  **MITIGATED 2026-08-08: `ftmo_runner.sh` now execs the runner under
-  `caffeinate -i`**, which holds a `PreventUserIdleSystemSleep` assertion for
-  the lifetime of the child only — the machine stays up for the ~3 minutes a
-  firing takes and is free to sleep straight after. No system-wide `pmset`
-  setting was changed. NOT `-s`: that only prevents system sleep on AC power
-  and this machine runs on battery, so it would silently do nothing.
+  **RESOLVED 2026-08-11 — and the assertion MOVED rather than being removed.**
+  `caffeinate -i` is gone from `ftmo_runner.sh`; `ftmo_watch.sh` now holds ONE
+  assertion for the whole 16:30-23:00 Sofia session, which is exactly the
+  window the runner fires in. A second assertion per firing would be
+  redundant.
+  Owner decision, taken with the alternatives priced: a `pmset` change was
+  REJECTED because it needs sudo, is a system-wide setting nobody re-reads,
+  and would keep a laptop awake at 04:00 on a Sunday when nothing can trade.
+  An assertion scoped to a process that only lives during market hours states
+  the actual intent. **No `pmset` setting was changed.**
+  What `caffeinate` is, since this keeps coming up: it registers a power
+  ASSERTION with the OS, consumes no CPU and generates no meaningful heat, and
+  is released automatically when the process exits — including on a crash. It
+  costs battery RUNTIME (~20-50Wh a session, a quarter to half a charge on
+  this laptop) and does **not** harm battery HEALTH, which is driven by cycles,
+  heat and time at high charge.
+  NOT `-s`: that prevents system sleep only on AC power. NOT `-d`: the display
+  is free to sleep, which saves most of the power while keeping the CPU alive.
+  **Closing the lid sleeps the Mac regardless of any assertion.** If the lid
+  shuts mid-session the watcher stops; launchd restarts it at the next :30.
+  There is no software fix for that and pretending otherwise would be worse
+  than recording it here.
   It lives in the WRAPPER, not the plist, deliberately: the wrapper is tracked
-  in git and re-read on every firing, so changing it needs no `launchctl`
+  in git and re-read on every start, so changing it needs no `launchctl`
   reload — worth more than tidiness given the sandbox gotcha above. It
   degrades to running bare if `caffeinate` is absent.
+  **If the watcher is ever disabled, the runner is exposed again and the
+  assertion should go back into `ftmo_runner.sh`.** That is the one condition
+  under which re-adding it is correct.
   **Verified only at the mechanism level, NOT under the real failure
   condition**, and the reason matters: **Claude Code's own session holds
   `caffeinate -i -t 300` assertions while it works**, so the Mac does not
@@ -1235,9 +1420,11 @@ sections close to verbatim, so keep those reasonably current.
   the tooling, not by any fix. **Do not read a firing that succeeded during an
   agent session as evidence this is solved.** The real test is a firing with no
   session running.
-  A residual race remains: launchd starts the job inside a ~2-second DarkWake,
-  so if sleep lands in the ~1s before `caffeinate` asserts, the firing is still
-  lost. The window is much smaller, not zero.
+  A residual race remains for firings that start while the watcher is NOT
+  running — outside the session, or after a lid-close ended it. launchd starts
+  the job inside a ~2-second DarkWake, and if sleep lands before anything
+  asserts, the firing is lost. Inside a live session the watcher's assertion is
+  already held, so the race does not apply.
   The Telegram alert fails at the same moment for the same reason, so this
   failure mode is **silent** — 19 hours passed unnoticed.
 - **GitHub: `gh` is installed manually at `~/.local/bin/gh`** — there is no
