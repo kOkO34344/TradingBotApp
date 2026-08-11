@@ -84,3 +84,49 @@ timestamp,event,symbol,sec_type,action,quantity,price,stop,target,status,detail,
 2026-08-09T16:48:14,BLOCKED,,cfd,,,,,,skipped,"GBPUSD: refusing — a BUY needs a positive forecast to derive a target from, got -0.33% — no take-profit exists on the profitable side (ranked into the top 4 on a forecast of -0.33%)",ftmo
 2026-08-09T17:15:27,NOTE,,cfd,,,,,,autotrade DISABLED,"FTMO autotrade turned OFF from the web UI. Signal: kronos. The rule engine, sizer and stop attachment stay enforced either way.",ftmo
 2026-08-09T17:15:34,NOTE,,cfd,,,,,,autotrade enabled,"FTMO autotrade turned ON from the web UI. Signal: kronos. The rule engine, sizer and stop attachment stay enforced either way.",ftmo
+2026-08-10T19:31:02,BLOCKED,,cfd,,,,,,skipped,"NZDUSD: refusing — a BUY needs a positive forecast to derive a target from, got -0.09% — no take-profit exists on the profitable side (ranked into the top 4 on a forecast of -0.09%)",ftmo
+2026-08-10T19:31:02,EXIT,ETHUSD,cfd,CLOSE,210,,,,sent,rotated out; position 10164068,ftmo
+2026-08-10T19:31:02,SUBMIT,SOLUSD,cfd,BUY,32400,75.70000,73.39929,77.30029,sending,crypto; kronos pred +2.11%; risk $745.43; reward $518.49,ftmo
+2026-08-10T19:31:03,RESULT,SOLUSD,cfd,BUY,32400,75.70000,73.39929,77.30029,accepted,venue response ProtoOAExecutionEvent,ftmo
+2026-08-10T19:31:03,SUBMIT,LTCUSD,cfd,BUY,31000,45.33000,44.20286,46.03145,sending,crypto; kronos pred +1.55%; risk $349.41; reward $217.45,ftmo
+2026-08-10T19:31:04,RESULT,LTCUSD,cfd,BUY,31000,45.33000,44.20286,46.03145,accepted,venue response ProtoOAExecutionEvent,ftmo
+2026-08-10T19:31:04,SUBMIT,NATGAS.cash,cfd,BUY,1000,2.81700,2.72479,2.85028,sending,commodities; kronos pred +1.18%; risk $0.92; reward $0.33,ftmo
+2026-08-10T19:31:05,RESULT,NATGAS.cash,cfd,BUY,1000,2.81700,2.72479,2.85028,accepted,venue response ProtoOAExecutionEvent,ftmo
+2026-08-10T20:30:18,CLOSE_DETECTED,ETHUSD,cfd,SELL,210,1873.87000,1799.26000,,closed,closed without the runner (manual-or-unknown); detected 2026-08-10T17:30:06.289069+00:00; gross -91.79 swap -9.91 comm -3.87,ftmo
+2026-08-10T20:31:02,BLOCKED,,cfd,,,,,,skipped,"US30.cash: refusing — a BUY needs a positive forecast to derive a target from, got -0.17% — no take-profit exists on the profitable side (ranked into the top 4 on a forecast of -0.17%)",ftmo
+2026-08-10T20:31:02,BLOCKED,,cfd,,,,,,skipped,"AUDUSD: refusing — a BUY needs a positive forecast to derive a target from, got -0.26% — no take-profit exists on the profitable side (ranked into the top 4 on a forecast of -0.26%)",ftmo
+2026-08-10T20:31:03,EXIT,LTCUSD,cfd,CLOSE,31000,,,,sent,rotated out; position 10195450,ftmo
+2026-08-10T21:30:17,CLOSE_DETECTED,LTCUSD,cfd,SELL,31000,44.88000,44.51000,46.33000,closed,closed without the runner (manual-or-unknown); detected 2026-08-10T18:30:05.976570+00:00; gross -232.50 swap +0.00 comm -13.64,ftmo
+2026-08-10T21:31:02,BLOCKED,,cfd,,,,,,skipped,"NZDUSD: refusing — a BUY needs a positive forecast to derive a target from, got -0.06% — no take-profit exists on the profitable side (ranked into the top 4 on a forecast of -0.06%)",ftmo
+2026-08-10T21:31:02,BLOCKED,,cfd,,,,,,skipped,"GBPUSD: refusing — a BUY needs a positive forecast to derive a target from, got -0.19% — no take-profit exists on the profitable side (ranked into the top 4 on a forecast of -0.19%)",ftmo
+2026-08-10T21:31:02,EXIT,SOLUSD,cfd,CLOSE,32400,,,,sent,rotated out; position 10195449,ftmo
+2026-08-10T21:31:02,SUBMIT,EURUSD,cfd,BUY,13100000,1.15417,1.14854,1.15550,sending,fx; kronos pred +0.12%; risk $737.72; reward $174.78,ftmo
+2026-08-10T21:31:03,RESULT,EURUSD,cfd,BUY,13100000,1.15417,1.14854,1.15550,accepted,venue response ProtoOAExecutionEvent,ftmo
+2026-08-10T22:30:17,CLOSE_DETECTED,SOLUSD,cfd,SELL,32400,75.95000,73.40000,77.30000,closed,closed without the runner (manual-or-unknown); detected 2026-08-10T19:30:06.118585+00:00; gross +81.00 swap +0.00 comm -23.97,ftmo
+2026-08-10T22:31:00,SUBMIT,LTCUSD,cfd,BUY,50000,45.12000,43.99286,46.41171,sending,crypto; kronos pred +2.86%; risk $563.57; reward $645.86,ftmo
+2026-08-10T22:31:01,RESULT,LTCUSD,cfd,BUY,50000,45.12000,43.99286,46.41171,accepted,venue response ProtoOAExecutionEvent,ftmo
+2026-08-10T22:31:01,SUBMIT,SOLUSD,cfd,BUY,15500,76.20000,73.89929,77.62992,sending,crypto; kronos pred +1.88%; risk $356.61; reward $221.64,ftmo
+2026-08-10T22:31:02,RESULT,SOLUSD,cfd,BUY,15500,76.20000,73.89929,77.62992,accepted,venue response ProtoOAExecutionEvent,ftmo
+2026-08-11T01:30:58,BLOCKED,,cfd,,,,,,skipped,"XAUUSD: refusing — a BUY needs a positive forecast to derive a target from, got -0.20% — no take-profit exists on the profitable side (ranked into the top 4 on a forecast of -0.20%)",ftmo
+2026-08-11T01:30:59,EXIT,NATGAS.cash,cfd,CLOSE,1000,,,,sent,rotated out; position 10195451,ftmo
+2026-08-11T03:30:58,BLOCKED,,cfd,,,,,,skipped,"NZDUSD: refusing — a BUY needs a positive forecast to derive a target from, got -0.13% — no take-profit exists on the profitable side (ranked into the top 4 on a forecast of -0.13%)",ftmo
+2026-08-11T03:30:58,BLOCKED,,cfd,,,,,,skipped,"GBPUSD: refusing — a BUY needs a positive forecast to derive a target from, got -0.14% — no take-profit exists on the profitable side (ranked into the top 4 on a forecast of -0.14%)",ftmo
+2026-08-11T03:30:59,EXIT,NATGAS.cash,cfd,CLOSE,1000,,,,sent,rotated out; position 10195451,ftmo
+2026-08-11T03:31:00,EXIT,LTCUSD,cfd,CLOSE,50000,,,,sent,rotated out; position 10199528,ftmo
+2026-08-11T04:30:17,CLOSE_DETECTED,NATGAS.cash,cfd,SELL,1000,2.73700,2.72500,2.85000,closed,closed without the runner (manual-or-unknown); detected 2026-08-11T01:30:04.470964+00:00; gross -0.80 swap -0.01 comm 0.00,ftmo
+2026-08-11T04:30:17,CLOSE_DETECTED,LTCUSD,cfd,SELL,50000,44.78000,44.30000,46.71000,closed,closed without the runner (manual-or-unknown); detected 2026-08-11T01:30:04.470964+00:00; gross -320.00 swap -18.47 comm -21.94,ftmo
+2026-08-11T04:31:00,SUBMIT,NATGAS.cash,cfd,BUY,759000,2.79500,2.69864,2.82661,sending,commodities; kronos pred +1.13%; risk $731.35; reward $239.91,ftmo
+2026-08-11T04:31:01,RESULT,NATGAS.cash,cfd,BUY,759000,2.79500,2.69864,2.82661,accepted,venue response ProtoOAExecutionEvent,ftmo
+2026-08-11T04:31:01,SUBMIT,US500.cash,cfd,BUY,144,7761.95000,7663.37571,7781.60489,sending,indices; kronos pred +0.25%; risk $141.95; reward $28.30,ftmo
+2026-08-11T04:31:02,RESULT,US500.cash,cfd,BUY,144,7761.95000,7663.37571,7781.60489,accepted,venue response ProtoOAExecutionEvent,ftmo
+2026-08-11T09:31:00,EXIT,NATGAS.cash,cfd,CLOSE,759000,,,,sent,rotated out; position 10202938,ftmo
+2026-08-11T09:31:00,SUBMIT,LTCUSD,cfd,BUY,20400,45.17000,44.10286,45.70730,sending,crypto; kronos pred +1.19%; risk $217.70; reward $109.61,ftmo
+2026-08-11T09:31:01,RESULT,LTCUSD,cfd,BUY,20400,45.17000,44.10286,45.70730,accepted,venue response ProtoOAExecutionEvent,ftmo
+2026-08-11T10:30:21,CLOSE_DETECTED,EURUSD,cfd,SELL,13100000,1.15348,1.14856,1.15552,closed,closed without the runner (take_profit); detected 2026-08-11T07:30:05.478293+00:00; gross -93.01 swap -12.52 comm -9.84,ftmo
+2026-08-11T10:30:36,CLOSE_DETECTED,SOLUSD,cfd,SELL,15500,75.89000,73.90000,77.62000,closed,closed without the runner (manual-or-unknown); detected 2026-08-11T07:30:05.478293+00:00; gross -48.05 swap -9.73 comm -11.48,ftmo
+2026-08-11T10:30:36,CLOSE_DETECTED,NATGAS.cash,cfd,SELL,759000,2.73200,2.71900,2.84600,closed,closed without the runner (manual-or-unknown); detected 2026-08-11T07:30:05.478293+00:00; gross -629.97 swap +0.00 comm -0.45,ftmo
+2026-08-11T10:30:37,CLOSE_DETECTED,US500.cash,cfd,SELL,144,7752.95000,7663.28000,7781.50000,closed,closed without the runner (manual-or-unknown); detected 2026-08-11T07:30:05.478293+00:00; gross -12.82 swap +0.00 comm 0.00,ftmo
+2026-08-11T10:31:19,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,187.50",ftmo
+2026-08-11T16:30:59,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,187.50",ftmo
+2026-08-11T17:30:58,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,187.50",ftmo
+2026-08-11T18:31:01,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,187.50",ftmo
