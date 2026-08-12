@@ -1,24 +1,50 @@
 ---
 tags: [roadmap, next-steps, project-management]
-status: "Live — prioritized action queue. Rewritten 2026-08-09 after the IBKR removal."
-last_updated: 2026-08-09
+status: "Live — prioritized action queue. Re-prioritized 2026-08-12 after the daily-limit breach."
+last_updated: 2026-08-12
 ---
 
 # Next Build Steps — Prioritized Action Queue
 
-> [!important] Re-prioritized 2026-08-09
+> [!important] Re-prioritized 2026-08-12 — after the breach
 > Anything below about IBKR, `paper_trader.py`, `reflect_on_trades.py` or
 > RiskGuard is obsolete — that venue was removed. The queue that matters now:
 >
-> 1. **Confirm the runner actually fires.** 12 missed firings last session.
->    The `caffeinate -i` wrapper is unverified under the real condition.
-> 2. **Grow the graded-call book.** Still 14 notes, all dated 2026-07-25.
-> 3. **Wire a launchd job for `ftmo_runner.py --reconcile`**, so closes are
->    detected between firings rather than only when the runner happens to run.
-> 4. Re-run the broad-universe momentum test that has never been run.
+> 1. **Decide what happens after the 2026-08-11 breach.** Daily loss 1,294.78
+>    against a 1,250.00 hard limit. The account is flat, the runner is still
+>    armed, and the rule engine has refused every entry since. That is a safe
+>    steady state but it is not a decision. **This is Koko's call**, and the
+>    options worth pricing are: leave it armed and let the FTMO day roll,
+>    disarm until the configuration is revisited, or widen `buffer_pct` back
+>    out. Do not quietly pick one.
+> 2. **Look hard at the $6.25 reserve.** Raising the daily ceiling on
+>    2026-08-11 (`buffer_pct` 0.05 → 0.01) bought three real position slots
+>    and left $6.25 between our flatten tier and FTMO's cliff — less than one
+>    tick of index-CFD slippage. It was breached the same day it was set.
+>    One observation is not a verdict, but it is the observation the design
+>    was most exposed to.
+> 3. **Re-run `grade_calls.py --csv`.** The book DID grow — 52 notes now, the
+>    newest 2026-08-03/04 — but grading has not run since. 14 fresh 5d calls
+>    are gradeable today and all 52 are pending at 21d. This is the cheapest
+>    evidence available and it is the thing everything else is gated on.
+> 4. **Fix the night band's window.** `api/ftmo_api.py`'s `timeline()` still
+>    reconstructs 16:30 → 11:30 as 20 hourly slots; the runner now fires every
+>    15 minutes to 23:00. The one screen built to make missed firings visible
+>    is currently under-drawing them.
+> 5. Re-run the broad-universe momentum test that has still never been run.
+>
+> **Done since the last sync, so stop carrying them:** the `--reconcile`
+> launchd job is wired (`com.tradingbotapp.ftmoreconcile`, every 30 min,
+> 24/7), and `ftmo_monitor` finally has a driver in `ftmo_watch.py` — until
+> 2026-08-11 the "continuous watcher" this project documented for weeks was
+> instantiated only inside its own selftest.
 
 
 > [!important] Rewritten 2026-08-06 — the machinery is FINISHED and ARMED
+> *(Kept as written. The schedule named here — 01:15 daily — was superseded
+> twice and is now every 15 minutes inside 16:30–23:00 Sofia, Mon–Fri. Read
+> the callout above for the current queue.)*
+>
 > Everything mechanical on the list below is now done. The FTMO runner is
 > armed and scheduled at 01:15 daily. What remains is not code.
 >
@@ -38,10 +64,12 @@ last_updated: 2026-08-09
 >    has ever placed an order with no human in the loop. After 01:15 check
 >    `ftmo_launchd.log`, the Telegram messages, and the `venue=ftmo` rows in
 >    `trade_journal.csv`. Confirm the stops actually attached.
-> 7. **The bottleneck is evidence, and it always was.** It has not moved:
->    - Re-run `run_research_agent_watchlist.py` — every note in `research_log/`
->      still dates from **2026-07-25**, so the book has not grown in 12 days.
->    - Re-run `grade_calls.py --csv` as the 38 calls mature at 21d.
+> 7. **The bottleneck is evidence, and it always was.** Partly moved as of
+>    2026-08-12:
+>    - ~~Re-run `run_research_agent_watchlist.py`~~ — done; `research_log/`
+>      holds **52 notes**, the newest dated **2026-08-03/04**.
+>    - **Still open:** re-run `grade_calls.py --csv`. 14 fresh 5d calls are
+>      gradeable now, and all 52 are pending at 21d.
 >
 > Note the shape of this list. Everything mechanical is now DONE, and the bot
 > is trading unattended on a signal with no measured edge on any asset class.

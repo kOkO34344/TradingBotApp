@@ -1,11 +1,46 @@
 ---
 tags: [risk, execution, infrastructure]
-status: "live in code — FTMO only; the IBKR RiskGuard was removed 2026-08-09"
-source: ftmo_rules.py, ftmo_monitor.py, ftmo_sizing.py
-last_updated: 2026-08-09
+status: "live in code — FTMO only; the IBKR RiskGuard was removed 2026-08-09. The daily limit was BREACHED 2026-08-11 and did its job: entries refused, exits never blocked."
+source: ftmo_rules.py, ftmo_monitor.py, ftmo_sizing.py, ftmo_watch.py
+last_updated: 2026-08-12
 ---
 
 # Risk Management System
+
+> [!danger] 2026-08-11 — a limit in this project was breached for the first time
+> `BREACH: daily loss 1,294.78 >= limit 1,250.00`, against a soft limit of
+> 1,237.50. Every runner firing since has journalled `BLOCKED`.
+>
+> **The enforcement worked exactly as designed.** It refused new entries and
+> it never once blocked an exit — the 2026-07-27 mistake, where a notional cap
+> trapped two appreciated winners, did not recur. Four positions closed freely
+> that day and the account went flat.
+>
+> **What failed is upstream of enforcement: the numbers it was given.** Raising
+> the daily ceiling on 2026-08-11 (`buffer_pct` 0.05 → 0.01) put soft, flatten
+> and breach inside **$12.50** of each other, and left **$6.25** between our
+> flatten tier and FTMO's hard cliff. That is less than one tick of index-CFD
+> slippage. The account cleared it by $44.78 the same day.
+>
+> The mitigation shipped alongside it: `ftmo_monitor` gained early warnings at
+> **50% and 75%** of the daily budget, because with the three tiers that close
+> together the first posture change you hear about is otherwise effectively
+> the last one. See [[FTMO Venue]].
+
+> [!important] `ftmo_monitor.EquityMonitor` had never RUN until 2026-08-11
+> This note, `CLAUDE.md` and the runner's own docstring all called it "the
+> continuous monitor" for nine days while it was instantiated in exactly one
+> place: its own selftest. The protection this entire design is written around
+> was documented, tested, and **absent**.
+>
+> `ftmo_watch.py` is the driver it never had — session-scoped (it exits at
+> 23:00 Sofia), started hourly at :30 Mon–Fri by launchd, holding one
+> `caffeinate -i` for its lifetime. It **closes only and can never open**: no
+> signal, no sizer, no forecast, and it cannot import torch.
+>
+> The general lesson is worth more than the fix: **a component can be fully
+> selftested and still not exist as a running thing.** Selftest counts measure
+> code, not deployment.
 
 > [!important] RiskGuard is gone; the LESSON it taught is the design here
 > `ibkr_service.RiskGuard` was removed with its venue on 2026-08-09. It was a
@@ -28,9 +63,12 @@ last_updated: 2026-08-09
 > floating P&L*, so an account can fail with no order placed at all — which
 > RiskGuard, described below, structurally cannot detect. See [[FTMO Venue]].
 >
-> Also note the limits below are **stale**: they were raised on 2026-07-27 to
-> 50,000 notional / 2,000 daily loss / 8 positions after the old caps blocked
-> the exits for two open positions and trapped them.
+> Also note the limits below are **stale twice over**: they were raised on
+> 2026-07-27 to 50,000 notional / 2,000 daily loss / 8 positions after the old
+> caps trapped two open positions, and then the whole layer was deleted with
+> IBKR on 2026-08-09. **`risk_limits.json` no longer exists in the repo** —
+> verified 2026-08-12. Layer 2 below is history; the live limits are the FTMO
+> ones.
 
 The trading bot has **two distinct risk-management layers**: one in the backtester (optional "risk engine" for signal strategies), and one in the live execution layer (mandatory for all orders).
 
@@ -340,5 +378,38 @@ automatically.
 equity including floating P&L and a 30-minute cycle is far too slow — a $25,000
 account can move $1,000 in under a minute. So `ftmo_monitor.py` is
 event-driven, recomputes equity on every tick, and acts on posture *changes*:
-block new entries at 80% of a limit, close everything at 90%, and treat stale
-quotes as UNKNOWN rather than safe.
+block new entries at the soft tier, flatten at the flatten tier, and treat
+stale quotes as UNKNOWN rather than safe.
+
+**The tiers moved on 2026-08-11 and are now very close together.** With
+`buffer_pct` at 0.01 the 2-Step daily set is soft **1,237.50** / flatten
+**1,243.75** / hard **1,250.00** — $12.50 end to end. Early warnings at 50%
+and 75% of the daily budget were added the same day for exactly that reason.
+Run `python3 ftmo_rules.py --show` for the current values rather than trusting
+a percentage rule of thumb.
+
+### Six properties of `ftmo_watch.py` not to regress
+
+1. **FLATTEN is ungated** — no rule engine, no sizer, no budget in front of it.
+   Positions are **re-read from the venue first**, because acting on a cached
+   view is acting on a belief, and a flatten is the action where being wrong
+   costs most. Each close is attempted independently.
+2. **A failed read is not an empty account.** `resync()` propagates the
+   exception rather than returning "no positions". That mistake journalled a
+   phantom liquidation on 2026-07-25.
+3. **Quotes are fed with THEIR OWN timestamps, never `now`** — otherwise the
+   entire UNKNOWN posture silently stops working.
+4. **The day baseline comes from `ftmo_runner_state.json`, not the live
+   balance.** Seeding from the balance would restart the daily loss at zero on
+   every reconnect: a limit that can never trip.
+5. **Session-scoped**, exiting at 23:00 Sofia. `KeepAlive` is
+   `SuccessfulExit=false`, never plain `true`, or a clean exit at the close
+   would be respawned a second later and rebuild the 24/7 daemon this design
+   rejected.
+6. **Volume is converted with `ftmo_sizing.VOLUME_SCALE`** — cTrader reports
+   CENTI-units. The first draft used a `hasattr` fallback that never matched
+   and valued every position **100× too large**, silently, on the numbers the
+   flatten decision is made from.
+
+To make it advisory instead of active, add `--dry-run` to the plist's
+`ProgramArguments`: it alerts exactly as it does now and closes nothing.

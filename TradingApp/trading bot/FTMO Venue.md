@@ -1,20 +1,42 @@
 ---
 tags: [ftmo, execution, infrastructure, risk, prop-firm]
-status: "LIVE AND ARMED — the ONLY venue since 2026-08-09. Hourly at :30 inside a 16:30-11:30 Sofia window, not Sundays. No asset class passed its IC screen; running anyway is a recorded exception."
-source: ftmo_rules.py, ftmo_monitor.py, ftmo_sizing.py, ftmo_audit.py, ftmo_service.py, ftmo_session.py, ftmo_signal.py, ftmo_runner.py, trade_journal.py
-last_updated: 2026-08-09
+status: "LIVE AND ARMED — the ONLY venue since 2026-08-09. Every 15 min inside a 16:30-23:00 Sofia window, Mon-Fri. DAILY LOSS LIMIT BREACHED 2026-08-11; entries refused since. No asset class passed its IC screen; running anyway is a recorded exception."
+source: ftmo_rules.py, ftmo_monitor.py, ftmo_sizing.py, ftmo_audit.py, ftmo_service.py, ftmo_session.py, ftmo_signal.py, ftmo_runner.py, ftmo_closes.py, ftmo_watch.py, trade_journal.py
+last_updated: 2026-08-12
 ---
 
 # FTMO Venue
 
-> [!important] The only venue, as of 2026-08-09
-> IBKR was removed entirely. Ten modules carry **579 offline selftests** and
-> none of them need credentials or a connection.
+> [!danger] BREACHED — the daily loss limit, 2026-08-11
+> The rule engine's own reading, repeated on every firing since 10:31 that
+> day: **`BREACH: daily loss 1,294.78 >= limit 1,250.00`**, and
+> `NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,237.50`. Day-start
+> balance was 24,721.03.
 >
-> **Schedule vs window are different things.** launchd wakes the runner hourly
-> at :30, all 24 hours, every day — a deliberate superset. The real window is
-> 16:30–11:30 Europe/Sofia, every day except Sunday, enforced by
-> `within_trading_window()`, which is authoritative.
+> Four positions closed on 2026-08-11 and the account has been **flat**
+> since — EURUSD on its take-profit (gross −93.01), then SOLUSD (−48.05),
+> NATGAS.cash (−629.97) and US500.cash (−12.82), all detected by
+> `ftmo_closes.py` rather than placed by the runner. Every firing after that
+> journalled `BLOCKED`. **The runner is still armed and still firing**; it is
+> the rule engine, not the switch, that is holding it.
+>
+> Read this the right way round. The limit **worked** — it refused entries and
+> never once blocked an exit. What failed is upstream of it: a configuration
+> that left **$6.25** between our flatten tier and FTMO's hard cliff, set the
+> same day, on a book of leveraged CFDs. The capital is simulated.
+
+> [!important] The only venue, as of 2026-08-09
+> IBKR was removed entirely. **Thirteen modules carry 762 offline selftests**
+> (re-measured 2026-08-11 — the "579 across ten modules" figure this note
+> carried did not reproduce) and none of them need credentials or a
+> connection.
+>
+> **Schedule vs window are different things.** launchd wakes the runner **every
+> 15 minutes at :00 :15 :30 :45, all 24 hours, every day** — a deliberate
+> superset. The real window is **16:30–23:00 Europe/Sofia, MONDAY TO FRIDAY**
+> (the 09:30–16:00 New York cash session), enforced by
+> `within_trading_window()`, which is authoritative. **27 firings per weekday**,
+> both endpoints inclusive.
 >
 > **The screens were re-run at a 5-day horizon on 2026-08-08 and all four
 > failed again** (indices +0.052, FX −0.064, commodities −0.017, crypto +0.103;
@@ -23,8 +45,9 @@ last_updated: 2026-08-09
 
 
 **Owner decision, 2026-08-02: FTMO becomes the trading venue and IBKR is
-retired in place.** IBKR places no new orders but keeps monitoring its three
-open positions until they close naturally — see [[IBKR Integration]].
+retired in place.** IBKR's code was removed entirely a week later, on
+2026-08-09, with three positions presumed still open and unverifiable — see
+[[IBKR Integration]]. Nothing in this project monitors them any more.
 
 This is a genuinely new direction for the project, and it deserves recording
 honestly rather than as a natural next step. The evidence position at the
@@ -73,27 +96,69 @@ hard daily limit, that same blind spot is a failed account, not a reporting gap.
 | | |
 |---|---|
 | Account | FTMO Free Trial, $25,000 |
-| Instruments | stock CFDs, indices, FX, commodities/crypto — all four |
-| Signal | Kronos everywhere, **each class gated on its own IC screen** |
-| Cadence | daily rebalance, multi-day holds |
-| Buffer | 20% — stop opening at 4% daily / 8% drawdown |
+| Instruments | stock CFDs, indices, FX, commodities/crypto — all five classes the account carries |
+| Signal | Kronos everywhere, **each class gated on its own IC screen** — a gate now overridden |
+| Cadence | every 15 min, 16:30–23:00 Sofia, Mon–Fri; 5-day forecast horizon |
+| Buffer | **1%** (`buffer_pct` 0.01, cut from 0.05 on 2026-08-11) |
 | Limit action | block entries at soft, flatten at hard |
-| Sizing | ATR model, 1% per trade, max 4 positions, book capped at the soft limit |
-| Stops | server-side, attached at entry, verified after fill |
+| Sizing | ATR model, **1.65% per trade**, `top_n` 5, `max_per_class` 3, book capped at the soft limit |
+| Stops | server-side, attached at entry, verified after fill; **take-profit too since 2026-08-08** |
 | Autonomy | **fully unattended** |
 
-Derived limits on $25,000 (`python3 ftmo_rules.py --show`):
+### The 2026-08-11 risk change, and why it went the way it did
+
+The ask was "bigger risks". The arithmetic was put first and changed the shape
+of the answer:
+
+| | before | after |
+|---|---|---|
+| `risk_pct` | 3.0 | **1.65** |
+| `buffer_pct` | 0.05 | **0.01** |
+| `top_n` | 4 | **5** |
+| `max_per_class` | 1 | **3** |
+| daily soft / flatten | 1,187.50 / 1,218.75 | **1,237.50 / 1,243.75** |
+| funded positions | ~1.6 | **exactly 3** |
+
+**Raising `risk_pct` alone does not raise risk here** — `size_position` takes
+`min(per_trade_risk, budget_remaining)` and the whole book is capped at the
+daily soft limit, so at 5% the first entry would eat the entire budget and
+every later one would be refused. That was already visible in the live journal:
+on 2026-08-10 the runner sized SOLUSD $745, LTCUSD $349, then NATGAS **$0.92**.
+
+So the lever that moved was the daily **ceiling**, not the per-trade percentage.
+Per-trade risk went *down*, total daily exposure went *up*, and the book got
+wider rather than more concentrated.
+
+> [!danger] The reserve is $6.25, and the account cleared it the same day
+> $6.25 is what now sits between our flatten tier (1,243.75) and FTMO's
+> $1,250 cliff. That is well under one tick of index-CFD slippage, and a stop
+> that gaps through — which this project has already watched happen, GOOGL
+> filling 1.5% beyond its level — clears it without noticing.
+>
+> This is why `ftmo_monitor` grew early warnings at 50% and 75% of the daily
+> budget on the same day: with soft, flatten and breach inside $12.50 of each
+> other, the first posture change you hear about is otherwise effectively the
+> last one.
+>
+> **It was breached on 2026-08-11, the day it was set** — final reading
+> 1,294.78, i.e. $44.78 past the hard limit. One observation, not a verdict on
+> the design, but it is the observation the design was most exposed to.
+
+Derived limits on $25,000, 2-Step, **as the live rule engine actually printed
+them in `trade_journal.csv` on 2026-08-11**:
 
 ```
-2-Step   daily  hard $1,250   flatten $1,125   soft $1,000
-         total  hard $2,500   flatten $2,250   soft $2,000   (static)
-
-1-Step   daily  hard   $750   flatten   $675   soft   $600
-         total  hard $2,500   flatten $2,250   soft $2,000   (trailing)
+daily   hard $1,250.00   flatten $1,243.75   soft $1,237.50
 ```
 
-Four positions at 1% fill the daily budget exactly, so a simultaneous stop-out
-across the whole book lands **on** $1,000 rather than through $1,250.
+The total-loss tier and the 1-Step figures move with `buffer_pct` too; run
+`python3 ftmo_rules.py --show` for the current set rather than trusting the
+older numbers this note used to carry (hard 1,250 / flatten 1,125 / soft 1,000,
+which were the 20%-buffer values).
+
+Three positions at 1.65% fill the daily budget exactly, so a simultaneous
+stop-out across the whole book lands **on** $1,237.50 rather than through
+$1,250 — provided no stop gaps.
 
 ## Unattended trading is the second exception to the evidence rule
 
@@ -105,20 +170,42 @@ it should be flagged the same way rather than treated as precedent.
 What autonomy removes is the **human approval step**, never a limit. The rule
 engine, the equity monitor and the sizer are enforced regardless. Kronos may
 only trade an asset class that has passed its own IC screen — the owner's own
-condition, and the thing that keeps this from being "enable everything and
-hope".
+condition, and the thing that kept this from being "enable everything and
+hope". **That condition was overridden on 2026-08-05 and the path was armed on
+2026-08-06** — see the third-exception section below. It is recorded here as
+written because the condition existing, and then being knowingly set aside, is
+the honest sequence; do not read this paragraph as a gate still holding.
 
 The Challenge account is **simulated**, so this does not breach the
 paper-before-real-money rule. The real exposure is the entry fee. Phase 4 (real
-capital on IBKR) stays locked.
+capital) stays locked and is not reachable from any code path that exists.
 
 ## The modules
 
 All pure-logic except the transport ones, all with offline `--selftest` needing
-no credentials and no network. **426 checks total** as of 2026-08-06:
-`ftmo_rules` 70, `ftmo_sizing` 72, `ftmo_monitor` 63, `ftmo_audit` 48,
-`ftmo_service` 43, `ftmo_session` 40, `ftmo_runner` 38, `ftmo_signal` 26,
-`trade_journal` 26.
+no credentials and no network. **762 checks total**, re-measured 2026-08-11:
+`ftmo_runner` 115, `ftmo_signal` 102, `ftmo_sizing` 90, `ftmo_monitor` 80,
+`ftmo_session` 70, `ftmo_rules` 70, `ftmo_audit` 48, `ftmo_watch` 43,
+`ftmo_service` 43, `ftmo_closes` 43, `trade_journal` 26, `indicators` 20,
+`secrets_store` 12.
+
+> [!warning] The previous figures in this note were wrong, and had drifted
+> before anyone noticed
+> This note carried "426 as of 2026-08-06" and then "579 across ten modules";
+> neither reproduced. `ftmo_signal` was recorded as 35 and was really 73,
+> `ftmo_sizing` as 81 and was really 90, and `indicators` and `secrets_store`
+> were omitted entirely. Recorded as a correction rather than quietly
+> overwritten — a count nobody re-measures is the same class of thing as the
+> CI workflow `CLAUDE.md` claimed for weeks and never had.
+>
+> Re-measure with, and note the two output formats — `indicators.py` prints
+> `PASS`, everything else prints `ok`, so a sweep matching only `ok` scores it
+> zero:
+>
+> ```
+> for m in $(grep -l -- --selftest *.py); do .venv/bin/python3 $m --selftest \
+>   | grep -cE '^\s+(ok|FAIL|PASS)'; done
+> ```
 
 > [!warning] `ftmo_audit`'s selftest prints `AUDIT WRITE FAILED` to stderr on
 > purpose, while testing an unwritable path. That is a **passing** test. Do not
@@ -129,7 +216,10 @@ no credentials and no network. **426 checks total** as of 2026-08-06:
   *not* a trading permission — too few trading days means keep trading, not
   stop.
 - **`ftmo_monitor.py`** — the watching. Edge-triggered state machine over
-  OK / BLOCKED / UNKNOWN / FLATTEN / BREACHED.
+  OK / BLOCKED / UNKNOWN / FLATTEN / BREACHED. Gained early warnings at 50%
+  and 75% of the daily budget on 2026-08-11, because the three tiers now sit
+  inside $12.50 of each other. **It had never actually run until
+  `ftmo_watch.py` existed** — see below.
 - **`ftmo_sizing.py`** — the size. Per-trade *and* per-portfolio caps.
 - **`ftmo_audit.py`** — the record. Append-only JSONL, one file per FTMO day,
   recording *why* a decision was allowed. `trade_journal.csv` records what was
@@ -141,8 +231,24 @@ no credentials and no network. **426 checks total** as of 2026-08-06:
 - **`ftmo_signal.py`** — turns a Kronos ranking into sized, stop-protected
   orders. The join between the research side and the venue side.
 - **`ftmo_runner.py`** — the unattended runner. See below.
-- **`trade_journal.py`** — the journal's column set and the `venue` column,
-  shared with the IBKR side so both venues cannot drift apart on the schema.
+- **`ftmo_closes.py`** (2026-08-08) — detects positions that closed **without**
+  the runner. Two-tier: a live execution-event stream that catches almost
+  nothing (the runner's session lives ~2 minutes an hour) and, doing the real
+  work, a diff of `ftmo_runner_state.json` against what the venue reports.
+  Better positioned than the IBKR version ever was, because cTrader returns
+  the actual closing DEAL — price, gross profit, swap and commission — so an
+  unattended close carries real P&L instead of a shrug. **All four of the
+  2026-08-11 closes were found by this, not by the runner.**
+- **`ftmo_watch.py`** (2026-08-11) — the DRIVER `ftmo_monitor.py` never had,
+  and the second thing here that can place an order. **It closes only and can
+  never open**: no signal, no sizer, no forecast, and it cannot import torch.
+  Session-scoped — it exits at 23:00 Sofia, and `ftmo_watch.sh` holds one
+  `caffeinate -i` for that lifetime, which is a battery decision as much as a
+  trading one. See the fourth-exception section below.
+- **`trade_journal.py`** — the journal's column set and the `venue` column.
+  Extracted from the IBKR adapter before that venue was removed, which is why
+  the audit trail did not have to move when it went. The 46 `venue=ibkr` rows
+  stay forever.
 
 ## Three things worth remembering
 
@@ -228,10 +334,59 @@ above. The gate was not overridden by a config change or quietly re-run until
 something passed; it was overridden knowingly, with the evidence stated, and
 that is the honest way to record it.
 
-The traded basket is USD-quoted only, 14 symbols across all four classes. On
-the runs so far the selection has been three crypto plus natural gas — a
-concentrated, high-volatility set, which is what ranking a mixed universe by
-predicted return produces when crypto is the volatile end of it.
+### The universe is the whole account now, not a basket (2026-08-11)
+
+Owner instruction: forecast everything the FTMO account can actually trade.
+The runner ranks **101 symbols across five classes** — commodities 16, crypto
+30, FX 5, indices 4, **stocks 46** — derived from the venue's own capture by
+`ftmo_signal.universe_from_capture`. Until this change it used a hand-written
+basket of **14**. Six symbols are skipped every run for short history and are
+named in the log; **95 of 101 are forecast**.
+
+**Ranking 101 symbols by predicted percentage return systematically selects
+the most volatile instruments in the account, and here that means micro-cap
+alt-coins.** The first dry-run's top four were GALUSD +47.67%, VECUSD +25.51%,
+IMXUSD +18.11%, MANUSD +16.65% — every one a crypto priced in fractions of a
+cent, ahead of every index, every FX pair and all 46 stock CFDs. A five-day
+forecast of +47% is not a forecast; it is the noisiest series in the set
+winning a contest scored on amplitude. The 14-symbol basket had the same bias
+and bounded it by construction. Thirty cryptos do not.
+
+**Fixed the same day by ranking WITHIN asset class.** `cap_per_class()` allows
+each class at most `max_per_class` candidates, so the pool becomes the class
+leaders. It is a **filter on the candidate pool, not a re-scoring**, and that
+choice is load-bearing: `apply_rotation_margin` compares raw predicted-return
+differences against a margin calibrated to an observed ~1-point sampling
+spread, so normalising into z-scores would have silently changed the units
+that margin is measured in.
+
+Three consequences worth knowing before reading a plan:
+
+- **The pool, the boundary gap and the target all use the same capped list.**
+  Measuring the rank N/N+1 gap on the full ranking while selecting from a
+  capped one prints a number describing a decision nobody made.
+- **A held position that is no longer its class's leader gets rotated out.**
+  That is the cap working. Exits never consult it.
+- A cycle now takes **~6.3 minutes, up from ~3**.
+
+**This suppresses concentration; it does not create edge.** Every IC screen is
+still ~0, and picking the best of a bad class is still picking from a bad
+class. What it buys is that one asset class can no longer take the whole book
+on the strength of having the widest ruler.
+
+> [!warning] Do NOT run `--dry-run` while a scheduled firing is in progress
+> Demonstrated, not theorised. On 2026-08-11 a manual dry-run overlapped the
+> 19:30 firing; each process loads its own ~2 GB Kronos model, the Mac went
+> into swap (89,817 pageouts, 27% memory free), and the unattended firing was
+> left with **28 seconds of CPU across 13 minutes of wall clock at an RSS of
+> 19 MB** — its model paged out, thrashing rather than computing. It had to be
+> killed. It placed nothing only because the account was already breached; on
+> a healthy account that is a firing silently lost.
+>
+> The symptom is **not** the sleep signature — `caffeinate` was held the whole
+> time and the machine never slept. Low CPU with a tiny RSS is memory
+> pressure. Check `ps` for a running `ftmo_runner.py` first, or preview from
+> `/signal` in the web UI, which reuses the one long-lived session.
 
 ## Server-side stops: VERIFIED 2026-08-05
 
@@ -255,11 +410,59 @@ daily bars → Kronos → rank → plan → **exits, then entries** → verify e
 by reading the venue back → journal + audit + Telegram.
 
 It is **armed** (`ftmo.autotrade.enabled = true`) and scheduled via
-`com.tradingbotapp.ftmo` at **01:15 local, once per day**. Not hourly: the
-cadence is a daily rebalance on a 20-day forecast, and firing hourly would
-re-decide a 20-day view 24 times a day and pay spread on sampling noise each
-time. 01:15 local sits just after the Europe/Prague FTMO day boundary, so the
-day-start balance rolls on settled numbers.
+`com.tradingbotapp.ftmo`, which now wakes it **every 15 minutes, all 24 hours,
+every day** — a deliberate superset of the real window, which is **16:30–23:00
+Europe/Sofia, Monday to Friday**, enforced in code by
+`within_trading_window()`. That is **27 firings per weekday**.
+
+**This was revised on 2026-08-11 from hourly inside 16:30–11:30 every day but
+Sunday, and it is a NARROWING — coverage fell from 19 hours across 6 days to
+6.5 hours across 5.** A position opened at 22:45 on Friday is not looked at by
+the runner again until 16:30 Monday, 65 hours later. Its stop and take-profit
+live at the venue and are unaffected, so it stays protected; what was given up
+is management and, without the reconcile job, the record.
+
+Firing every 15 minutes on a 5-day forecast is further against the cadence this
+project documented, and it was chosen anyway with that stated. The earlier
+reasoning — that a daily rebalance on a multi-day forecast should not be
+re-decided two dozen times a day, paying spread on sampling noise each time —
+**has not been disproved. It was overridden, twice.**
+
+Three things make 96 wakeups a day safe rather than merely survivable:
+
+- The window is checked **before the audit log opens and long before torch is
+  imported**, so an out-of-window wakeup costs one settings read.
+- The window **no longer wraps midnight**, so it is a range and not a union.
+  Both forms are selftested, so neither can be reintroduced by accident.
+- **A `flock` PID lock stops firings piling up.** A cycle takes ~6.3 minutes
+  against a 15-minute interval. `flock` rather than a file-exists check,
+  because the kernel releases it however the holder dies — a crashed runner
+  cannot wedge the schedule.
+
+### The launchd jobs — five labels, and only two can trade
+
+| label | when | what | can it place an order? |
+|---|---|---|---|
+| `com.tradingbotapp.ftmo` | every 15 min, 24/7 (superset) | the runner | **yes — opens and closes** |
+| `com.tradingbotapp.ftmowatch` | hourly :30 Mon–Fri; exits 23:00 Sofia | equity watcher, holds `caffeinate` | **yes — closes only** |
+| `com.tradingbotapp.ftmoreconcile` | every 30 min, 24/7 | close detection + FTMO day roll | no |
+| `com.tradingbotapp.dailydigest` / `…evening` | 07:30 / 20:00 | phone digests | no |
+| `com.tradingbotapp.vaultsync` | 22:00 | this vault | no |
+
+**Verify launchd state UNSANDBOXED**, with
+`launchctl print gui/$(id -u)/<label>`. A bare `launchctl list` from an agent
+shell reports a different domain and shows loaded jobs as missing.
+
+**The reconcile job is load-bearing, not a convenience.** 00:00 Europe/Prague
+is 01:00 Sofia, and the first in-window firing of a new FTMO day is 16:30 —
+15.5 hours later. `advance_state()` samples `day_start_balance` at roll time,
+so rolling that late would silently exclude every overnight move from the
+daily-loss calculation. **A limit that under-reports is worse than no limit,
+because it looks like one.** The reconcile job rolls the day within 30 minutes
+of the true boundary and keeps the journal honest about weekend stop-outs.
+
+Neither the watcher nor the reconcile job is disarmed by the autotrade toggle,
+deliberately: recording and watching are not trading.
 
 Verified end to end in dry-run before arming, placing nothing: 14/14 symbols
 passed the bar/quote scaling cross-check, Kronos forecast in ~90s, rule engine
@@ -296,13 +499,17 @@ first run seeds day-start from the **live balance**, not from
 `initial_capital` — seeding $25,000 onto a $24,300 balance would invent a $700
 loss that never happened and could block trading on the spot.
 
-## This is the THIRD exception to the evidence rule
+## This is the THIRD exception to the evidence rule — and there is now a FOURTH
 
 Rule 5 says autonomy is earned by graded evidence. The exceptions, in order:
 
 1. `autotrade_runner.py` — see [[Autotrade (Experimental)]]
 2. the FTMO path running fully unattended (rule 9)
 3. **Kronos actually firing on FTMO with no class having passed a screen**
+4. **`ftmo_watch.py` flattening the book with no human in the loop**
+   (2026-08-11), taken with the alert-only alternative stated first and
+   priced. It is the first of the four **not bound to a schedule**. What it
+   removes is the human on a FLATTEN — never a limit.
 
 All four asset classes were IC-screened on 2026-08-03 and all four failed
 (|t| ≤ 1.55 in every direction); the matched momentum baseline failed all four
@@ -322,11 +529,22 @@ What autonomy removes is the human approval step — never a limit.
    the migration lives in the writer and self-heals, see below.
 5. ~~Build the signal→order path and drive all the modules together~~ — done
    2026-08-06, `ftmo_runner.py`, verified live in dry-run.
-6. **Watch the first real firings.** Nothing here has ever placed an order
-   unattended. Check `ftmo_launchd.log`, the Telegram messages, and the
-   `venue=ftmo` rows in `trade_journal.csv` after 01:15.
-7. The evidence gap is unchanged and is now the *only* thing outstanding: no
-   class has measured edge. Closing it needs research cycles, not code.
+6. ~~Watch the first real firings~~ — done, and they placed real orders. The
+   journal now carries `venue=ftmo` entries, exits, take-profit hits and
+   detections from 2026-08-07 onward.
+7. ~~Give `ftmo_monitor` a driver~~ — done 2026-08-11, `ftmo_watch.py`.
+8. ~~Wire a launchd job for `--reconcile`~~ — done,
+   `com.tradingbotapp.ftmoreconcile`, every 30 minutes, 24/7.
+9. **Open, as of 2026-08-12: decide what happens after the breach.** The
+   account cleared its own daily limit on 2026-08-11 and the runner is still
+   armed and still being refused every 15 minutes. Leaving it that way is
+   safe but is not a decision. The $6.25 reserve is the thing to look at.
+10. **Bring the night band in line with the new schedule.**
+    `api/ftmo_api.py`'s `timeline()` still reconstructs 16:30 → 11:30 as 20
+    hourly slots while the runner fires every 15 minutes to 23:00, so the band
+    under-draws the firings that happened.
+11. The evidence gap is unchanged and is still the thing that matters: no
+    class has measured edge. Closing it needs research cycles, not code.
 
 ## The `venue` column, and the silent corruption it nearly caused
 
@@ -361,7 +579,7 @@ credential has ever been committed.
 
 ## Related
 
-- [[IBKR Integration]] — the retired venue, still monitoring three positions
+- [[IBKR Integration]] — 🗄️ historical; the venue and its code are gone
 - [[Risk Management System]] — RiskGuard, and why it cannot do this job
 - [[Kronos Research Agent]] — the signal being pointed at this
 - [[Autotrade (Experimental)]] — the first exception to the evidence rule

@@ -1,11 +1,23 @@
 ---
 tags: [trading-bot, project-overview]
-status: "FTMO is the only venue and is ARMED, trading unattended. IBKR removed 2026-08-09. Signal is Kronos; momentum disabled in code. Launch the terminal app with ./trader_app.sh, the web UI with ./run_web.sh."
+status: "FTMO is the only venue and is ARMED, trading unattended — and its daily loss limit was BREACHED 2026-08-11, so entries are being refused. IBKR removed 2026-08-09. Signal is Kronos; momentum disabled in code. Launch the terminal app with ./trader_app.sh, the web UI with ./run_web.sh."
 source: /Users/kaloyanivanov/TradingBotApp
-last_synced: 2026-08-09
+last_synced: 2026-08-12
 ---
 
 # Trading Bot Project — Overview
+
+> [!danger] Current as of 2026-08-12 — the account is past its daily limit
+> The FTMO daily loss limit was **breached on 2026-08-11**: 1,294.78 against a
+> 1,250.00 hard limit. The account is **flat**, the runner is **still armed**,
+> and the rule engine has refused every entry since. That is the design
+> working — a limit caps new exposure and is never allowed to block an exit.
+>
+> The runner now fires **every 15 minutes inside 16:30–23:00 Sofia, Mon–Fri**,
+> ranking **101 symbols** from the venue's own capture at 1.65% risk per trade,
+> and `ftmo_watch.py` watches equity for the length of each session and can
+> flatten the book with nobody present. **Thirteen modules, 762 offline
+> selftests.** See [[FTMO Venue]] and [[Risk Management System]].
 
 > [!important] Current as of 2026-08-09
 > **FTMO is the only venue.** IBKR was retired 2026-08-02 and its code removed
@@ -20,16 +32,19 @@ last_synced: 2026-08-09
 
 
 > [!note] 2026-08-06 — the FTMO venue is armed and has a UI
-> Nine FTMO modules now sit alongside the existing app with 426 offline
-> selftests. The `/ftmo` screen gained a **Kronos → orders** panel: an
-> arm/disarm control and a "Preview plan" button that runs the identical
-> pipeline the unattended runner uses and stops before placing anything.
+> Nine FTMO modules then, thirteen now, carrying **762 offline selftests**
+> (the "426" this callout used to claim was measured on 2026-08-06 and has
+> been superseded twice). The UI was rebuilt on 2026-08-09 into four screens —
+> Watch / Signal / Market / Ledger — and the arm/disarm control and "Preview
+> plan" button live on `/signal`.
 >
 > The preview calls the same `ftmo_signal.plan_orders()` the runner calls, so
-> the browser and the 01:15 firing cannot propose different orders. Nothing in
-> the frontend ranks, sizes or computes a stop — the moment it did, there would
-> be two implementations of the risk maths and one would eventually be wrong.
-> Same reasoning as the backend being a thin wrapper over `ibkr_service`.
+> the browser and the scheduled firing cannot propose different orders.
+> Nothing in the frontend ranks, sizes or computes a stop — the moment it did,
+> there would be two implementations of the risk maths and one would
+> eventually be wrong. **Previewing from `/signal` is also the safe way to
+> look at a plan**, because it reuses the one long-lived session instead of
+> loading a second 2 GB Kronos model alongside a firing already in progress.
 
 > [!note] 2026-08-02 — FTMO is now the trading venue
 > Five new modules (`ftmo_rules`, `ftmo_monitor`, `ftmo_sizing`, `ftmo_audit`,
@@ -47,7 +62,13 @@ This is the index note for the trading-bot project. The actual code lives **outs
 
 **Note on phase numbering:** the project's own `CLAUDE.md` now uses a slightly different phase scheme than the original plan document ([[trading bot/Plan]]) does — it calls the IBKR/broker-infrastructure work "Phase 2" and treats the SMA/momentum backtesting as already folded into the evidence base rather than a numbered phase of its own. This note and [[trading bot/Plan]] keep the original document's phase numbers for consistency; where it matters, both numbering schemes are called out explicitly rather than silently picking one.
 
-**Four real developments since the last sync:**
+> [!note] The four numbered items below are from **2026-07-21** and describe
+> the IBKR paper-trading era. They are kept for the bugs they record — the
+> DAY-stop expiry especially — not as current state. Nothing in this project
+> dials IB Gateway any more, and the "Recommended next steps" further down are
+> superseded by [[Next Build Steps]].
+
+**Four real developments as of 2026-07-21 (historical):**
 
 1. **Phase 1 research agent (`research_agent.py`) has real output now.** All 12 watchlist tickers (AAPL, MSFT, GOOGL, AMZN, JPM, JNJ, PG, XOM, KO, DIS, NVDA, PLTR) have been analyzed for real — the old two synthetic placeholder notes are gone. Spot-checking a couple of the notes (AAPL, NVDA) shows genuinely grounded reasoning: no invented price levels, calibrated confidence, and a majority "no-edge" verdict rather than forced directional calls, consistent with the project's own calibration rules. **`grade_calls.py` correctly hasn't been re-run yet** — the earliest note (07-20) is only ~1 day old as of 2026-07-21, short of the 5-day horizon. Grading starts ~2026-07-25.
 2. **The IBKR connection is verified live, not just built.** IBKR had the paper account in address-verification review; that cleared 2026-07-21. A connected smoke test then passed for real: `verify_paper_account()` succeeded against IB Gateway paper (port 4002), account `DUQ903866`, and pulled 45 real rows of AAPL 15-min bars. Settings were updated to match (port 7497 → 4002).
@@ -68,7 +89,25 @@ A fifth, smaller thing: `trading_agent_service.py` (the third-party TradingAgent
 
 ## Current app snapshot
 
-(from `trader_settings.json`, synced 2026-07-23)
+**FTMO block, read from `trader_settings.json` on 2026-08-12:**
+
+| key | value |
+|---|---|
+| `ftmo.autotrade.enabled` | **true** — armed |
+| `risk_pct` | 1.65 |
+| `buffer_pct` | 0.01 |
+| `top_n` / `max_per_class` | 5 / 3 |
+| `sample_count` | 10 |
+| `product` | 2step |
+| `initial_capital` | 25,000.00 |
+| `signal` (top level) | kronos |
+
+**`trader_settings.json` is tracked in git and carries the armed flag.** If it
+is left modified-but-uncommitted, a stray `git checkout .` silently **disarms**
+the runner. That direction fails safe, but it fails *quietly* — check the flag
+before concluding the bot is running.
+
+The backtesting block below is older — (from `trader_settings.json`, synced 2026-07-23)
 
 - **Watchlist:** AAPL, MSFT, GOOGL, AMZN, JPM, JNJ, PG, XOM, KO, DIS, NVDA, PLTR, AVGO, ASML (14 now — AVGO and ASML added since last sync) — plus SPY as benchmark
 - **SMA windows:** 20 / 50 (default, known to lose to buy-and-hold)

@@ -1,14 +1,38 @@
 ---
 tags: [research, grading, calibration]
-status: "not due yet - notes too fresh, run weekly starting ~2026-07-25"
+status: "OVERDUE — 38 calls graded 2026-08-03 (no detectable skill); 14 fresh 5d calls and all 52 at 21d are ungraded, and grade_calls.py has not been re-run since"
 source: grade_calls.py
+last_updated: 2026-08-12
 ---
 
 # Call Grading System
 
 ## Overview
 
-The research agent (`research_agent.py`) produces 12 research notes per cycle. The agent's actual track record — not enthusiasm, not plausibility — is measured by grading those notes against what price actually does afterward.
+The research agent (`research_agent.py`) produces one research note per watchlist ticker per cycle — 14 at present. The agent's actual track record — not enthusiasm, not plausibility — is measured by grading those notes against what price actually does afterward.
+
+> [!important] Where this stands on 2026-08-12
+> **`research_log/` holds 52 notes**, the newest dated **2026-08-03/04**.
+> `graded_calls.csv` holds 104 rows:
+>
+> | | count | state |
+> |---|---|---|
+> | 5d, graded | **38** | 10 correct / 28 wrong = **26%** |
+> | 5d, ungraded | 14 | the 2026-08-03/04 notes — **gradeable now** |
+> | 21d, ungraded | 52 | all of them |
+>
+> **26% against a chance base rate of 39%** — an edge of −13pt at exact
+> binomial **p=0.13**, i.e. indistinguishable from guessing in *either*
+> direction. By direction: long 33% (n=6, chance 35%), no-edge 29% (n=28,
+> chance 42%), short 0% (n=4, chance 25%).
+>
+> **Read the sample honestly: all 38 share one market week, so they are
+> heavily correlated — this is much closer to ONE observation than to 38.**
+> That is not evidence the agent is bad. It is evidence we still have almost
+> no evidence.
+>
+> **`grade_calls.py --csv` has not been re-run since the new notes landed.**
+> It is the cheapest evidence this project can generate and it is overdue.
 
 > [!danger] The only 4 "graded calls" this project ever had were FAKE
 > Found 2026-07-28. `graded_calls.csv` carried 4 grades from two notes,
@@ -25,7 +49,7 @@ The research agent (`research_agent.py`) produces 12 research notes per cycle. T
 > if you need them for testing, write them to a temp dir. Treat any report
 > claiming grades from notes not present in `research_log/` as corrupt.
 
-**Status 2026-07-28: 38 notes, 0 graded, 76 pending** — verified genuine
+**Status 2026-07-28 (historical — superseded by the callout above): 38 notes, 0 graded, 76 pending** — verified genuine
 against the underlying yfinance data, not merely trusted. `forward_return()`
 needs `days + 1` bars, so the 5d horizon wants **6** sessions from the note
 date, not 5. (Also note 2026-07-24 has no bar for any ticker — trading-day
@@ -39,7 +63,8 @@ math over this window is off by one if you assume a normal week.)
 | 07-25 (14) | needs 5 more sessions | needs 21 more |
 
 First real 5d grades land **~2026-07-29**, the bulk early August, nothing at
-21d until late August.
+21d until late August. *(They landed 2026-08-03 — see the callout at the top
+of this note. The 21d book is still entirely ungraded as of 2026-08-12.)*
 
 ## How It Works
 

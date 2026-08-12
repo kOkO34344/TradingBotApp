@@ -1,19 +1,37 @@
 ---
 tags: [project-management, phases, roadmap]
-status: "FTMO armed and unattended; IBKR removed 2026-08-09. 12 of last session's 20 firings left no audit record — the sleep problem is not confirmed fixed."
-last_updated: 2026-08-09
+status: "FTMO armed and unattended; IBKR removed 2026-08-09. DAILY LOSS LIMIT BREACHED 2026-08-11 — the rule engine has refused every entry since, and the account is flat."
+last_updated: 2026-08-12
 ---
 
 # Phase Milestones Dashboard
 
-> [!warning] Two things this dashboard must not be read as saying
+> [!danger] 2026-08-11 — Phase 3 ran an account through one of its own hard limits
+> `BREACH: daily loss 1,294.78 >= limit 1,250.00`. Four positions closed that
+> day and the account has been flat since; every firing after 10:31 journalled
+> `BLOCKED`. The runner is still armed — it is the **rule engine**, not the
+> switch, that is holding it, which is the design working.
+>
+> This is the first time a limit in this project has been breached rather than
+> merely tested. Two facts belong next to each other: the daily ceiling was
+> raised that same day, leaving **$6.25** between our flatten tier and FTMO's
+> $1,250 cliff, and the account cleared it by $44.78. See [[FTMO Venue]].
+>
+> **Nothing about Phase 3's exit criteria has been met, and this moves the
+> evidence in the wrong direction.** Record it that way.
+
+> [!warning] Three things this dashboard must not be read as saying
 > 1. **IBKR is gone, not paused.** Its code, routes, screens and launchd jobs
 >    were removed on 2026-08-09. Any milestone below that mentions paper
->    positions, RiskGuard or Gateway is history.
-> 2. **"Armed" is not "working".** The night band shows 12 of last session's
->    20 scheduled firings left no audit record. The `caffeinate -i` fix in
->    `ftmo_runner.sh` has never been verified under the real failure condition,
->    because an agent session holds the Mac awake by itself.
+>    positions, RiskGuard or Gateway is history — kept for the incidents that
+>    produced the rules, not as current state.
+> 2. **"Armed" is not "working", and it is not "profitable".** The account is
+>    armed, firing on schedule, and has just breached its daily limit.
+> 3. **The sleep fix moved and is still unverified.** `caffeinate -i` is now
+>    held by `ftmo_watch.sh` for the whole session, not by `ftmo_runner.sh`
+>    per firing. It has never been verified under the real failure condition,
+>    because an agent session holds the Mac awake by itself. Closing the lid
+>    sleeps the machine regardless of any assertion.
 
 
 > [!important] 2026-08-02 — the venue changed
@@ -40,9 +58,12 @@ last_updated: 2026-08-09
 > So the machinery is essentially finished and the evidence is still absent.
 
 > [!danger] 2026-08-06 — the bot is now trading unattended
-> `ftmo_runner.py` is **armed** and scheduled at 01:15 daily. Kronos ranks the
-> 14-symbol FTMO universe, sizes four positions at 1% each, attaches a
-> server-side stop to every entry, and places them with no human approval.
+> `ftmo_runner.py` is **armed**. As first armed it fired at 01:15 daily and
+> ranked a 14-symbol basket into four positions at 1% each, attaching a
+> server-side stop to every entry with no human approval. **All three of those
+> numbers have since changed** — see the 2026-08-11 revisions below and in
+> [[FTMO Venue]] — but the shape has not: Kronos ranks, the sizer sizes, a
+> stop rides the same request as the entry, and nobody approves anything.
 >
 > **This fires on a signal that failed the IC screen on all four asset
 > classes.** It is the third recorded exception to rule 5, taken deliberately
@@ -84,7 +105,21 @@ This is the quick-reference status of each phase. Detailed rationale lives in [[
 
 **What it is:** An agent that reads market data (price, volume, technicals, fundamentals) and writes a grounded research thesis with direction, confidence, risks, and levels.
 
-**Status:** 🟡 **OUTPUT EXISTS, GRADING WILL START ONCE NOTES AGE ENOUGH**
+**Status:** 🟡 **GRADED, AND THE ANSWER IS NO DETECTABLE SKILL**
+
+> [!note] Superseded below — updated 2026-08-12
+> The bullets in this section date from 2026-07-21 and describe grading as
+> not-yet-due. It has since run. **38 calls graded at 5d on 2026-08-03: 26%
+> correct against a 39% chance base rate, p=0.13** — indistinguishable from
+> guessing in either direction, on a sample where all 38 share one market week
+> and are therefore much closer to *one* observation than to 38.
+>
+> `research_log/` now holds **52 notes**, the newest dated **2026-08-03/04**,
+> so the book did grow. `grade_calls.py --csv` has **not** been re-run since:
+> 14 fresh 5d calls are gradeable now and all 52 remain pending at 21d. That
+> re-run is the cheapest evidence available to this project.
+> See [[Call Grading System]] and [[Graded Calls Tracker]].
+
 - ✅ `research_agent.py` built and working
 - ✅ 12 real research notes generated (2026-07-20/21), one per watchlist ticker (AAPL, MSFT, GOOGL, AMZN, JPM, JNJ, PG, XOM, KO, DIS, NVDA, PLTR)
 - ✅ Spot-check (AAPL, NVDA) shows grounded reasoning, no invented levels, calibrated confidence
@@ -120,11 +155,33 @@ This is the quick-reference status of each phase. Detailed rationale lives in [[
 
 ---
 
-## Phase 3: Paper Trading with Human Approval ✅ BUILT, LIVE ON PAPER
+## Phase 3: Unattended Trading on Simulated Capital 🔴 LIVE ON FTMO — AND BREACHED
 
-**What it is:** Deploy momentum rotation live against paper account; agent proposes rebalance → you approve y/n → code executes → journal.
+> [!important] What Phase 3 is NOW — read this before the section below
+> Phase 3 stopped being "paper trading with human approval" on 2026-08-02.
+> It is **unattended trading on FTMO's simulated Challenge capital**, with no
+> approval step at all. Current state as of **2026-08-12**:
+>
+> - Armed, firing **every 15 minutes inside 16:30–23:00 Sofia, Mon–Fri**.
+> - Ranking **101 symbols** from the venue's own capture, capped at 3 per
+>   asset class, `top_n` 5, **1.65% risk per trade**.
+> - **Daily loss limit BREACHED 2026-08-11** (1,294.78 vs 1,250.00). Account
+>   flat; every entry refused since.
+> - `ftmo_watch.py` watches equity and can flatten the book unattended — the
+>   **fourth** exception to the earn-autonomy-with-evidence rule.
+> - **An LLM is never in the intraday firing loop.** Rules fire at machine
+>   speed; the agent reasons at research speed.
+>
+> Everything below this callout describes the **IBKR paper-trading era**
+> (2026-07-21 to 2026-08-02). It is kept because those incidents produced most
+> of the project's rules — not because any of it is current. See
+> [[FTMO Venue]].
 
-**Status:** ✅ **Built 2026-07-21, executed for real the same day**
+### Historical: Paper Trading with Human Approval (IBKR, 2026-07-21 → 2026-08-02)
+
+**What it was:** Deploy momentum rotation live against paper account; agent proposes rebalance → you approve y/n → code executes → journal.
+
+**Status:** ✅ **Built 2026-07-21, executed for real the same day; venue retired 2026-08-02 and removed 2026-08-09**
 - ✅ IBKR connection verified live (2026-07-21, paper account, IB Gateway port 4002)
 - ✅ `ibkr_service.py` hardened: `verify_paper_account()`, RiskGuard ($5k limit, 5 max positions, $300 daily loss, stop required), `place_bracket_order`, `trade_journal.csv` audit trail
 - ✅ All 18 offline checks passing in `ibkr_service.py --selftest` (re-confirmed after the GTC fix below)
@@ -203,9 +260,17 @@ rebalances. **Unattended autotrade stays off until the first two are done.**
 
 ## Work Queue by Priority
 
-**NOT YET DUE (don't do early):**
+> [!important] The current queue is in [[Next Build Steps]] — 2026-08-12
+> Everything under this heading is the **July IBKR-era** queue and is kept for
+> its reasoning, not as instructions. The live queue in one line: decide what
+> happens after the breach, re-run `grade_calls.py --csv` on the 14 fresh 5d
+> calls, and fix the night band's window so the UI stops under-drawing
+> firings.
 
-- **`grade_calls.py --csv`** — wait until notes are ≥5 days old (~2026-07-25+), then run weekly. Running it now would only show "pending" rows.
+**NOT YET DUE (don't do early) — RESOLVED, this is history:**
+
+- ~~**`grade_calls.py --csv`** — wait until notes are ≥5 days old
+  (~2026-07-25+)~~ — it ran on 2026-08-03. 38 graded, no detectable skill.
 
 **ONGOING (recurring operational tasks, not one-time builds):**
 
@@ -232,9 +297,22 @@ rebalances. **Unattended autotrade stays off until the first two are done.**
 
 ## Current Open Risks
 
+> [!danger] The three that actually matter on 2026-08-12
+> | Risk | Where it stands |
+> |---|---|
+> | **$6.25 between the flatten tier and FTMO's hard cliff** | Set 2026-08-11, breached the same day. Less than one tick of index-CFD slippage; a gapping stop clears it without noticing. Unaddressed. |
+> | **The Mac sleeping mid-run** | The assertion moved to `ftmo_watch.sh` and covers 16:30–23:00 Sofia. **Never verified under the real failure condition** — agent sessions hold the machine awake. A lid-close still ends it, and there is no software fix. |
+> | **Trading a signal with no measured edge on any class** | Unchanged, and now with a breached account behind it. Four IC screens, two horizons, all failed. Closing this needs research cycles, not code. |
+>
+> A fourth, smaller one: the web UI's night band still draws a 16:30 → 11:30
+> session as 20 hourly slots while the runner fires 27 times to 23:00, so the
+> one screen built to make missed firings visible is currently mis-drawing them.
+
+The table below is the **IBKR-era** risk register, kept for the record:
+
 | Risk | Mitigation |
 |---|---|
-| Phase 1 agent is not calibrated yet | Weekly grading via `grade_calls.py`, starting once notes are old enough (~2026-07-25+) |
+| Phase 1 agent is not calibrated yet | Graded 2026-08-03: 38 calls, 26% vs a 39% chance rate, p=0.13 — no detectable skill, and the sample is really one market week |
 | Momentum parameters overfit this period | Walk-forward test — worth doing even though the strategy is already live on paper |
 | **REALIZED, then fixed:** bracket stop defaulted to TIF=DAY and silently expired end-of-session, leaving live positions unprotected for a period | Fixed 2026-07-21 (`tif="GTC"` in `place_bracket_order`); all 3 positions manually re-protected same day. Ongoing mitigation: verify `order.tif == "GTC"` when checking positions, not just that a stop exists — see [[IBKR Integration]] |
 | Approve-and-forget psychology | Journal log review weekly; explicit tracking of approval vs auto-fills |

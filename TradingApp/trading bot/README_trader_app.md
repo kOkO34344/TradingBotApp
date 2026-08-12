@@ -23,7 +23,7 @@ reports `No module named 'torch'` even though torch is installed (in `.venv`).
 The launcher pins `.venv/bin/python`. If you do launch it the other way, the
 app now says so at startup instead of letting you find out three menus deep.
 
-First launch downloads ~16 years of daily data for 11 tickers (takes ~30 seconds, then it's cached in a `price_data/` folder next to the script).
+First launch downloads ~16 years of daily data for the watchlist (14 tickers as of 2026-08-12; takes ~30 seconds, then it's cached in a `price_data/` folder next to the script).
 
 ## What you can do in it
 
@@ -35,10 +35,18 @@ First launch downloads ~16 years of daily data for 11 tickers (takes ~30 seconds
 | 4 | Deep dive one ticker: full stats, every individual trade, equity curve chart drawn in the terminal |
 | 5 | **Chart view** — candlestick charts (daily 120 bars or 15-min 5 days) with selectable indicator sets: trend (SMA overlays + MACD and RSI panels), volatility (Bollinger bands), volume (volume bars + session VWAP on 15m), structure (computed swing support/resistance lines). Ends with a numeric readout — the exact numbers the research agent sees, from the same `indicators.py` module |
 | 6 | **Momentum rotation backtest** — portfolio-level: each month hold the top-N tickers by trailing 12-month return. The only strategy family that beat SPY in testing (~18.5% CAGR vs 16% for SPY, 2019→now, with a third less drawdown). Shows holdings by month + equity curve vs SPY |
-| 7 | Settings: tickers, SMA windows, per-trade cost, starting cash, date ranges, **risk engine** (for SMA: 200-day trend filter + 2×ATR trailing stop + fixed % risk per trade; for momentum: dual-momentum cash filter — go to cash instead of holding negative-momentum names), momentum top-N/lookback — saved to `trader_settings.json` |
-| 8 | Force re-download of price data |
-| 9 | **FTMO venue** — reads the live account through `api/ftmo_api.py`: balance, equity including floating P&L, the rule engine's verdict against all three limits, and open positions with their stops. **Read-only by design** — this app places nothing. `ftmo_runner.py` is the only order path, and menu 8 arms or disarms it. |
-| 10 | Quit |
+| 7 | **Kronos forecast (research agent)** — backtested, no edge found; analysis only |
+| 8 | **FTMO autotrade (arm/disarm)** — the switch for the unattended runner. Arming asks for a confirmation that states what the evidence actually says. Not gated on the venue being reachable: a switch you cannot reach when things are going wrong is not a switch. |
+| 9 | **Watchlist** — named groups, symbols validated on entry. This is the **research** universe, not what FTMO trades. Edit it here only; the old raw ticker edit in Settings was removed deliberately, because writing `tickers` directly desyncs it from the groups and is silently reverted on the next group save. |
+| 10 | Settings: SMA windows, per-trade cost, starting cash, date ranges, **risk engine** (for SMA: 200-day trend filter + 2×ATR trailing stop + fixed % risk per trade; for momentum: dual-momentum cash filter — go to cash instead of holding negative-momentum names), momentum top-N/lookback — saved to `trader_settings.json` |
+| 11 | Refresh price data (force re-download) |
+| 12 | **FTMO venue** — reads the live account through `api/ftmo_api.py`: balance, equity including floating P&L, the rule engine's verdict against all three limits, and open positions with their stops. **Read-only by design** — this app places nothing. `ftmo_runner.py` is the only order path, and menu 8 arms or disarms it. |
+| 13 | Quit |
+
+*(Menu verified against `trader_app.py` on 2026-08-12. It was a 10-item menu
+until the FTMO switch and the watchlist editor were added; this table used to
+show the old numbering, which pointed menu 8 at price refresh and menu 9 at the
+venue screen.)*
 
 ## Shared indicators module (`indicators.py`)
 
@@ -46,22 +54,31 @@ One source of truth for all technical math, used by both the chart view (what yo
 
 ## Notes
 
-- **This app places no orders and touches no money.** It's the Phase 2 (backtesting) layer of the plan — the thing you validate strategies on before any broker connection exists.
+- **This app places no orders itself** — but menu 8 **arms the thing that does**. `ftmo_runner.py` is the only order path in the project, and arming it from here means real (simulated-capital) orders get placed unattended, with no further approval. Everything else in the app is read-only backtesting and charting.
 - Green/red coloring in tables = positive/negative. The "Verdict" panel border is green only if the strategy beats SPY in most tickers — with the default 20/50 SMA settings it will be red, because the strategy genuinely loses to buy-and-hold. That's the finding, not a bug.
 - Play with menu 5: try different SMA windows (e.g., 10/30, 50/200), different tickers, higher/lower costs — then re-run menu 1 and watch how fragile the results are. That's the fastest way to build intuition for why parameter-tweaking until a backtest looks good is a trap.
-- Tested end-to-end: all 8 menu paths, invalid inputs (fast SMA ≥ slow, unknown tickers, short date windows) handled without crashing.
+- Tested end-to-end across the menu paths, with invalid inputs (fast SMA ≥ slow, unknown tickers, short date windows) handled without crashing. That sweep dates from the 8-item menu; the FTMO and watchlist screens added since have not been through the same pass.
 - Momentum caveat to keep in mind: the ~18.5% CAGR is on a hand-picked 10-mega-cap watchlist, which flatters the result (these are companies we already know survived and thrived). A fair version would use a broad universe (e.g., S&P 500 constituents as of each date). Treat the number as "momentum is worth pursuing," not "momentum earns 18.5%."
 
 ## Trading venue (`ftmo_*.py`)
 
 IBKR was the venue until 2026-08-02 and its code was removed on 2026-08-09.
-FTMO, via the cTrader Open API, is the only one now — ten modules at the repo
-root carrying **579 offline checks** between them, none of which need
-credentials or a connection.
+FTMO, via the cTrader Open API, is the only one now — **thirteen modules at the
+repo root carrying 762 offline checks** between them (re-measured 2026-08-11),
+none of which need credentials or a connection.
 
 - `ftmo_rules.py` decides (limits, three thresholds, both products),
   `ftmo_sizing.py` sizes, `ftmo_session.py` transports, `ftmo_audit.py` records
-  why, `ftmo_closes.py` detects positions that closed on their own.
+  why, `ftmo_closes.py` detects positions that closed on their own,
+  `ftmo_watch.py` watches equity through the session and can flatten the book.
+- **The runner fires every 15 minutes inside 16:30–23:00 Europe/Sofia,
+  Monday to Friday** — 27 firings a weekday. launchd's every-15-minutes-24/7
+  schedule is a deliberate superset; `within_trading_window()` is what
+  actually decides.
+- **The daily loss limit was breached on 2026-08-11** (1,294.78 vs 1,250.00).
+  The account is flat and entries are being refused. Check
+  `trade_journal.csv` for the `BLOCKED` rows before wondering why a dry-run
+  proposes nothing.
 - **Every limit is measured on equity INCLUDING floating P&L**, so the account
   can fail with no order placed. That is why this venue has a continuous
   monitor rather than a pre-trade gate.
