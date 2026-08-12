@@ -610,14 +610,24 @@ def all_symbols() -> list[dict]:
 
 # ----------------------------------------------------------------- timeline
 #
-# The night band's data. One SESSION — 16:30 Sofia through 11:30 the next
-# morning — reconstructed from the audit trail, slot by slot.
+# The night band's data. One SESSION — 16:30 to 23:00 Sofia, Monday to Friday
+# — reconstructed from the audit trail, slot by slot.
+#
+# REVISED 2026-08-12 to follow the runner's 2026-08-11 window change, which it
+# had not: this file still reconstructed a 16:30 -> 11:30 session as 20 HOURLY
+# slots while the runner fires every 15 minutes to 23:00, i.e. 27 times. The
+# band therefore drew a 20-cell night for a 27-firing one — under-reporting
+# real firings AND, worse, unable to draw a missed one after 23:00 because it
+# believed the window was still open until 11:30. The one screen built to make
+# silent failures visible was itself silently wrong. Both numbers are derived
+# from the runner's own constants below rather than restated here.
 #
 # THE SESSION AXIS IS THE TRADING WINDOW, NOT THE FTMO DAY, and they are two
 # genuinely different boundaries: the window is Europe/Sofia and the FTMO day
-# rolls at 00:00 Europe/Prague, an hour apart. One session therefore spans two
-# audit files. Reading `ftmo_audit/<today>.jsonl` and calling it "last night"
-# would silently drop everything before 01:00 — which is most of the session.
+# rolls at 00:00 Europe/Prague, an hour apart. The session no longer crosses
+# midnight, but the FTMO day boundary still falls OUTSIDE it (01:00 Sofia), so
+# the two must not be conflated — reading `ftmo_audit/<ftmo_day>.jsonl` is not
+# the same question as "what happened in last night's session".
 #
 # WHAT DID NOT HAPPEN IS THE POINT. A slot the window was open for, with no
 # audit record in it, is a firing that never ran: the Mac was asleep. Those
@@ -625,21 +635,39 @@ def all_symbols() -> list[dict]:
 # failures is exactly the thing this band exists to make visible. Omitting
 # them would draw a tidy line through a night when nothing was watching.
 
+# The schedule's cadence, and the reason the band has a slot count at all.
+# launchd wakes the runner at :00 :15 :30 :45 (com.tradingbotapp.ftmo.plist),
+# so one cell per 15 minutes is one cell per WAKEUP — which is what makes a
+# missing cell mean "a firing that did not happen" rather than "a quarter of
+# an hour in which nothing was scheduled anyway".
+#
+# The window itself is NOT restated here. `runner.WINDOW_OPEN` /
+# `WINDOW_CLOSE` / `within_trading_window` are the authority, so the band and
+# the runner cannot come to disagree about the same night — the failure this
+# module already avoids for the weekday rule.
+SLOT_MINUTES = 15
+
+
 def _session_bounds(now: datetime) -> tuple[datetime, datetime]:
     """The most recent session that has opened, as (start, end) in Sofia.
 
-    A session opens at 16:30 and closes at 11:30 the following morning, so
-    "which session am I in" has three answers and only one of them is today's:
-    before 11:30 the live session opened YESTERDAY, and in the 11:30-16:30 gap
-    the most recent one has already closed.
+    A session opens at 16:30 and closes at 23:00 on the SAME calendar day, so
+    "which session am I in" has two answers: from 16:30 onward it is today's,
+    and before 16:30 the most recent one opened yesterday and has already
+    closed.
+
+    This wrapped midnight until 2026-08-11 and the +1 day on `end` was right
+    then. It is not right now, and leaving it produced an `end` twelve and a
+    half hours past the close — every slot after 23:00 was tested against a
+    window the runner had long shut.
     """
     local = now.astimezone(runner.TRADING_TZ)
     open_today = local.replace(hour=runner.WINDOW_OPEN.hour,
                                minute=runner.WINDOW_OPEN.minute,
                                second=0, microsecond=0)
     start = open_today if local >= open_today else open_today - timedelta(days=1)
-    end = (start + timedelta(days=1)).replace(
-        hour=runner.WINDOW_CLOSE.hour, minute=runner.WINDOW_CLOSE.minute)
+    end = start.replace(hour=runner.WINDOW_CLOSE.hour,
+                        minute=runner.WINDOW_CLOSE.minute)
     return start, end
 
 
@@ -720,16 +748,18 @@ def timeline(now: datetime | None = None,
                    if r.get("kind") == "RUNNER_EVALUATION"]
     plans = [(w, r) for w, r in records if r.get("kind") == "RUNNER_PLAN"]
 
-    # Hourly at :30, the same cadence launchd wakes the runner on. The window
-    # test is the runner's own function rather than a copy of the rule — a
-    # second implementation of "except Sunday, wrapping midnight" is how the
-    # band and the runner would come to disagree about the same night.
+    # Every SLOT_MINUTES, the same cadence launchd wakes the runner on. The
+    # window test is the runner's own function rather than a copy of the rule
+    # — a second implementation of "weekdays only, no longer wrapping midnight"
+    # is how the band and the runner would come to disagree about the same
+    # night, and this file has already been wrong in exactly that way once.
+    width = timedelta(minutes=SLOT_MINUTES)
     slots = []
     slot = start
     while slot <= end:
         allowed, why = runner.within_trading_window(slot)
-        fired = [(w, r) for w, r in evaluations if slot <= w < slot + timedelta(hours=1)]
-        planned = [(w, r) for w, r in plans if slot <= w < slot + timedelta(hours=1)]
+        fired = [(w, r) for w, r in evaluations if slot <= w < slot + width]
+        planned = [(w, r) for w, r in plans if slot <= w < slot + width]
         # Four states, and `forced` is not a decoration. A record inside a
         # CLOSED slot did not come from the schedule — it is a --force run, a
         # --reconcile, or a plan previewed from the dashboard. Calling that
@@ -756,7 +786,7 @@ def timeline(now: datetime | None = None,
                              for s in (p.get("exits") or [])),
             "firings": len(fired),
         })
-        slot += timedelta(hours=1)
+        slot += width
 
     trace = [{
         "at": w.isoformat(),
@@ -873,21 +903,25 @@ def selftest() -> int:
     tz = runner.TRADING_TZ
 
     print("a session is the trading window, not the calendar day:")
-    # Thursday 2026-08-06 at 02:00 — after midnight, so the live session
-    # opened the PREVIOUS evening. Getting this wrong is the whole bug the
-    # band exists to avoid: it would read an empty file and draw a quiet night.
+    # Thursday 2026-08-06 at 02:00 — before 16:30, so the most recent session
+    # opened the PREVIOUS afternoon and has already closed. Getting this wrong
+    # is the whole bug the band exists to avoid: it would read an empty file
+    # and draw a quiet night.
     s, e = _session_bounds(datetime(2026, 8, 6, 2, 0, tzinfo=tz))
-    check("before 11:30, the session opened yesterday at 16:30",
+    check("before 16:30, the session opened yesterday at 16:30",
           (s.date(), s.hour, s.minute) == (date(2026, 8, 5), 16, 30))
-    check("and closes this morning at 11:30",
-          (e.date(), e.hour, e.minute) == (date(2026, 8, 6), 11, 30))
-    s2, _ = _session_bounds(datetime(2026, 8, 6, 20, 0, tzinfo=tz))
-    check("after 16:30, the session is tonight's",
-          s2.date() == date(2026, 8, 6))
+    check("and closed the SAME day at 23:00, not the next morning — the "
+          "window stopped wrapping midnight on 2026-08-11",
+          (e.date(), e.hour, e.minute) == (date(2026, 8, 5), 23, 0))
+    s2, e2 = _session_bounds(datetime(2026, 8, 6, 20, 0, tzinfo=tz))
+    check("after 16:30, the session is today's",
+          (s2.date(), e2.date()) == (date(2026, 8, 6), date(2026, 8, 6)))
     s3, e3 = _session_bounds(datetime(2026, 8, 6, 13, 0, tzinfo=tz))
-    check("inside the 11:30-16:30 gap, the last session has already closed",
+    check("inside the 23:00-16:30 gap, the last session has already closed",
           s3.date() == date(2026, 8, 5) and e3 < datetime(2026, 8, 6, 13,
                                                           tzinfo=tz))
+    check("a session never spans more than one calendar day",
+          s2.date() == e2.date())
 
     print("a naive audit timestamp is refused, never assumed to be local:")
     check("naive parses to None", _parse_ts("2026-08-06T01:30:00") is None)
@@ -915,8 +949,22 @@ def selftest() -> int:
 
         t = timeline(now=datetime(2026, 8, 6, 11, 0, tzinfo=tz), directory=root)
         states = {s["label"]: s["state"] for s in t["slots"]}
-        check("the session runs 16:30 to 11:30 — 20 hourly slots",
-              len(t["slots"]) == 20)
+        # 390 minutes / 15 = 26 INTERVALS, which is 27 firing POINTS because
+        # both endpoints are inclusive. The runner's own selftest asserts the
+        # same off-by-one; the band drawing 26 or 28 cells would misreport
+        # every night by one wakeup. It drew 20 until 2026-08-12.
+        check("the session runs 16:30 to 23:00 — 27 quarter-hour slots, one "
+              "per launchd wakeup",
+              len(t["slots"]) == 27)
+        check("the first slot is the open and the last is the close",
+              (t["slots"][0]["label"], t["slots"][-1]["label"])
+              == ("16:30", "23:00"))
+        check("one cell per wakeup means the band matches the schedule the "
+              "runner is actually on",
+              len(t["slots"]) == 390 // SLOT_MINUTES + 1)
+        check("no slot lands after the close — the window stopped wrapping "
+              "midnight and `end` had to stop wrapping with it",
+              all(s["label"] <= "23:00" for s in t["slots"]))
         check("a slot with an evaluation in it reports `ran`",
               states.get("18:30") == "ran")
         check("an open slot with NO record reports `missed`, not silence — "
@@ -934,28 +982,30 @@ def selftest() -> int:
         check("counts add up to the slot count",
               sum(t["counts"].values()) == len(t["slots"]))
 
-        # Saturday evening into Sunday morning: the evening leg trades, the
-        # morning leg does not. Encoded here because "except Sunday" applies
-        # to the calendar day, so the session is half open and half closed —
-        # the exact case a naive range check gets wrong.
+        # SATURDAY IS CLOSED OUTRIGHT since 2026-08-11. It previously ran an
+        # evening leg, and this block asserted that leg was open — so the old
+        # test would now PASS a band that drew Saturday as a trading session.
+        # A weekend session is drawn rather than omitted: 27 closed cells is
+        # the honest answer to "what happened last night", not an empty screen.
         sat = timeline(now=datetime(2026, 8, 9, 11, 0, tzinfo=tz), directory=root)
-        sat_states = {s["label"]: s["state"] for s in sat["slots"]}
-        check("Saturday's evening leg is open",
-              sat_states.get("18:30") in {"ran", "missed"})
-        check("Sunday morning is closed, in the same session",
-              sat_states.get("09:30") == "closed")
+        check("a Saturday session is drawn, not omitted",
+              len(sat["slots"]) == 27)
+        check("and every one of its slots is closed — Saturday no longer "
+              "trades an evening leg",
+              all(s["state"] == "closed" for s in sat["slots"]))
 
         # A --force run, a --reconcile or a dashboard preview writes audit
-        # records at hours the schedule may not trade. Sunday 2026-08-09.
-        (root / "2026-08-09.jsonl").write_text(json.dumps(
-            {"kind": "RUNNER_EVALUATION", "ts": "2026-08-09T02:53:00+03:00",
+        # records at times the schedule may not trade. Saturday 2026-08-08,
+        # inside the session bounds and inside a closed day.
+        (root / "2026-08-08.jsonl").write_text(json.dumps(
+            {"kind": "RUNNER_EVALUATION", "ts": "2026-08-08T18:31:00+03:00",
              "equity": 25_001.0}) + "\n", encoding="utf-8")
         forced = timeline(now=datetime(2026, 8, 9, 11, 0, tzinfo=tz),
                           directory=root)
         f_states = {s["label"]: s["state"] for s in forced["slots"]}
         check("a record inside a CLOSED slot reports `forced`, never `ran` — "
               "it did not come from the schedule",
-              f_states.get("02:30") == "forced")
+              f_states.get("18:30") == "forced")
 
         print("two plans in one slot are counted, not concatenated:")
         (root / "2026-08-11.jsonl").write_text("\n".join(json.dumps(r) for r in [

@@ -130,8 +130,8 @@ export function KillSwitch({
             </DialogTitle>
             <DialogDescription>
               Kronos will place real orders on the FTMO Challenge account with
-              no approval prompt, hourly between 16:30 and 11:30 Sofia time,
-              every day except Sunday.
+              no approval prompt, every 15 minutes between 16:30 and 23:00
+              Sofia time, Monday to Friday.
             </DialogDescription>
           </DialogHeader>
 

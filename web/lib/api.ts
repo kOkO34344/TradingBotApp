@@ -127,7 +127,8 @@ export interface Status {
   signal: { active: string; default: string; disabled: string[] };
   journal: JournalSummary;
   /**
-   * Whether the runner is inside its 16:30-11:30 Sofia window right now.
+   * Whether the runner is inside its 16:30-23:00 Sofia window right now
+   * (Monday to Friday).
    * `open: null` means the window could not be evaluated — unknown, never
    * "closed".
    */

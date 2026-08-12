@@ -3,10 +3,9 @@
 /**
  * night-band.tsx — the watch station's signature instrument.
  *
- * One session, 16:30 Sofia through 11:30 the next morning, as a single
- * horizontal band. It answers the question this whole app exists for: what
- * did the robot do while nobody was awake, and how close did it come to the
- * floor.
+ * One session, 16:30 to 23:00 Sofia, as a single horizontal band. It answers
+ * the question this whole app exists for: what did the robot do while nobody
+ * was watching, and how close did it come to the floor.
  *
  * THREE LANES, SHARING ONE TIME AXIS. They are separate because they are
  * measured on scales that differ by three orders of magnitude, and forcing
@@ -19,8 +18,8 @@
  *   RESERVOIR  the daily-loss budget at TRUE scale, thresholds marked. A
  *              nearly-empty bar is the correct and reassuring reading, and it
  *              would be a lie to auto-scale this one into looking dramatic.
- *   WAKEUPS    one cell per hourly firing. This is the lane that earns the
- *              component.
+ *   WAKEUPS    one cell per scheduled firing — every 15 minutes, 27 of them.
+ *              This is the lane that earns the component.
  *
  * WHAT DID NOT HAPPEN IS THE POINT. A slot the window was open for with no
  * audit record is a firing that never ran — the Mac was asleep — and it is
@@ -39,6 +38,8 @@ import { DASH, fmtSigned, fmtUsd } from "@/lib/format";
 import { cn } from "@/lib/utils";
 import { useShell } from "@/components/app-shell";
 
+// Only a FALLBACK, for the degenerate one-slot response. The real cell width
+// is measured from the data — see `slotMs` below.
 const HOUR_MS = 3_600_000;
 
 export function NightBand() {
@@ -69,11 +70,23 @@ export function NightBand() {
   }
 
   const start = Date.parse(data.start);
-  // The rail is 20 hourly cells and the session is 19 hours long, so the axis
-  // runs one hour past the close and the close itself is marked. Both lanes
-  // use this same domain, which is what keeps a dip in the equity trace
-  // sitting over the firing that caused it.
-  const domainEnd = start + data.slots.length * HOUR_MS;
+  // CELL WIDTH IS MEASURED FROM THE DATA, never assumed. This read
+  // `slots.length * HOUR_MS` until 2026-08-12, which was right while the
+  // runner fired hourly and became wrong the moment it moved to every 15
+  // minutes: 27 slots x 1h stretched the axis to 27 HOURS across a 6.5-hour
+  // session, so every equity point sat at roughly a quarter of its true
+  // position and no longer lined up with the firing that caused it. The
+  // cadence belongs to the runner's schedule, so the only honest source for
+  // it is the spacing of the slots the backend actually sent.
+  const slotMs =
+    data.slots.length > 1
+      ? Date.parse(data.slots[1].at) - Date.parse(data.slots[0].at)
+      : HOUR_MS;
+  // The axis runs one CELL past the close, so the closing slot is a full cell
+  // wide rather than a zero-width tick at the right edge. Both lanes share
+  // this domain, which is what keeps a dip in the equity trace sitting over
+  // the firing that caused it.
+  const domainEnd = start + data.slots.length * slotMs;
   const span = domainEnd - start;
   const pctAt = (iso: string) =>
     ((Date.parse(iso) - start) / span) * 100;
@@ -302,7 +315,7 @@ function Threshold({ at, label }: { at: number; label: string }) {
   );
 }
 
-/** One cell per hourly wakeup. The lane that earns the component. */
+/** One cell per scheduled wakeup. The lane that earns the component. */
 function WakeupLane({
   slots,
   counts,
@@ -310,6 +323,18 @@ function WakeupLane({
   slots: FtmoSlot[];
   counts: FtmoTimeline["counts"];
 }) {
+  // Measured from the data for the same reason the axis is: a missed cell is
+  // 15 minutes of not-watching since 2026-08-11 and was 60 before it. Counting
+  // cells AS HOURS reported 11 missed quarter-hours as "11 hours", overstating
+  // a real 2h45m outage by four times — on the one line the band exists to
+  // make honest.
+  const slotMinutes =
+    slots.length > 1
+      ? Math.round(
+          (Date.parse(slots[1].at) - Date.parse(slots[0].at)) / 60_000,
+        )
+      : 60;
+
   return (
     <div>
       <div className="flex flex-wrap items-baseline justify-between gap-x-4">
@@ -344,11 +369,20 @@ function WakeupLane({
           {counts.missed} scheduled firing{counts.missed === 1 ? "" : "s"} left
           no audit record. The runner was due and did not run — usually the Mac
           asleep on battery. Nothing was watching the account for{" "}
-          {counts.missed} hour{counts.missed === 1 ? "" : "s"}.
+          {fmtDuration(counts.missed * slotMinutes)}.
         </p>
       )}
     </div>
   );
+}
+
+/** Minutes as "2h 45m" / "3 hours" / "45 minutes". Never a bare cell count. */
+function fmtDuration(minutes: number): string {
+  const h = Math.floor(minutes / 60);
+  const m = minutes % 60;
+  if (h && m) return `${h}h ${m}m`;
+  if (h) return `${h} hour${h === 1 ? "" : "s"}`;
+  return `${m} minute${m === 1 ? "" : "s"}`;
 }
 
 function SlotCell({ slot }: { slot: FtmoSlot }) {
@@ -358,7 +392,7 @@ function SlotCell({ slot }: { slot: FtmoSlot }) {
     slot.reason,
     slot.entries.length ? `entries: ${slot.entries.join(", ")}` : "",
     slot.exits.length ? `exits: ${slot.exits.join(", ")}` : "",
-    slot.firings > 1 ? `${slot.firings} firings in this hour` : "",
+    slot.firings > 1 ? `${slot.firings} firings in this slot` : "",
   ]
     .filter(Boolean)
     .join("\n");
