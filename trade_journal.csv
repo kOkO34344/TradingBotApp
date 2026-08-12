@@ -133,3 +133,11 @@ timestamp,event,symbol,sec_type,action,quantity,price,stop,target,status,detail,
 2026-08-11T19:13:03,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,187.50",ftmo
 2026-08-11T19:19:36,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,187.50",ftmo
 2026-08-11T19:50:36,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,187.50",ftmo
+2026-08-11T20:51:34,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,237.50",ftmo
+2026-08-11T21:13:49,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,237.50",ftmo
+2026-08-11T21:24:23,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,237.50",ftmo
+2026-08-11T21:54:15,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,237.50",ftmo
+2026-08-11T22:11:59,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,237.50",ftmo
+2026-08-11T22:23:56,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,237.50",ftmo
+2026-08-11T22:37:27,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,237.50",ftmo
+2026-08-11T22:52:01,BLOCKED,,cfd,,,,,,skipped,"rule engine refuses new entries: BREACH: daily loss 1,294.78 >= limit 1,250.00; NO NEW ENTRIES: daily loss 1,294.78 >= soft limit 1,237.50",ftmo
