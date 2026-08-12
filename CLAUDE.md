@@ -147,11 +147,20 @@ File purposes are documented in each script's own module docstring
   simply omitted). Recorded as a correction rather than silently overwritten,
   because a count nobody re-measures is the same class of thing as the CI
   workflow this file claimed for weeks and never had.
+  **RE-MEASURED 2026-08-12: still 762, 0 failures — the count reproduces.**
   Re-measure with, and note the two output formats:
   `for m in $(grep -l -- --selftest *.py); do .venv/bin/python3 $m --selftest
   | grep -cE '^\s+(ok|FAIL|PASS)'; done` — `indicators.py` prints `PASS`,
   everything else prints `ok`, so a sweep matching only `ok` silently scores
   it zero.
+  **`api/ftmo_api.py` carries a further 41 and is NOT in the 762** — it is not
+  a top-level module and the command above does not reach it. Do not "fix"
+  that by globbing `api/*.py`: `api/main.py` matches on a docstring mention
+  and is not runnable as a script, so it would score 0 and read as a
+  regression. Run it explicitly:
+  `.venv/bin/python3 api/ftmo_api.py --selftest`. The `PostToolUse` hook runs
+  all fourteen and uses a stricter predicate than `grep -l` for this reason —
+  see the GitHub/CI entry under "Known environment gotchas".
   (`ftmo_smoke_order.py` has no
   `--selftest` — it is a live one-trade proof, and its dry-run is the check.)
   Note `ftmo_audit`'s selftest deliberately prints `AUDIT WRITE FAILED` to
@@ -419,9 +428,11 @@ after testing it properly.
 - Phase 1 (research agent): built. 38 graded calls at 5d as of 2026-08-03 and
   no detectable skill — see the Work Queue for the honest reading of that
   sample.
-- Phase 2 (infrastructure): hardened and self-tested. **762 offline checks**
-  across the ten FTMO modules, plus the `api/` selftests. No credentials or
-  venue connection needed for any of them.
+- Phase 2 (infrastructure): hardened and self-tested. **762 offline checks
+  across the THIRTEEN modules that carry one** (not "ten" — that figure was
+  stale here while the Architecture section already said thirteen), plus **41
+  in `api/ftmo_api.py`**. All fourteen run automatically on edit since
+  2026-08-12. No credentials or venue connection needed for any of them.
 - Phase 3 (unattended trading on simulated capital): LIVE on FTMO since
   2026-08-06, armed, firing **every 15 minutes inside a 16:30-23:00 Sofia
   window, Mon-Fri** (revised 2026-08-11), with `ftmo_watch.py` watching equity
@@ -588,13 +599,50 @@ the row says so.
      went with it. Every old URL redirects, and the ones that became tabs carry
      `?tab=` so a bookmark lands where it used to.
    - **The night band** on `/watch` is the one new capability, not a restyle:
-     `/api/ftmo/timeline` reconstructs a full session (16:30→11:30 Sofia) from
-     `ftmo_audit/*.jsonl` and draws one cell per hourly wakeup.
+     `/api/ftmo/timeline` reconstructs a full session (**16:30→23:00 Sofia,
+     Mon-Fri**) from `ftmo_audit/*.jsonl` and draws **one cell per 15-minute
+     wakeup — 27 of them**.
      **A firing that was due and did not happen is drawn, not omitted** — the
      22 consecutive sleep failures of 2026-08-08 went unnoticed for 19 hours,
      and this is where that becomes visible at a glance. It reads the audit
      files off disk with no venue session, so it still answers when the broker
      is unreachable.
+     **THE BAND SPENT A DAY MISREPORTING THE NIGHT IT EXISTS TO REPORT
+     (fixed 2026-08-12), and the mechanism is the reusable part: it did not
+     hardcode the window, it read the runner's constants — and the constants
+     moved underneath it.** `_session_bounds` computed `end` as *start + 1 day*
+     at `WINDOW_CLOSE`, which was correct while the window wrapped midnight.
+     When `WINDOW_CLOSE` moved 11:30 → 23:00 on 2026-08-11 that same
+     expression silently stretched the axis to **30.5 hours**, so the band was
+     not even the 20 slots it was designed for. Hourly buckets then merged four
+     real wakeups into one cell and scored the whole hour `ran` if ANY of them
+     did. Measured on the real 2026-08-11 audit trail:
+
+     | | slots | ran | missed | closed |
+     |---|---|---|---|---|
+     | before | 31 | 7 | 7 | 17 |
+     | after | 27 | 16 | 11 | 0 |
+
+     **Nine real firings vanished and 11 missed ones were reported as 7.** A
+     band that under-reports missed firings is worse than no band, because it
+     is read as evidence that the night was quiet. Reading a constant from the
+     right place is not the same as tracking it: `SLOT_MINUTES = 15` now sets
+     the cadence, 390/15 = 26 intervals = **27 points** with both endpoints
+     inclusive (asserted, the same off-by-one `ftmo_runner` asserts), and the
+     selftest names the window it is drawing so the next change fails loudly.
+   - **Three frontend bugs rode along with it, none caught by `tsc`** — the
+     rule in `web/CLAUDE.md` about screenshotting is what found all three.
+     `night-band.tsx` sized its x-axis `slots.length * HOUR_MS`, giving a
+     27-HOUR axis for a 6.5-hour session, so every equity point sat at roughly
+     a quarter of its true position and no longer lined up with the firing that
+     caused it. The missed-firings line multiplied cells by hours and said
+     **"Nothing was watching the account for 11 hours"** against a real
+     **2h 45m** — a fourfold overstatement on the one sentence the band exists
+     to make honest. And the **ARM confirmation dialog** still promised "hourly
+     between 16:30 and 11:30 Sofia, every day except Sunday", which is the
+     evidence statement rule 5 requires before arming and therefore has to be
+     true. Cell width and duration are both measured from the slot spacing the
+     backend sends now, so a future cadence change cannot desync them again.
    - **THIS UI PLACES NO ORDERS.** The preview → execute(token) write flow, the
      dedicated order worker thread and the bracket dialog all belonged to IBKR
      and went with it. The single remaining write is arming or disarming
@@ -1061,6 +1109,33 @@ shell reports a different domain and shows loaded jobs as missing.
 Only the first two can reach the venue with an order, and only the first can
 OPEN one.
 
+**A PLIST ON DISK IS NOT A LOADED JOB, AND THIS FILE ASSERTED OTHERWISE FOR
+SOME UNKNOWN LENGTH OF TIME.** On 2026-08-12 three of these — the RUNNER
+itself, `dailydigest` and `vaultsync` — were found **not bootstrapped into
+launchd at all**, while `trader_settings.json` read `ftmo.autotrade.enabled:
+true` and this table said they were installed. So the bot presented as ARMED,
+in the settings file and in the web UI header, with nothing scheduled to fire
+it. All three plists were intact with correct `Label` keys; `ftmowatch`,
+`ftmoreconcile` and `dailydigestevening` were unaffected. Reloaded the same
+day, and all six verified present.
+
+Two things to take from it. **This is the INVERSE of the `git checkout .`
+failure recorded below, and it fails the other way**: that one silently
+DISARMS a runner that looks armed, this one leaves an armed flag with no
+schedule behind it. Both are quiet; only one of them fails safe. **So "is the
+bot running" is two questions, not one — the flag AND the job — and the flag
+is the one that lies.** Check with `launchctl print gui/$(id -u)/<label>` for
+every label in this table, not just the one you are thinking about.
+
+Why they came unloaded is **unexplained**. A macOS update, a reboot before the
+jobs were persisted, and a manual `unload` are all candidates and none was
+confirmed. Recorded as an open question rather than a diagnosis, because
+"documented as installed but absent from launchd" is exactly the class of
+drift this project keeps paying for — the same shape as the four fabricated
+grades in `graded_calls.csv`, the CI workflow that never existed, and the
+`{'sent': True}` on a refused order. If it recurs, chase it rather than
+reloading again.
+
 **The schedule and the trading window are two different things — do not
 conflate them.** launchd wakes the runner **every 15 minutes at :00 :15 :30
 :45, all 24 hours, every day** (four `StartCalendarInterval` dicts with the
@@ -1184,6 +1259,13 @@ sections close to verbatim, so keep those reasonably current.
   changes as "Daily vault sync: ...". It never touches code. Log:
   `vault_sync.log` / `vault_sync_launchd.log`. To disable:
   `launchctl unload ~/Library/LaunchAgents/com.tradingbotapp.vaultsync.plist`.
+  **It did nothing at all from 2026-08-01 to 2026-08-11** — eleven consecutive
+  failed runs — and its job was additionally found UNLOADED on 2026-08-12. Both
+  are fixed; the environment trap that caused it is under "Known environment
+  gotchas" and is the part that generalises. The scoping does hold in practice:
+  the first successful run committed eight vault files and staged nothing
+  outside `TradingApp/trading bot/`, with two unrelated files modified in the
+  tree at the time.
 - `(base)` conda is always in the prompt; the project venv must ALSO show
   `(.venv)`. If imports fail, that's the first thing to check.
 - **Launch the interactive app with `./trader_app.sh`, never
@@ -1427,6 +1509,34 @@ sections close to verbatim, so keep those reasonably current.
   already held, so the race does not apply.
   The Telegram alert fails at the same moment for the same reason, so this
   failure mode is **silent** — 19 hours passed unnoticed.
+- **A launchd job gets a MINIMAL environment, and the obvious test for that
+  lies to you.** `daily_vault_sync.sh` failed on **every single run from
+  2026-08-01 to 2026-08-11** — eleven consecutive nights, one quiet line in
+  `vault_sync.log`, nobody looking. Diagnosed and fixed 2026-08-12. It had TWO
+  bugs, the second hidden behind the first, which is why the fix is worth
+  recording rather than just the symptom.
+  **PATH.** The script called a bare `claude`. The binary is at
+  `~/.local/bin/claude`, and that directory is put on `PATH` by **`~/.zshrc`
+  ONLY**. launchd runs these via `bash -lc`, which sources `~/.bash_profile` —
+  the conda init block and nothing else — and there is no `~/.bashrc`. So the
+  script worked perfectly by hand and never once under launchd. This was the
+  only launcher in the project resolving a binary off `PATH`; `ftmo_runner.sh`
+  and `daily_digest.sh` pin `.venv/bin/python3` for exactly this reason, and
+  the vault sync now pins `$HOME/.local/bin/claude` the same way, with a
+  `PATH` fallback and a LOUD failure if neither resolves.
+  **USER.** Fixing `PATH` surfaced a second failure it had been masking:
+  `Not logged in · Please run /login`, on an account that is logged in.
+  `claude` reads its credentials from the **login keychain** and needs `USER`
+  set to find them. Bisected against a stripped environment: `USER` alone
+  restores auth, `LOGNAME`/`TMPDIR`/`SHELL` do not. It is now derived from
+  `id -un` rather than assumed.
+  **THE TEST TRAP, which is the reusable part: `bash -lc 'which claude'` from
+  an interactive shell SUCCEEDS**, because it inherits an already-populated
+  `PATH` from its parent. That is not the launchd environment, and reading it
+  as proof is how this stayed broken for eleven nights. Reproduce with
+  **`env -i HOME="$HOME" /bin/bash -lc '...'`**, which fails on the old code
+  and passes on the new. Any future launchd job that shells out to a
+  non-system binary inherits both of these traps.
 - **GitHub: `gh` is installed manually at `~/.local/bin/gh`** — there is no
   Homebrew on this machine, so upgrades mean re-downloading the release zip
   and `install -m 755` over it. Auth token is in the macOS keyring, config in
@@ -1441,8 +1551,34 @@ sections close to verbatim, so keep those reasonably current.
   and the `{'sent': True}` on a refused order: a record asserting an outcome
   nobody verified.
   What actually guards the code is local and now automatic: the
-  `PostToolUse` hook in `.claude/settings.json` runs all twelve `--selftest`
-  modules after any edit to a top-level `.py`. See the hooks section below.
+  `PostToolUse` hook in `.claude/settings.json` runs all **fourteen**
+  `--selftest` modules — the thirteen top-level ones **and `api/ftmo_api.py`**
+  — after any edit to a `.py` under the root **or under `api/`**. Full sweep
+  ~1.4s. See the hooks section below.
+  **`api/` was excluded until 2026-08-12, and the exclusion hid a live
+  regression for a day**: `api/ftmo_api.py`'s selftest went red on 2026-08-11
+  when the trading window changed under it (five checks still asserting a
+  16:30→11:30 session and 20 hourly slots) and nothing reported it, because
+  the sweep only ever looked at top-level modules. The backend is not a lesser
+  tier — it reconstructs the night band, i.e. the screen used to notice that
+  unattended firings did NOT happen, so skipping it is skipping the thing
+  watching the watchman.
+  **Discovery requires the flag to be PARSED, never merely mentioned, and that
+  distinction is load-bearing.** `api/main.py` contains the string
+  `--selftest` in a docstring and implements nothing; run as a script it dies
+  with `ImportError: attempted relative import with no known parent package`,
+  because it is a package module. Discovering by substring would therefore
+  have pinned a PERMANENT false failure onto every single edit — which trains
+  you to ignore the guard, and is the same trap as grepping for "FAILED" in
+  `ftmo_audit`'s deliberately-noisy output. A module qualifies on
+  `add_argument("--selftest")` or `"--selftest" in sys.argv`; that predicate
+  splits the set exactly.
+  **When changing this hook, test the NEGATIVE case.** A guard that never
+  fires looks identical to a guard that works. Break one assertion, confirm
+  `rc=2` names the right file, restore from a COPY rather than `git checkout`
+  (there is a `checkout_guard` on Bash, and a stray checkout is its own hazard
+  here), and drive it through `_run.sh` rather than calling the `.py`
+  directly, since that wrapper is what launchd-style invocation actually uses.
 
 ## Practical
 
