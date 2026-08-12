@@ -12,6 +12,30 @@ LOG="vault_sync.log"
 
 echo "=== Vault sync run: $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$LOG"
 
+# claude reads its credentials from the login keychain and needs USER set to
+# find them; without it every run dies with "Not logged in · Please run /login"
+# while the account is perfectly logged in. launchd's environment is minimal,
+# so this is derived rather than assumed.
+export USER="${USER:-$(id -un)}"
+
+# The claude path is PINNED, the same way every other launcher here pins
+# .venv/bin/python3. launchd runs this via `bash -lc`, which sources
+# ~/.bash_profile — and that file holds only the conda init block. The
+# `export PATH="$HOME/.local/bin:$PATH"` that makes `claude` resolvable lives
+# in ~/.zshrc, which bash never reads. So a bare `claude` is not found under
+# launchd while working perfectly from an interactive shell, which is exactly
+# how this failed silently every night from 2026-08-01 to 2026-08-11.
+CLAUDE_BIN="${CLAUDE_BIN:-$HOME/.local/bin/claude}"
+if [ ! -x "$CLAUDE_BIN" ]; then
+  CLAUDE_BIN="$(command -v claude || true)"
+fi
+if [ -z "$CLAUDE_BIN" ] || [ ! -x "$CLAUDE_BIN" ]; then
+  echo "FAILED: claude CLI not found (tried \$HOME/.local/bin/claude and PATH=$PATH)" >> "$LOG"
+  echo "=== Done (failed): $(date '+%Y-%m-%d %H:%M:%S') ===" >> "$LOG"
+  echo "" >> "$LOG"
+  exit 1
+fi
+
 PROMPT="Sync the Obsidian vault under 'TradingApp/trading bot/' to match the
 actual current state of this project. You are only allowed to read files
 anywhere in the repo, and to Edit/commit files under 'TradingApp/trading
@@ -38,7 +62,7 @@ Steps:
    sync:'. Never use git add -A or git add ..
 7. Print a one-paragraph summary of what changed (or 'no changes needed')."
 
-claude -p "$PROMPT" \
+"$CLAUDE_BIN" -p "$PROMPT" \
   --permission-mode acceptEdits \
   --allowedTools "Read Edit Bash(git status) Bash(git diff:*) Bash(git add:*) Bash(git commit:*) Bash(git log:*) Bash(date:*)" \
   >> "$LOG" 2>&1
